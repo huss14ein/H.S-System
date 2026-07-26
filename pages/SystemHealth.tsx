@@ -30,7 +30,9 @@ import { buildHoldingsDividendReconciliationReport } from '../services/holdingsD
 import { findHoldingsValueOutliers, type HoldingOutlierRow } from '../services/holdingsOutlierAudit';
 import type { HoldingsReconcileRow } from '../services/holdingsDividendReconciliation';
 import HoldingsQtyIntegrityPanel from '../components/investments/HoldingsQtyIntegrityPanel';
+import ReconciliationAuditPanel from '../components/reconciliation/ReconciliationAuditPanel';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
+import { buildTransferClearanceReport } from '../services/transferClearance';
 import {
   validateSystemIntegrity,
   detectBrokenReferences,
@@ -70,6 +72,50 @@ interface HealthIncident {
 
 const AUTO_REFRESH_SECONDS = 90;
 const INCIDENTS_KEY = 'system-health-incidents:v1';
+
+const TransferClearancePanel: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+  const appDataCtx = useContext(DataContext);
+  const report = useMemo(
+    () => buildTransferClearanceReport(appDataCtx?.data?.transactions ?? []),
+    [appDataCtx?.data?.transactions],
+  );
+  return (
+    <section className="rounded-xl border border-amber-200/80 bg-white p-4 shadow-sm">
+      <h3 className="text-sm font-semibold text-slate-800 mb-1">Transfer clearance</h3>
+      <p className="text-xs text-slate-600 mb-2">
+        Transfer groups should have matching principal_out and principal_in legs. Unpaired or imbalanced groups distort cashflow if treated as income/expense.
+      </p>
+      <ul className="text-sm text-slate-700 space-y-1">
+        <li>Transfer groups: {report.groups.length}</li>
+        <li className={report.unpaired.length ? 'text-amber-800 font-medium' : ''}>
+          Unpaired: {report.unpaired.length}
+        </li>
+        <li className={report.imbalanced.length ? 'text-amber-800 font-medium' : ''}>
+          Imbalanced: {report.imbalanced.length}
+        </li>
+      </ul>
+      {(report.unpaired.length > 0 || report.imbalanced.length > 0) && (
+        <ul className="mt-2 max-h-40 overflow-y-auto text-xs text-slate-600 space-y-1">
+          {[...report.unpaired, ...report.imbalanced].slice(0, 12).map((g) => (
+            <li key={g.transferGroupId} className="font-mono">
+              {g.transferGroupId.slice(0, 8)}… · legs {g.legCount} · out {g.outAmount} / in {g.inAmount}
+              {!g.hasOut || !g.hasIn ? ' · unpaired' : ` · Δ ${g.imbalance}`}
+            </li>
+          ))}
+        </ul>
+      )}
+      {setActivePage ? (
+        <button
+          type="button"
+          className="mt-2 text-sm text-indigo-700 underline"
+          onClick={() => setActivePage('Transactions')}
+        >
+          Open Transactions →
+        </button>
+      ) : null}
+    </section>
+  );
+};
 
 const initialServices: Service[] = [
   { name: 'Authentication Service (Supabase)', status: 'Operational' },
@@ -160,7 +206,10 @@ function formatRoiDecimalAsPct(decimal: unknown): string {
   return Number.isFinite(v) ? (v * 100).toFixed(2) : '—';
 }
 
-const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+const SystemHealth: React.FC<{
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ setActivePage, triggerPageAction }) => {
   const [activeTab, setActiveTab] = useState<SystemHealthTab>('apis');
   const [services, setServices] = useState<Service[]>(initialServices);
   const [isLoading, setIsLoading] = useState(false);
@@ -873,7 +922,51 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
               <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">dashboardKpiSnapshot.ts</code>, and investment ROI in{' '}
               <code className="text-xs bg-white/80 px-1 rounded border border-indigo-100">investmentKpiCore.ts</code>. This tab audits ledger consistency; it does not re-derive those headline figures on a separate path.
             </p>
+            <p className="mt-2 text-xs text-slate-600">
+              Cash drift? Use <strong>Reconcile Balance</strong> on Accounts (append-only delta) — do not overwrite opening balances.
+              Deep-link: <a className="text-indigo-700 underline" href="#reconciliation-audit-log">reconciliation audit log</a>.
+            </p>
           </section>
+
+          <ReconciliationAuditPanel />
+
+          <section className="rounded-xl border border-violet-200/80 bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-800 mb-1">Rewards integrity</h3>
+            <p className="text-xs text-slate-600 mb-2">
+              Manual loyalty ledger (no live APIs). Cashback categories must never inflate income KPIs.
+              Schedule Edge Function <code className="text-[11px]">rewards-expiry-scan</code> after deploy for T-30 warnings.
+            </p>
+            <ul className="text-sm text-slate-700 space-y-1">
+              <li>Accounts: {(appDataCtx?.data?.rewardsAccounts ?? []).length}</li>
+              <li>Transactions: {(appDataCtx?.data?.rewardsTransactions ?? []).length}</li>
+              <li>
+                Open lots:{' '}
+                {(appDataCtx?.data?.rewardsLots ?? []).filter((l) => (Number(l.quantityRemaining) || 0) > 0).length}
+              </li>
+              <li>
+                Incomplete redeems:{' '}
+                {(appDataCtx?.data?.rewardsTransactions ?? []).filter((t) => t.status === 'incomplete').length}
+              </li>
+              <li>
+                Orphan links (missing reward tx):{' '}
+                {(() => {
+                  const ids = new Set((appDataCtx?.data?.rewardsTransactions ?? []).map((t) => t.id));
+                  return (appDataCtx?.data?.rewardsTxLinks ?? []).filter((l) => !ids.has(l.rewardTxId)).length;
+                })()}
+              </li>
+            </ul>
+            {setActivePage ? (
+              <button
+                type="button"
+                className="mt-2 text-sm text-indigo-700 underline"
+                onClick={() => setActivePage('Rewards')}
+              >
+                Open Rewards →
+              </button>
+            ) : null}
+          </section>
+
+          <TransferClearancePanel setActivePage={setActivePage} />
 
           <section className="rounded-xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/50 via-white to-slate-50 p-4 shadow-sm">
             <p className="text-sm font-semibold text-slate-900">Senior accountant AI</p>
@@ -1050,7 +1143,15 @@ const SystemHealth: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setA
             </div>
           )}
 
-          <HoldingsQtyIntegrityPanel />
+          <HoldingsQtyIntegrityPanel
+            onReconcileQuantity={({ holdingId }) => {
+              if (triggerPageAction) {
+                triggerPageAction('Investments', `open-reconcile-quantity:${holdingId}`);
+              } else {
+                setActivePage?.('Investments');
+              }
+            }}
+          />
 
           {integritySummary.holdingsDividendReport && !integritySummary.holdingsDividendReport.isClean && (
             <div className="mt-4 pt-4 border-t border-slate-200">

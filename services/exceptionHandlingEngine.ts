@@ -85,7 +85,7 @@ export function repairSuggestionEngine(args: {
       .filter(Boolean)
       .join(' · ');
     suggestions.push({
-      action: 'Set or correct opening balance for account to match transaction ledger',
+      action: 'Use Reconcile Balance on Accounts to inject a delta that matches your bank statement (do not overwrite opening balance)',
       entityId: args.cashDrift.accountId,
       detail: detail || undefined,
     });

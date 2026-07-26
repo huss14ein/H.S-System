@@ -749,16 +749,37 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       }
     >
       <div className="space-y-6">
-        {setActivePage && (
+        {(setActivePage || triggerPageAction) && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 flex flex-wrap items-center justify-between gap-2">
-            <span>After import, reconcile cash balances and holdings in System Health.</span>
-            <button
-              type="button"
-              className="text-primary font-medium hover:underline"
-              onClick={() => setActivePage('System & APIs Health')}
-            >
-              Open data reconciliation →
-            </button>
+            <span>
+              If the closing balance on the statement still differs from the account after import, post the
+              residual as an audited delta — never by overwriting the balance.
+            </span>
+            <div className="flex flex-wrap items-center gap-3">
+              {triggerPageAction && (
+                <button
+                  type="button"
+                  className="text-primary font-medium hover:underline"
+                  onClick={() =>
+                    triggerPageAction(
+                      'Accounts',
+                      selectedAccount ? `open-reconcile-balance:${selectedAccount}` : 'open-reconcile-balance',
+                    )
+                  }
+                >
+                  Reconcile Balance →
+                </button>
+              )}
+              {setActivePage && (
+                <button
+                  type="button"
+                  className="text-slate-600 font-medium hover:underline"
+                  onClick={() => setActivePage('System & APIs Health')}
+                >
+                  Open data reconciliation →
+                </button>
+              )}
+            </div>
           </div>
         )}
         {setupValidationWarnings.length > 0 && (

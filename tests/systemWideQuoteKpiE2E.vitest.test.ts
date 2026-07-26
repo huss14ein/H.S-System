@@ -60,6 +60,9 @@ describe('system-wide quote + KPI E2E', () => {
       'pages/FinancialJournal.tsx',
       'pages/SinkingFunds.tsx',
       'pages/Notifications.tsx',
+      'pages/Documents.tsx',
+      'pages/Subscriptions.tsx',
+      'pages/Estate.tsx',
     ]);
     const hooks = [
       'useCanonicalFinancialMetrics',

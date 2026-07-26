@@ -3,7 +3,7 @@
  * Minimal implementation for build compatibility.
  */
 
-import type { FinancialData } from '../types';
+import type { FinancialData, HouseholdMember, MemberAllocation } from '../types';
 import { resolveSarPerUsd, toSAR } from '../utils/currencyMath';
 import {
   financialMonthColumnIndexForDate,
@@ -895,6 +895,61 @@ export function buildHouseholdEngineInputFromData(
     goals: goalsMapped,
     config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, profile: options?.profile, ...options?.config },
   };
+}
+
+/** One resolved monthly envelope row for a household member allocation. */
+export interface MemberAllocationRow {
+  memberId: string;
+  memberName: string;
+  memberRole: string;
+  allocationId: string;
+  kind: MemberAllocation['kind'];
+  label: string;
+  /** Monthly envelope for the requested month (0 when not scheduled that month). */
+  monthlyAmount: number;
+  categoryId: string;
+}
+
+/**
+ * Resolve per-member monthly allowance / education envelopes for a given calendar month (1–12).
+ * Allocations with an explicit `scheduleMonths` only apply in those months; empty = every month.
+ * Disabled allocations (`enabled === false`) and unknown members are dropped.
+ */
+export function buildMemberAllocationRows(
+  members: HouseholdMember[] | null | undefined,
+  allocations: MemberAllocation[] | null | undefined,
+  month: number,
+): MemberAllocationRow[] {
+  const m = Math.min(12, Math.max(1, Math.floor(Number(month) || 1)));
+  const byId = new Map((members ?? []).map((x) => [x.id, x]));
+  const rows: MemberAllocationRow[] = [];
+  for (const a of allocations ?? []) {
+    if (a.enabled === false) continue;
+    const member = byId.get(a.memberId);
+    if (!member) continue;
+    const schedule = a.scheduleMonths ?? [];
+    const appliesThisMonth = schedule.length === 0 || schedule.includes(m);
+    rows.push({
+      memberId: a.memberId,
+      memberName: member.name,
+      memberRole: String(member.role),
+      allocationId: a.id,
+      kind: a.kind,
+      label: a.label,
+      monthlyAmount: appliesThisMonth ? Math.max(0, Number(a.monthlyAmount) || 0) : 0,
+      categoryId: a.categoryId,
+    });
+  }
+  return rows;
+}
+
+/** Sum of all member allocation monthly envelopes for a month (convenience for budgets rollup). */
+export function sumMemberAllocationsMonthly(
+  members: HouseholdMember[] | null | undefined,
+  allocations: MemberAllocation[] | null | undefined,
+  month: number,
+): number {
+  return buildMemberAllocationRows(members, allocations, month).reduce((s, r) => s + r.monthlyAmount, 0);
 }
 
 export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): HouseholdBudgetPlanResult {

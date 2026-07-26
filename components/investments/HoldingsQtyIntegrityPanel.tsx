@@ -25,13 +25,19 @@ import {
   type MissingLedgerHoldingRow,
 } from '../../services/holdingsIntegrityRepair';
 import { yieldToMain } from '../../utils/yieldToMain';
+import HoldingLotsPanel from './HoldingLotsPanel';
 
 type Props = {
   /** Compact for embedding under Investments KPIs. */
   compact?: boolean;
+  /**
+   * Open Reconcile quantity for this open holding (preferred when the broker statement is the truth
+   * and the ledger may still be incomplete). Receives the stored holding id when found.
+   */
+  onReconcileQuantity?: (args: { holdingId: string; portfolioId: string; symbol: string }) => void;
 };
 
-const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
+const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconcileQuantity }) => {
   const ctx = useContext(DataContext);
   const auth = useContext(AuthContext);
   const userId = auth?.user?.id ?? null;
@@ -253,7 +259,9 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
       <p className="text-xs text-slate-600 mt-1 leading-relaxed">
         KPIs and net worth use <strong>stored holdings</strong> (single source of truth). If a symbol has trades in the
         log but no holding row, restore it here. Ledger scope is{' '}
-        <code className="text-[11px]">portfolio_id</code> (not the whole platform account).
+        <code className="text-[11px]">portfolio_id</code> (not the whole platform account). To match broker share counts
+        without restoring a missing row, use <strong>Reconcile quantity</strong> on that holding (audited delta —
+        not a bulk rewrite).
       </p>
 
       {likelyOpenMissing.length > 0 && (
@@ -317,6 +325,35 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
                   >
                     Keep stored
                   </button>
+                  {onReconcileQuantity && (
+                    <button
+                      type="button"
+                      data-testid={`reconcile-qty-${r.symbol}`}
+                      className="text-xs px-2.5 py-1.5 rounded-md border border-emerald-400 text-emerald-900 bg-emerald-50 hover:bg-emerald-100 font-medium cursor-pointer"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const portfolio = (data?.investments ?? []).find((p) => p.id === r.portfolioId);
+                        const holding = (portfolio?.holdings ?? []).find(
+                          (h) => String(h.symbol ?? '').trim().toUpperCase() === r.symbol.toUpperCase(),
+                        );
+                        if (!holding?.id) {
+                          toast(
+                            'Open holding not found for this symbol — Restore/Rebuild first if it is missing.',
+                            'info',
+                          );
+                          return;
+                        }
+                        onReconcileQuantity({
+                          holdingId: holding.id,
+                          portfolioId: r.portfolioId,
+                          symbol: r.symbol,
+                        });
+                      }}
+                    >
+                      Reconcile quantity
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={rebuildBusyKey === key || !ctx?.rebuildHoldingsFromLedgerForSymbols}
@@ -332,6 +369,9 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false }) => {
                     {rebuildBusyKey === key ? 'Rebuilding…' : 'Rebuild this symbol'}
                   </button>
                 </span>
+                <div className="w-full">
+                  <HoldingLotsPanel symbol={r.symbol} portfolioId={r.portfolioId} compact />
+                </div>
               </li>
             );
           })}

@@ -18,7 +18,8 @@ export function bucketSumMatchesNetWorth(snap: Pick<NetWorthSnapshot, 'netWorth'
     (Number(b.investments) || 0) +
     (Number(b.physicalAndCommodities) || 0) +
     (Number(b.receivables) || 0) +
-    (Number(b.liabilities) || 0);
+    (Number(b.liabilities) || 0) +
+    (Number(b.rewards) || 0);
   const nw = Number(snap.netWorth) || 0;
   const driftSar = Math.abs(componentsSum - nw);
   return { matches: driftSar < 1.5, driftSar, componentsSum };

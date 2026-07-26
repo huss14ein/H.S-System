@@ -42,6 +42,63 @@ export function unrealizedFXExposure(
   return { valueInBase, costInBase, unrealizedGainLoss: valueInBase - costInBase };
 }
 
+/**
+ * Cash FX P&L layers (SAR base) — documentation stub.
+ *
+ * The app resolves SAR/USD at three distinct layers; conflating them is the most
+ * common source of KPI drift, so the intended separation is documented here and
+ * returned as a small breakdown a caller can wire into a full realized/unrealized
+ * cash-FX engine later:
+ *
+ *  1. **Balance-sheet (spot)** — current SAR/USD applied to today's USD cash for
+ *     headline net worth (`resolveSarPerUsd` / canonical metrics). No P&L on its own.
+ *  2. **Transaction-dated** — each USD cashflow converted at its calendar-day rate
+ *     (`getSarPerUsdForCalendarDay`) so historical income/expense KPIs are stable.
+ *  3. **Realized FX** — when USD cash is actually converted to SAR (or vice-versa),
+ *     the difference between the entry rate and the settlement rate is a realized gain/loss.
+ *
+ * Unrealized cash FX = USD cash × (spot − weighted entry rate). Realized cash FX is
+ * booked only on conversion. This stub computes the unrealized layer and leaves the
+ * realized layer to the ledger (which knows actual conversion events).
+ */
+export interface CashFxPnlStub {
+  usdCash: number;
+  spotSarPerUsd: number;
+  weightedEntrySarPerUsd: number;
+  valueSar: number;
+  costSar: number;
+  unrealizedFxPnlSar: number;
+  /** Realized FX is booked on conversion events; not derivable from balances alone. */
+  realizedFxPnlSar: number;
+  notes: string[];
+}
+
+export function computeCashFxPnlStub(args: {
+  usdCash: number;
+  spotSarPerUsd: number;
+  weightedEntrySarPerUsd?: number;
+}): CashFxPnlStub {
+  const usdCash = Number(args.usdCash) || 0;
+  const spot = Number(args.spotSarPerUsd) || 0;
+  const entry = Number(args.weightedEntrySarPerUsd) || spot;
+  const valueSar = usdCash * spot;
+  const costSar = usdCash * entry;
+  return {
+    usdCash,
+    spotSarPerUsd: spot,
+    weightedEntrySarPerUsd: entry,
+    valueSar,
+    costSar,
+    unrealizedFxPnlSar: valueSar - costSar,
+    realizedFxPnlSar: 0,
+    notes: [
+      'Layer 1 (spot) feeds headline net worth; not P&L by itself.',
+      'Layer 2 (transaction-dated FX) keeps historical cashflow KPIs stable.',
+      'Layer 3 (realized FX) is booked on actual SAR<->USD conversion events in the ledger.',
+    ],
+  };
+}
+
 /** Portfolio FX allocation: share of portfolio value in each currency (by value in base). */
 export function portfolioFXAllocation(
   positions: { currency: string; valueInBase: number }[]

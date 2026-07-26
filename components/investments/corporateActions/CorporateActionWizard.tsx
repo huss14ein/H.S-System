@@ -27,6 +27,7 @@ import { CashInLieuWizardSteps } from './CashInLieuWizardSteps';
 const WIZARD_ACTION_OPTIONS: { value: CorporateActionWizardActionType; label: string }[] = [
   { value: 'stock_split', label: 'Stock split' },
   { value: 'reverse_stock_split', label: 'Reverse split' },
+  { value: 'stock_dividend', label: 'Bonus / stock dividend' },
   { value: 'cash_in_lieu', label: 'Cash in lieu (fractional)' },
   { value: 'spinoff', label: 'Spinoff' },
   { value: 'merger', label: 'Merger / acquisition' },
@@ -178,6 +179,8 @@ export const CorporateActionWizard: React.FC<Props> = ({
       });
       if (state.actionType === 'stock_split' || state.actionType === 'reverse_stock_split') {
         toast('Split applied — net worth unchanged; share count and avg cost updated.', 'success');
+      } else if (state.actionType === 'stock_dividend') {
+        toast('Stock dividend applied — share count and avg cost updated (no cash).', 'success');
       }
       onClose();
     } catch (e) {
@@ -191,7 +194,11 @@ export const CorporateActionWizard: React.FC<Props> = ({
   const stepIdx = steps.indexOf(state.step);
 
   const renderDetails = () => {
-    if (state.actionType === 'stock_split' || state.actionType === 'reverse_stock_split') {
+    if (
+      state.actionType === 'stock_split' ||
+      state.actionType === 'reverse_stock_split' ||
+      state.actionType === 'stock_dividend'
+    ) {
       return <SplitWizardSteps state={state} onChange={patchState} portfolio={portfolio} />;
     }
     if (state.actionType === 'spinoff' || state.actionType === 'merger') {

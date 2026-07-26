@@ -8,6 +8,8 @@ import { resolveRecipientUserByEmail } from '../utils/shareRecipientLookup';
 
 interface AccountsProps {
     setActivePage?: (page: Page) => void;
+    pageAction?: string | null;
+    clearPageAction?: () => void;
 }
 import Card from '../components/Card';
 import Modal from '../components/Modal';
@@ -47,6 +49,9 @@ import { brokerCashBucketsFromInvestmentAccount } from '../services/investmentCa
 import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar, pickInvestableCashTotalSar } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import ReconcileBalanceModal from '../components/reconciliation/ReconcileBalanceModal';
+import { portfolioIdsForAccount } from '../services/reconciliation';
+import { toast } from '../context/ToastContext';
 
 type SharedAccountRow = Account & { ownerEmail?: string; owner_user_id?: string; account_id?: string; show_balance?: boolean };
 
@@ -103,11 +108,7 @@ const AccountModal: React.FC<{
             setOwner(accountToEdit.owner || '');
             setLinkedAccountIds(accountToEdit.linkedAccountIds || []);
             setCashCurrency(accountToEdit.currency ?? planDefaultCash);
-            setBalanceStr(
-                accountToEdit.type === 'Investment'
-                    ? ''
-                    : String(accountToEdit.balance ?? '')
-            );
+            setBalanceStr('');
             setAccountRole((accountToEdit.accountRole as AccountRole) ?? '');
         } else {
             const learnedType = getLearnedDefault('account-add', 'type') as Account['type'] | undefined;
@@ -125,26 +126,26 @@ const AccountModal: React.FC<{
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const parsedBalance =
-            type === 'Investment' ? Number(accountToEdit?.balance) || 0 : Number(balanceStr.replace(/,/g, '')) || 0;
+            type === 'Investment' ? 0 : Number(balanceStr.replace(/,/g, '')) || 0;
         const accountData: any = {
             name,
             type,
             owner: owner || undefined,
             // Always send linkedAccountIds for Investment so backend can persist (including clearing when empty)
             ...(type === 'Investment' ? { linkedAccountIds: linkedAccountIds || [] } : {}),
-            ...(type !== 'Investment' ? { balance: parsedBalance } : {}),
             ...(type === 'Checking' || type === 'Savings' || type === 'Credit' ? { currency: cashCurrency } : {}),
             ...(accountRole ? { accountRole } : {}),
         };
 
         try {
             if (accountToEdit) {
-                await onSave({ ...accountToEdit, ...accountData, balance: type === 'Investment' ? accountToEdit.balance : parsedBalance });
+                // Metadata-only on edit — never overwrite balance; use Reconcile Balance.
+                await onSave({ ...accountToEdit, ...accountData, balance: accountToEdit.balance });
             } else {
                 await onSave(
                     type === 'Investment'
                         ? { ...accountData, balance: 0 }
-                        : accountData
+                        : { ...accountData, balance: parsedBalance }
                 );
                 trackFormDefault('account-add', 'type', type);
             }
@@ -210,17 +211,11 @@ const AccountModal: React.FC<{
                         </select>
                     </div>
                 )}
-                {(type === 'Checking' || type === 'Savings' || type === 'Credit') && (
+                {(type === 'Checking' || type === 'Savings' || type === 'Credit') && !accountToEdit && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                            {accountToEdit ? 'Current balance' : 'Starting balance'} ({cashCurrency})
-                            <InfoHint
-                                text={
-                                    accountToEdit
-                                        ? 'Manual adjustment or opening position. For Checking/Savings, new income and expenses linked to this account now update this balance automatically—set this once to match your bank if you already had history before auto-sync.'
-                                        : 'Optional. For cash accounts, you can start at 0 and let transactions move the balance, or enter today’s bank balance if you’re about to import past activity.'
-                                }
-                            />
+                            Starting balance ({cashCurrency})
+                            <InfoHint text="Optional opening balance on create only. Later corrections use Reconcile Balance (append-only delta)." />
                         </label>
                         <input
                             type="number"
@@ -231,6 +226,11 @@ const AccountModal: React.FC<{
                             className="input-base"
                         />
                     </div>
+                )}
+                {accountToEdit && (type === 'Checking' || type === 'Savings' || type === 'Credit' || type === 'Investment') && (
+                    <p className="text-xs text-slate-600 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        To fix an incorrect balance, use <strong>Reconcile Balance</strong> on the account card (posts a delta — does not overwrite history).
+                    </p>
                 )}
                 {type === 'Investment' && (
                     <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3">
@@ -282,11 +282,12 @@ const AccountCardComponent: React.FC<{
     account: Account;
     onEditAccount: (acc: Account) => void;
     onDeleteAccount: (acc: Account) => void;
+    onReconcileBalance?: (acc: Account) => void;
     linkedPortfoliosCount?: number;
     readOnly?: boolean;
     balanceMetricLabel?: string;
     footer?: React.ReactNode;
-}> = ({ account, onEditAccount, onDeleteAccount, linkedPortfoliosCount, readOnly = false, balanceMetricLabel = 'Current Balance', footer }) => {
+}> = ({ account, onEditAccount, onDeleteAccount, onReconcileBalance, linkedPortfoliosCount, readOnly = false, balanceMetricLabel = 'Current Balance', footer }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const { maskBalance } = usePrivacyMask();
 
@@ -317,6 +318,16 @@ const AccountCardComponent: React.FC<{
                 </div>
                 {!readOnly && (
                     <div className="flex items-center gap-1 flex-shrink-0">
+                        {onReconcileBalance && (
+                            <button
+                                type="button"
+                                onClick={() => onReconcileBalance(account)}
+                                className="px-2 py-1 rounded-lg text-xs font-medium text-emerald-700 hover:bg-emerald-50 border border-emerald-200"
+                                aria-label="Reconcile balance"
+                            >
+                                Reconcile
+                            </button>
+                        )}
                         <button type="button" onClick={() => onEditAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit account"><PencilIcon className="h-4 w-4"/></button>
                         <button type="button" onClick={() => onDeleteAccount(account)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete account"><TrashIcon className="h-4 w-4"/></button>
                     </div>
@@ -347,8 +358,8 @@ const AccountCardComponent: React.FC<{
     );
 };
 
-const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
-    const { data, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction } = useContext(DataContext)!;
+const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPageAction }) => {
+    const { data, addPlatform, updatePlatform, deletePlatform, addTransfer, addRecurringTransaction, updateRecurringTransaction, deleteRecurringTransaction, applyReconciliationAdjustment } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const { formatCurrencyString } = useFormatCurrency();
     const confirmAction = useConfirmAction();
@@ -357,6 +368,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
     const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [accountToEdit, setAccountToEdit] = useState<Account | null>(null);
+    const [reconcileAccount, setReconcileAccount] = useState<Account | null>(null);
+    /** Restricted members submit for approval; they may not post reconciliation adjustments. */
+    const canReconcileBalances = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
+    const reconcilePortfolioIds = useMemo(
+        () => (reconcileAccount ? portfolioIdsForAccount(data ?? ({} as any), reconcileAccount.id) : []),
+        [reconcileAccount, data?.investments],
+    );
     const [itemToDelete, setItemToDelete] = useState<Account | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
     const [shareTargetEmail, setShareTargetEmail] = useState('');
@@ -479,6 +497,24 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
 
     const orderedCreditAccounts = useMemo(() => [...creditAccounts].sort((a, b) => a.name.localeCompare(b.name)), [creditAccounts]);
     const orderedInvestmentAccounts = useMemo(() => [...investmentAccounts].sort((a, b) => a.name.localeCompare(b.name)), [investmentAccounts]);
+
+    /** `open-reconcile-balance[:accountId]` from the command palette / statement import CTA. */
+    useEffect(() => {
+        if (!pageAction || !pageAction.startsWith('open-reconcile-balance')) return;
+        if (!canReconcileBalances) {
+            toast('Your role cannot post reconciliation adjustments.', 'error');
+            clearPageAction?.();
+            return;
+        }
+        const requestedId = pageAction.includes(':') ? pageAction.split(':')[1] : '';
+        const candidates = [...orderedCashAccounts, ...orderedCreditAccounts, ...orderedInvestmentAccounts];
+        const target = requestedId
+            ? candidates.find((a) => a.id === requestedId) ?? null
+            : candidates[0] ?? null;
+        if (target) setReconcileAccount(target);
+        else toast('Add a cash, credit, or investment account first to reconcile a balance.', 'info');
+        clearPageAction?.();
+    }, [pageAction, clearPageAction, canReconcileBalances, orderedCashAccounts, orderedCreditAccounts, orderedInvestmentAccounts]);
     const accountValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         if (cashAccounts.length === 0) warnings.push('No cash accounts found. Emergency fund and transfers require Checking/Savings accounts.');
@@ -1259,6 +1295,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             account={acc}
                             onEditAccount={handleOpenAccountModal}
                             onDeleteAccount={handleOpenDeleteModal}
+                            onReconcileBalance={canReconcileBalances ? setReconcileAccount : undefined}
                             linkedPortfoliosCount={0}
                         />
                     ))}
@@ -1269,6 +1306,21 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                 <h2 className="section-title text-xl mb-4">Credit Cards</h2>
                 <p className="text-sm text-slate-600 mb-3">
                     Link each card to a <strong>Credit Card</strong> liability on the Liabilities page so debt is counted once on net worth. Use <strong>Pay card</strong> to record a checking/savings → credit transfer (not spending).
+                    {setActivePage ? (
+                        <>
+                            {' '}
+                            Apply statement cashback via{' '}
+                            <button
+                                type="button"
+                                className="text-primary font-medium hover:underline"
+                                onClick={() => setActivePage('Rewards')}
+                            >
+                                Rewards → Redeem (statement credit)
+                            </button>
+                            {' '}
+                            so it reduces debt without counting as Income.
+                        </>
+                    ) : null}
                 </p>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {orderedCreditAccounts.map((acc) => {
@@ -1334,6 +1386,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                                 account={acc}
                                 onEditAccount={handleOpenAccountModal}
                                 onDeleteAccount={handleOpenDeleteModal}
+                                onReconcileBalance={canReconcileBalances ? setReconcileAccount : undefined}
                                 linkedPortfoliosCount={0}
                                 footer={footer}
                             />
@@ -1348,7 +1401,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
                             {orderedInvestmentAccounts.map((acc) => {
                         const linkedCount = (data?.investments ?? []).filter((p: { accountId?: string; account_id?: string }) => (p.accountId ?? (p as any).account_id) === acc.id).length;
                         return (
-                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} linkedPortfoliosCount={linkedCount} balanceMetricLabel="Tradable cash" />
+                            <AccountCardComponent key={acc.id} account={acc} onEditAccount={handleOpenAccountModal} onDeleteAccount={handleOpenDeleteModal} onReconcileBalance={canReconcileBalances ? setReconcileAccount : undefined} linkedPortfoliosCount={linkedCount} balanceMetricLabel="Tradable cash" />
                         );
                     })}
                 </div>
@@ -1366,6 +1419,32 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage }) => {
             )}
 
             <AccountModal isOpen={isAccountModalOpen} onClose={() => setIsAccountModalOpen(false)} onSave={handleSaveAccount} accountToEdit={accountToEdit} allAccounts={data?.accounts ?? []} />
+            <ReconcileBalanceModal
+                isOpen={!!reconcileAccount}
+                onClose={() => setReconcileAccount(null)}
+                account={reconcileAccount}
+                transactions={data?.transactions}
+                investmentTransactions={data?.investmentTransactions}
+                portfolioIds={reconcilePortfolioIds}
+                onApply={async ({ accountId, actualValue, reason, effectiveDate, confirmBackdated, mechanism }) => {
+                    const result = await applyReconciliationAdjustment({
+                        mechanism,
+                        entityType: 'account',
+                        entityId: accountId,
+                        actualValue,
+                        reason,
+                        effectiveDate,
+                        confirmBackdated,
+                    });
+                    if (!result.ok) throw new Error(result.error || 'Reconcile failed');
+                    if (result.noop) toast('Balance already matches — nothing to post.', 'info');
+                    else
+                      toast(
+                        mechanism === 'opening_balance' ? 'Opening balance posted.' : 'Balance reconciled.',
+                        'success',
+                      );
+                }}
+            />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
 
             <Modal isOpen={isRecurringTransferModalOpen} onClose={() => setIsRecurringTransferModalOpen(false)} title="Schedule recurring transfer">

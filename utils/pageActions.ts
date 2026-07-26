@@ -40,8 +40,47 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
     );
   }
 
+  if (page === 'Accounts') {
+    return (
+      action === 'open-reconcile-balance' ||
+      /^open-reconcile-balance:[^\s:]+$/.test(action)
+    );
+  }
+
   if (page === 'Assets') {
-    return action === 'open-asset-modal';
+    return (
+      action === 'open-asset-modal' ||
+      action === 'open-revalue' ||
+      /^open-revalue:[^\s:]+$/.test(action)
+    );
+  }
+
+  if (page === 'Liabilities') {
+    return (
+      action === 'open-restate' ||
+      /^open-restate:[^\s:]+$/.test(action)
+    );
+  }
+
+  if (page === 'Commodities') {
+    return (
+      action === 'open-revalue' ||
+      /^open-revalue:[^\s:]+$/.test(action)
+    );
+  }
+
+  if (page === 'Rewards') {
+    return (
+      action === 'open-create-reward' ||
+      action === 'open-earn' ||
+      /^open-earn:[^\s:]+$/.test(action) ||
+      action === 'open-redeem' ||
+      /^open-redeem:[^\s:]+$/.test(action) ||
+      action === 'open-rewards-expire' ||
+      /^open-rewards-expire:/.test(action) ||
+      action === 'open-apply-cashback' ||
+      /^open-apply-cashback:[^\s:]+$/.test(action)
+    );
   }
 
   if (page === 'Investments') {
@@ -58,7 +97,13 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'open-corporate-action-wizard' ||
       action === 'open-corporate-action-wizard:from-plan' ||
       /^focus-symbol:.+/.test(action) ||
-      action === 'openRiskTradingHub'
+      action === 'openRiskTradingHub' ||
+      action === 'open-reconcile-quantity' ||
+      /^open-reconcile-quantity:[^\s:]+$/.test(action) ||
+      action === 'open-reconcile-broker-cash' ||
+      /^open-reconcile-broker-cash:[^\s:]+$/.test(action) ||
+      action === 'open-edit-investment-tx' ||
+      /^open-edit-investment-tx:[^\s:]+$/.test(action)
     );
   }
 

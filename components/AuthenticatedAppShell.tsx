@@ -35,7 +35,7 @@ const VALID_PAGES: Page[] = [
   'Investments', 'Plan', 'Wealth Ultra', 'Market Events', 'Recovery Plan',
   'Investment Plan', 'Dividend Tracker', 'AI Rebalancer', 'Watchlist',
   'Assets', 'System & APIs Health', 'Statement Upload', 'Statement History', 'Commodities',
-  'Engines & Tools', 'Installments',
+  'Engines & Tools', 'Installments', 'Rewards', 'Documents', 'Subscriptions', 'Estate',
 ];
 
 function decodeHashPage(): string {
@@ -117,9 +117,9 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
       case 'Wealth Analytics':
         return <Lazy key={routeKey} {...nav} />;
       case 'Accounts':
-        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+        return <Lazy key={routeKey} setActivePage={setActivePage} {...actionProps} />;
       case 'Liabilities':
-        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+        return <Lazy key={routeKey} setActivePage={setActivePage} {...actionProps} />;
       case 'Transactions':
         return <Lazy key={routeKey} {...actionProps} {...nav} />;
       case 'Budgets':
@@ -143,7 +143,7 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
       case 'Assets':
         return <Lazy key={routeKey} {...actionProps} setActivePage={setActivePage} />;
       case 'Commodities':
-        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+        return <Lazy key={routeKey} setActivePage={setActivePage} {...actionProps} />;
       case 'Statement Upload':
         return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Statement History':
@@ -151,12 +151,18 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
       case 'Market Events':
         return <Lazy key={routeKey} setActivePage={setActivePage} />;
       case 'System & APIs Health':
-        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+        return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Wealth Ultra':
         return <Lazy key={routeKey} {...nav} />;
       case 'Engines & Tools':
         return <Lazy key={routeKey} {...nav} {...actionProps} />;
       case 'Installments':
+        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+      case 'Rewards':
+        return <Lazy key={routeKey} setActivePage={setActivePage} {...actionProps} />;
+      case 'Documents':
+      case 'Subscriptions':
+      case 'Estate':
         return <Lazy key={routeKey} setActivePage={setActivePage} />;
       default:
         return <Lazy key={routeKey} {...nav} />;

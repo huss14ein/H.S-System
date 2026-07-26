@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { Asset, Goal, AssetType, CommodityHolding, Page } from '../types';
 import Card from '../components/Card';
 import Modal from '../components/Modal';
@@ -27,6 +28,8 @@ import PageLayout from '../components/PageLayout';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { parseMoneyInput, roundMoney, roundQuantity } from '../utils/money';
 import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
+import RevaluationModal from '../components/reconciliation/RevaluationModal';
+import { toast } from '../context/ToastContext';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useExtendedCanonicalMetrics, pickCommoditiesValueSar } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
@@ -77,14 +80,16 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setFormError(null);
-        const parsedValue = parseMoneyInput(value);
+        const parsedValue = assetToEdit
+            ? Number(assetToEdit.value)
+            : parseMoneyInput(value);
         const parsedPurchasePrice = purchasePrice.trim() !== '' ? parseMoneyInput(purchasePrice) : undefined;
         const parsedMonthlyRent = type === 'Property' && isRental ? parseMoneyInput(monthlyRent) : undefined;
         if (!name.trim()) {
             setFormError('Asset name is required.');
             return;
         }
-        if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+        if (!assetToEdit && (!Number.isFinite(parsedValue) || parsedValue < 0)) {
             setFormError('Current value must be a non-negative number.');
             return;
         }
@@ -126,7 +131,16 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
                     <option value="Vehicle">Vehicle</option>
                     <option value="Other">Other</option>
                 </select>
-                <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label><input type="number" min="0" step="any" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
+                {assetToEdit ? (
+                    <p className="text-xs text-slate-600 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        Book value is {assetToEdit.value}. Use <strong>Revalue</strong> on the asset card for appraisal/depreciation (no cash transaction).
+                    </p>
+                ) : (
+                    <>
+                        <label className="block text-sm font-medium text-gray-700 flex items-center">Current Value <InfoHint text="Use your best current market estimate; this affects net worth and allocation insights." /></label>
+                        <input type="number" min="0" step="any" placeholder="Current Value" value={value} onChange={e => setValue(e.target.value)} required className="input-base"/>
+                    </>
+                )}
                 <input type="number" min="0" step="any" placeholder="Purchase Price (optional)" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} className="input-base"/>
                 <label className="block text-sm font-medium text-gray-700 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label><input type="text" placeholder="Owner (e.g., Father, Spouse) or leave blank for yours" value={owner} onChange={e => setOwner(e.target.value)} className="input-base" />
                 {type === 'Property' && (
@@ -161,10 +175,11 @@ const AssetModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (asse
 const AssetCardComponent: React.FC<{
     asset: Asset;
     onEdit: (asset: Asset) => void;
+    onRevalue?: (asset: Asset) => void;
     onDelete: (asset: Asset | CommodityHolding) => void;
     onLinkGoal: (assetId: string, goalId: string) => void;
     goals: Goal[];
-}> = ({ asset, onEdit, onDelete, onLinkGoal, goals }) => {
+}> = ({ asset, onEdit, onRevalue, onDelete, onLinkGoal, goals }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const getAssetIcon = (type: Asset['type']) => {
         switch (type) {
@@ -190,6 +205,11 @@ const AssetCardComponent: React.FC<{
                     </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
+                    {onRevalue && (
+                        <button type="button" onClick={() => onRevalue(asset)} className="px-2 py-1 rounded-lg text-xs font-medium text-emerald-700 hover:bg-emerald-50 border border-emerald-200" aria-label="Revalue asset">
+                            Revalue
+                        </button>
+                    )}
                     <button type="button" onClick={() => onEdit(asset)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit asset"><PencilIcon className="h-4 w-4"/></button>
                     <button type="button" onClick={() => onDelete(asset)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete asset"><TrashIcon className="h-4 w-4"/></button>
                 </div>
@@ -504,7 +524,14 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
         </Modal>
     );
 };
-const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: Asset | CommodityHolding) => void; goals: Goal[]; onLinkGoal: (holdingId: string, goalId: string) => void }> = ({ holding, onEdit, onDelete, goals, onLinkGoal }) => {
+const CommodityHoldingCard: React.FC<{
+  holding: CommodityHolding;
+  onEdit: (h: CommodityHolding) => void;
+  onRevalue?: (h: CommodityHolding) => void;
+  onDelete: (h: Asset | CommodityHolding) => void;
+  goals: Goal[];
+  onLinkGoal: (holdingId: string, goalId: string) => void;
+}> = ({ holding, onEdit, onRevalue, onDelete, goals, onLinkGoal }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const unrealizedGain = holding.currentValue - holding.purchaseValue;
     const unrealizedGainPct = holding.purchaseValue > 0 ? (unrealizedGain / holding.purchaseValue) * 100 : null;
@@ -528,6 +555,11 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                     </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
+                    {onRevalue && (
+                        <button type="button" onClick={() => onRevalue(holding)} className="px-2 py-1 rounded-lg text-xs font-medium text-emerald-700 hover:bg-emerald-50 border border-emerald-200">
+                            Revalue
+                        </button>
+                    )}
                     <button type="button" onClick={() => onEdit(holding)} className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-slate-100" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button>
                     <button type="button" onClick={() => onDelete(holding)} className="p-2 rounded-lg text-slate-400 hover:text-danger hover:bg-red-50" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button>
                 </div>
@@ -569,7 +601,9 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void; setActivePage?: (page: Page) => void; }
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
-    const { data, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+    const { data, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, applyReconciliationAdjustment } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
+    const canRevalue = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { isAiAvailable, aiHealthChecked } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     const metrics = useExtendedCanonicalMetrics();
@@ -579,6 +613,11 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     // State for both types of modals
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [assetToEdit, setAssetToEdit] = useState<Asset | null>(null);
+    const [revalueTarget, setRevalueTarget] = useState<
+        | { kind: 'asset'; asset: Asset }
+        | { kind: 'commodity'; holding: CommodityHolding }
+        | null
+    >(null);
     const [preferredAssetType, setPreferredAssetType] = useState<AssetType>('Property');
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
@@ -808,6 +847,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                             key={asset.id}
                             asset={asset}
                             onEdit={handleOpenAssetModal}
+                            onRevalue={canRevalue ? (a) => setRevalueTarget({ kind: 'asset', asset: a }) : undefined}
                             onDelete={handleOpenDeleteModal}
                             onLinkGoal={handleLinkGoal}
                             goals={data?.goals ?? []}
@@ -879,7 +919,15 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 min-w-0">
                     {orderedCommodities.map((h) => (
-                        <CommodityHoldingCard key={h.id} holding={h} goals={data?.goals ?? []} onLinkGoal={handleLinkCommodityGoal} onEdit={handleOpenCommodityModal} onDelete={handleOpenDeleteModal} />
+                        <CommodityHoldingCard
+                          key={h.id}
+                          holding={h}
+                          goals={data?.goals ?? []}
+                          onLinkGoal={handleLinkCommodityGoal}
+                          onEdit={handleOpenCommodityModal}
+                          onRevalue={canRevalue ? (holding) => setRevalueTarget({ kind: 'commodity', holding }) : undefined}
+                          onDelete={handleOpenDeleteModal}
+                        />
                     ))}
                     {commodityList.length === 0 && <p className="empty-state col-span-full py-8 text-center text-slate-500">No metals or crypto added yet. Use the menu above to add a commodity.</p>}
                 </div>
@@ -894,6 +942,38 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             />
             
             <AssetModal isOpen={isAssetModalOpen} onClose={() => setIsAssetModalOpen(false)} onSave={handleSaveAsset} assetToEdit={assetToEdit} preferredType={preferredAssetType} />
+            <RevaluationModal
+                isOpen={!!revalueTarget}
+                onClose={() => setRevalueTarget(null)}
+                title={revalueTarget?.kind === 'commodity' ? 'Commodity revaluation' : 'Asset revaluation'}
+                entityType={revalueTarget?.kind === 'commodity' ? 'commodity' : 'asset'}
+                entityId={
+                    revalueTarget?.kind === 'commodity'
+                        ? revalueTarget.holding.id
+                        : revalueTarget?.asset.id ?? ''
+                }
+                entityLabel={
+                    revalueTarget?.kind === 'commodity'
+                        ? revalueTarget.holding.name || revalueTarget.holding.symbol
+                        : revalueTarget?.asset.name ?? ''
+                }
+                beforeValue={
+                    revalueTarget?.kind === 'commodity'
+                        ? Number(revalueTarget.holding.currentValue ?? 0)
+                        : Number(revalueTarget?.asset.value ?? 0)
+                }
+                onApply={async ({ entityType, entityId, actualValue, reason }) => {
+                    const result = await applyReconciliationAdjustment({
+                        mechanism: entityType === 'commodity' ? 'commodity_revaluation' : 'asset_revaluation',
+                        entityType,
+                        entityId,
+                        actualValue,
+                        reason,
+                    });
+                    if (!result.ok) throw new Error(result.error || 'Revaluation failed');
+                    toast('Revaluation applied.', 'success');
+                }}
+            />
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} goals={data?.goals ?? []} sarPerUsd={sarPerUsd} />
             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.name || ''} />
         </PageLayout>

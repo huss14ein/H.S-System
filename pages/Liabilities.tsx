@@ -1,6 +1,7 @@
 
-import React, { useState, useMemo, useContext } from 'react';
+import React, { useState, useMemo, useContext, useEffect } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import { Account, Liability, Page } from '../types';
 import { isPersonalWealth, getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import Card from '../components/Card';
@@ -10,6 +11,8 @@ import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { HomeIcon } from '../components/icons/HomeIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { PencilIcon } from '../components/icons/PencilIcon';
+import RevaluationModal from '../components/reconciliation/RevaluationModal';
+import { toast } from '../context/ToastContext';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import InfoHint from '../components/InfoHint';
@@ -22,6 +25,7 @@ import OwnerBadge from '../components/OwnerBadge';
 import { liquidityRatio, debtServiceRatio } from '../services/liabilityMetrics';
 import { countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { debtPayoffPlan, debtStressScore } from '../services/debtEngines';
+import { buildAmortizationSchedule } from '../services/debtAmortization';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { toSAR } from '../utils/currencyMath';
@@ -97,7 +101,9 @@ const LiabilityModal: React.FC<{
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const value = Math.abs(parseFloat(amount) || 0);
+        const value = liabilityToEdit
+            ? Math.abs(Number(liabilityToEdit.amount) || 0)
+            : Math.abs(parseFloat(amount) || 0);
         const ok = await confirmAction(
             summarizeLiabilityForConfirm({
                 name,
@@ -153,7 +159,13 @@ const LiabilityModal: React.FC<{
                         {isReceivable ? 'Amount owed to you' : 'Total amount owed'}
                         <InfoHint text={isReceivable ? "Amount they owe you (outstanding)." : "Outstanding balance; affects net worth and Zakat deductible liabilities."} />
                     </label>
-                    <input type="number" step="any" min="0" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} required className="input-base"/>
+                    {liabilityToEdit ? (
+                        <p className="text-xs text-slate-600 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            Principal is locked here ({Math.abs(Number(liabilityToEdit.amount) || 0)}). Use <strong>Restate</strong> on the card for a principal restatement (no cash TX).
+                        </p>
+                    ) : (
+                        <input type="number" step="any" min="0" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} required className="input-base"/>
+                    )}
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Owner (optional) <InfoHint text="Leave blank for your own (counts in My net worth). Set e.g. Father for managed wealth (excluded from your net worth)." /></label>
@@ -228,7 +240,82 @@ const LiabilityModal: React.FC<{
     );
 };
 
-const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; canEdit: boolean; onGoToAccounts?: () => void; goalName?: string | null }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts, goalName }) => {
+const LiabilityAmortizationPreview: React.FC<{ liability: Liability }> = ({ liability }) => {
+    const { formatCurrencyString } = useFormatCurrency();
+    const schedule = useMemo(() => {
+        const principal = Math.abs(Number(liability.amount) || 0);
+        if (!(principal > 0)) return null;
+        const apr = (Number(liability.apr) || 0) / 100;
+        let months = 0;
+        if (liability.maturityDate) {
+            const end = new Date(liability.maturityDate);
+            const now = new Date();
+            if (!Number.isNaN(end.getTime()) && end > now) {
+                months = Math.max(
+                    1,
+                    (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth()),
+                );
+            }
+        }
+        if (!months && liability.minPayment && liability.minPayment > 0) {
+            // Approximate remaining term from level payment when maturity is unknown.
+            const r = apr / 12;
+            const pmt = Number(liability.minPayment);
+            if (r > 0 && pmt > principal * r) {
+                months = Math.ceil(Math.log(pmt / (pmt - principal * r)) / Math.log(1 + r));
+            } else if (pmt > 0) {
+                months = Math.ceil(principal / pmt);
+            }
+        }
+        if (!months || months > 600) return null;
+        return buildAmortizationSchedule({ principal, aprAnnual: apr, months });
+    }, [liability.amount, liability.apr, liability.maturityDate, liability.minPayment]);
+
+    if (!schedule) return null;
+    const firstRows = schedule.rows.slice(0, 3);
+    return (
+        <details className="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-600">
+            <summary className="cursor-pointer font-medium text-slate-700 select-none">
+                Amortization preview · {formatCurrencyString(schedule.monthlyPayment, { digits: 0 })}/mo · total interest{' '}
+                {formatCurrencyString(schedule.totalInterest, { digits: 0 })}
+            </summary>
+            <p className="mt-1 text-[11px] text-slate-500">
+                Level-payment schedule from balance, APR, and maturity (or min payment). Illustrative — not a bank quote.
+            </p>
+            <table className="mt-2 w-full text-[11px]">
+                <thead className="text-left text-slate-500">
+                    <tr>
+                        <th className="py-0.5 pr-2">#</th>
+                        <th className="py-0.5 pr-2">Payment</th>
+                        <th className="py-0.5 pr-2">Interest</th>
+                        <th className="py-0.5 pr-2">Principal</th>
+                        <th className="py-0.5">Balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {firstRows.map((r) => (
+                        <tr key={r.period} className="border-t border-slate-50">
+                            <td className="py-0.5 pr-2">{r.period}</td>
+                            <td className="py-0.5 pr-2">{formatCurrencyString(r.payment, { digits: 0 })}</td>
+                            <td className="py-0.5 pr-2">{formatCurrencyString(r.interest, { digits: 0 })}</td>
+                            <td className="py-0.5 pr-2">{formatCurrencyString(r.principal, { digits: 0 })}</td>
+                            <td className="py-0.5">{formatCurrencyString(r.balance, { digits: 0 })}</td>
+                        </tr>
+                    ))}
+                    {schedule.rows.length > 3 && (
+                        <tr>
+                            <td colSpan={5} className="pt-1 text-slate-400">
+                                … {schedule.rows.length - 3} more period(s)
+                            </td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
+        </details>
+    );
+};
+
+const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onRestate?: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; canEdit: boolean; onGoToAccounts?: () => void; goalName?: string | null }> = ({ liability, onEdit, onRestate, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts, goalName }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     const getIcon = (type: Liability['type']) => {
@@ -258,7 +345,12 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                 </div>
                 <div className="flex space-x-1 items-center">
                     {canEdit && (
-                        <button type="button" onClick={() => onEdit(liability)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit"><PencilIcon className="h-4 w-4"/></button>
+                        <>
+                            {onRestate && (
+                                <button type="button" onClick={() => onRestate(liability)} className="px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50">Restate</button>
+                            )}
+                            <button type="button" onClick={() => onEdit(liability)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit"><PencilIcon className="h-4 w-4"/></button>
+                        </>
                     )}
                     {canMarkPaid && !isPaid && (
                         <button type="button" onClick={() => onMarkPaid(liability)} className="p-1.5 text-gray-400 hover:text-emerald-600 flex items-center gap-1 text-xs font-medium" aria-label="Mark as paid" title="Mark as paid (keeps reference)"><CheckCircleIcon className="h-4 w-4"/><span className="hidden sm:inline">Paid</span></button>
@@ -284,11 +376,22 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                     )}
                 </div>
             )}
+            {!isPaid && liability.type !== 'Credit Card' && Math.abs(liability.amount) > 0 && (
+                <LiabilityAmortizationPreview liability={liability} />
+            )}
         </div>
     );
 };
 
-const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; goalName?: string | null }> = ({ liability, onEdit, onMarkPaid, canMarkPaid, goalName }) => {
+const ReceivableCard: React.FC<{
+  liability: Liability;
+  onEdit: (l: Liability) => void;
+  onRestate?: (l: Liability) => void;
+  onMarkPaid: (l: Liability) => void;
+  canMarkPaid: boolean;
+  canEdit?: boolean;
+  goalName?: string | null;
+}> = ({ liability, onEdit, onRestate, onMarkPaid, canMarkPaid, canEdit = true, goalName }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     return (
@@ -306,7 +409,12 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
                     </div>
                 </div>
                 <div className="flex space-x-1 items-center">
-                    <button type="button" onClick={() => onEdit(liability)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit"><PencilIcon className="h-4 w-4"/></button>
+                    {canEdit && onRestate && (
+                        <button type="button" onClick={() => onRestate(liability)} className="px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50">Restate</button>
+                    )}
+                    {canEdit && (
+                        <button type="button" onClick={() => onEdit(liability)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit"><PencilIcon className="h-4 w-4"/></button>
+                    )}
                     {canMarkPaid && !isPaid && (
                         <button type="button" onClick={() => onMarkPaid(liability)} className="p-1.5 text-gray-400 hover:text-emerald-600 flex items-center gap-1 text-xs font-medium" aria-label="Mark as paid" title="Mark as paid (keeps reference)"><CheckCircleIcon className="h-4 w-4"/><span className="hidden sm:inline">Paid</span></button>
                     )}
@@ -320,13 +428,20 @@ const ReceivableCard: React.FC<{ liability: Liability; onEdit: (l: Liability) =>
     );
 };
 
-interface LiabilitiesProps { setActivePage?: (page: Page) => void; }
-const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
-    const { data, addLiability, updateLiability } = useContext(DataContext)!;
+interface LiabilitiesProps {
+  setActivePage?: (page: Page) => void;
+  pageAction?: string | null;
+  clearPageAction?: () => void;
+}
+const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage, pageAction, clearPageAction }) => {
+    const { data, addLiability, updateLiability, applyReconciliationAdjustment } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
+    const canRestate = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { formatCurrencyString } = useFormatCurrency();
     const { breakdown, sarPerUsd } = useCanonicalFinancialMetrics();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [liabilityToEdit, setLiabilityToEdit] = useState<Liability | null>(null);
+    const [restateLiability, setRestateLiability] = useState<Liability | null>(null);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
     const allLiabilities: Liability[] = useMemo(() => {
@@ -360,6 +475,23 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
         () => new Map<string, string>((data?.goals ?? []).map((g) => [g.id, g.name])),
         [data?.goals],
     );
+
+    useEffect(() => {
+        if (!pageAction || !pageAction.startsWith('open-restate')) return;
+        if (!canRestate) {
+            toast('Your role cannot post reconciliation adjustments.', 'error');
+            clearPageAction?.();
+            return;
+        }
+        const requestedId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
+        const candidates = [...allDebts, ...allReceivables].filter((l) => liabilityIds.has(l.id));
+        const target = requestedId
+            ? candidates.find((l) => l.id === requestedId) ?? null
+            : candidates[0] ?? null;
+        if (target) setRestateLiability(target);
+        else toast('No liability found to restate.', 'info');
+        clearPageAction?.();
+    }, [pageAction, clearPageAction, canRestate, allDebts, allReceivables, liabilityIds]);
 
     /** Checking + savings only, SAR equivalent (mixed USD/SAR accounts). */
     const liquidCheckingSavingsSar = useMemo(() => {
@@ -687,7 +819,11 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
             )}
 
             <SectionCard title="What I Owe" collapsible collapsibleSummary="Debts" defaultExpanded>
-                <p className="text-sm text-gray-500 mb-4">Loans, mortgages, and credit card debt. Link each Credit Card liability to its Credit account (Accounts) so balances stay reconciled; unlinked credit accounts with debt still appear here.</p>
+                <p className="text-sm text-gray-500 mb-4">Loans, mortgages, and credit card debt. Link each Credit Card liability to its Credit account (Accounts) so balances stay reconciled; unlinked credit accounts with debt still appear here.
+                    {setActivePage ? (
+                        <> Apply card cashback as a liability reduction via <button type="button" className="text-primary font-medium hover:underline" onClick={() => setActivePage('Rewards')}>Rewards → statement credit</button> (never Income).</>
+                    ) : null}
+                </p>
                 {debts.length === 0 ? (
                     <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
                 ) : (
@@ -697,6 +833,7 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                                 key={liab.id}
                                 liability={liab}
                                 onEdit={l => handleOpenModal(l)}
+                                onRestate={canRestate && liabilityIds.has(liab.id) ? (l) => setRestateLiability(l) : undefined}
                                 onMarkPaid={handleMarkPaid}
                                 canMarkPaid={liabilityIds.has(liab.id)}
                                 canEdit={liabilityIds.has(liab.id)}
@@ -715,7 +852,16 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 ) : (
                     <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                         {receivables.map(liab => (
-                            <ReceivableCard key={liab.id} liability={liab} onEdit={l => handleOpenModal(l)} onMarkPaid={handleMarkPaid} canMarkPaid={liabilityIds.has(liab.id)} goalName={liab.goalId ? goalNameById.get(liab.goalId) ?? null : null} />
+                            <ReceivableCard
+                              key={liab.id}
+                              liability={liab}
+                              onEdit={l => handleOpenModal(l)}
+                              onRestate={canRestate && liabilityIds.has(liab.id) ? (l) => setRestateLiability(l) : undefined}
+                              onMarkPaid={handleMarkPaid}
+                              canMarkPaid={liabilityIds.has(liab.id)}
+                              canEdit={liabilityIds.has(liab.id)}
+                              goalName={liab.goalId ? goalNameById.get(liab.goalId) ?? null : null}
+                            />
                         ))}
                     </div>
                 )}
@@ -736,6 +882,29 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage }) => {
                 liabilityToEdit={liabilityToEdit}
                 goals={(data?.goals ?? []).map((g) => ({ id: g.id, name: g.name }))}
                 creditAccounts={(data?.accounts ?? []).filter((a) => a.type === 'Credit')}
+            />
+            <RevaluationModal
+                isOpen={!!restateLiability}
+                onClose={() => setRestateLiability(null)}
+                title="Liability principal restatement"
+                entityType="liability"
+                entityId={restateLiability?.id ?? ''}
+                entityLabel={restateLiability?.name ?? ''}
+                beforeValue={Math.abs(Number(restateLiability?.amount ?? 0))}
+                onApply={async ({ entityId, actualValue, reason }) => {
+                    // Signed storage: debts negative, receivables positive.
+                    const signed =
+                        restateLiability?.type === 'Receivable' ? Math.abs(actualValue) : -Math.abs(actualValue);
+                    const result = await applyReconciliationAdjustment({
+                        mechanism: 'liability_restatement',
+                        entityType: 'liability',
+                        entityId,
+                        actualValue: signed,
+                        reason,
+                    });
+                    if (!result.ok) throw new Error(result.error || 'Restatement failed');
+                    toast('Liability restated.', 'success');
+                }}
             />
         </PageLayout>
     );

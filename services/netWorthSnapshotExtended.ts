@@ -38,6 +38,7 @@ export function buildNetWorthSnapshotFromHeadline(
       receivables: buckets.receivables,
       liabilities: buckets.liabilities,
       ...(sukukAudit > 0 ? { sukukSar: sukukAudit } : {}),
+      ...(buckets.rewards ? { rewards: buckets.rewards } : {}),
     },
   };
 }

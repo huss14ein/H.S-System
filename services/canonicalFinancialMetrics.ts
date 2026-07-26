@@ -33,6 +33,13 @@ import {
   buildHeadlineInvestmentAllocationSlices,
   type HeadlineInvestmentAllocationSlices,
 } from './headlineInvestmentAllocation';
+import {
+  buildAvailableLiquiditySnapshot,
+  sumGoalReservesSar,
+  type AvailableLiquiditySnapshot,
+} from './availableLiquidity';
+import { computeEmergencyFundMetrics } from '../hooks/useEmergencyFund';
+import { sumRewardsFiatSar } from './rewards';
 
 /** Platforms + commodities + Sukuk slice totals (matches headline investments bucket decomposition). */
 export type HeadlineExposureParts = Pick<
@@ -55,6 +62,51 @@ export function deriveHeadlineExposureParts(
     commoditiesValueSar,
     sukukPositionsValueSar,
   };
+}
+
+/**
+ * Available liquidity + reserves + rewards memo, computed from the already-known
+ * `liquidCashSar`. Emergency floor reuses the shared emergency-fund estimate so the
+ * "free to deploy" number matches the Accounts / Dashboard emergency card.
+ */
+export function computeLiquiditySlices(
+  data: FinancialData | null | undefined,
+  exchangeRate: number,
+  liquidCashSar: number,
+  sarPerUsd: number,
+  getAvailableCashForAccount?: (accountId: string) => { SAR: number; USD: number },
+): AvailableLiquiditySnapshot & { rewardsSar: number } {
+  const rewardsSar = sumRewardsFiatSar(data, sarPerUsd);
+  if (!data) {
+    return {
+      liquidCashSar: Math.max(0, liquidCashSar || 0),
+      reservedLiquiditySar: 0,
+      emergencyFundFloorSar: 0,
+      availableLiquiditySar: Math.max(0, liquidCashSar || 0),
+      rewardsSar,
+    };
+  }
+  let monthlyEssentialExpenseSar = 0;
+  let monthsTarget = 6;
+  try {
+    const ef = computeEmergencyFundMetrics(data, {
+      exchangeRate,
+      sarPerUsd,
+      getAvailableCashForAccount,
+      skipHydrate: true,
+    });
+    monthlyEssentialExpenseSar = ef.monthlyCoreExpenses;
+    monthsTarget = ef.targetMonths;
+  } catch {
+    monthlyEssentialExpenseSar = 0;
+  }
+  const snapshot = buildAvailableLiquiditySnapshot({
+    data,
+    liquidCashSar,
+    monthlyEssentialExpenseSar,
+    monthsTarget,
+  });
+  return { ...snapshot, rewardsSar };
 }
 
 export type CanonicalFinancialMetricsInput = {
@@ -89,6 +141,14 @@ export type CanonicalFinancialMetrics = {
   headlineExposureParts: HeadlineExposureParts;
   /** Pie/portfolio rows scaled to `investmentsTotalSar` (Investments Overview, dashboards). */
   investmentAllocation: HeadlineInvestmentAllocationSlices;
+  /** Free-to-deploy liquidity after the emergency floor and goal escrow reserves. */
+  availableLiquiditySar: number;
+  /** Virtual escrow reserved toward goals / sinking funds (SAR). */
+  reservedLiquiditySar: number;
+  /** Emergency-fund floor kept untouched (SAR). */
+  emergencyFundFloorSar: number;
+  /** Rewards/points/cashback memo value (SAR) — never EF or investable cash. */
+  rewardsSar: number;
 };
 
 /** Dashboard + NetWorthCockpit bundle (skips wealth summary / allocation charts). */
@@ -172,6 +232,8 @@ export function buildFastCanonicalFinancialMetrics(
         commoditiesValueSar: 0,
         sukukPositionsValueSar: 0,
       };
+  const reservedLiquiditySar = sumGoalReservesSar(input.data);
+  const rewardsSar = sumRewardsFiatSar(input.data, dashboard.sarPerUsd);
   return {
     ...dashboard,
     breakdown: {
@@ -186,6 +248,11 @@ export function buildFastCanonicalFinancialMetrics(
     investmentsTotalSar,
     headlineExposureParts,
     investmentAllocation: EMPTY_INVESTMENT_ALLOCATION(investmentsTotalSar),
+    // Fast tier skips the emergency-floor estimate; reserved + rewards are cheap.
+    availableLiquiditySar: Math.max(0, (dashboard.liquidCashSar ?? 0) - reservedLiquiditySar),
+    reservedLiquiditySar,
+    emergencyFundFloorSar: 0,
+    rewardsSar,
   };
 }
 
@@ -247,15 +314,25 @@ export function extendCanonicalFinancialMetrics(
     simulatedPrices,
   );
 
-  return mergeExtendedIntoDashboard(dashboard, {
-    breakdown,
-    wealthSummary,
-    investableCashTotalSar,
-    investmentExposure,
-    investmentsTotalSar,
-    headlineExposureParts,
-    investmentAllocation,
-  });
+  return mergeExtendedIntoDashboard(
+    dashboard,
+    {
+      breakdown,
+      wealthSummary,
+      investableCashTotalSar,
+      investmentExposure,
+      investmentsTotalSar,
+      headlineExposureParts,
+      investmentAllocation,
+    },
+    computeLiquiditySlices(
+      data,
+      exchangeRate,
+      dashboard.liquidCashSar,
+      dashboard.sarPerUsd,
+      getAvailableCashForAccount,
+    ),
+  );
 }
 
 export function mergeExtendedIntoDashboard(
@@ -270,7 +347,13 @@ export function mergeExtendedIntoDashboard(
     | 'headlineExposureParts'
     | 'investmentAllocation'
   >,
+  liquidity?: AvailableLiquiditySnapshot & { rewardsSar: number },
 ): CanonicalFinancialMetrics {
+  const reservedLiquiditySar = liquidity?.reservedLiquiditySar ?? 0;
+  const emergencyFundFloorSar = liquidity?.emergencyFundFloorSar ?? 0;
+  const availableLiquiditySar =
+    liquidity?.availableLiquiditySar ??
+    Math.max(0, (dashboard.liquidCashSar ?? 0) - reservedLiquiditySar - emergencyFundFloorSar);
   return {
     headline: dashboard.headline,
     breakdown: extended.breakdown,
@@ -287,6 +370,10 @@ export function mergeExtendedIntoDashboard(
     investmentsTotalSar: extended.investmentsTotalSar,
     headlineExposureParts: extended.headlineExposureParts,
     investmentAllocation: extended.investmentAllocation,
+    availableLiquiditySar,
+    reservedLiquiditySar,
+    emergencyFundFloorSar,
+    rewardsSar: liquidity?.rewardsSar ?? 0,
   };
 }
 
@@ -370,6 +457,15 @@ export function computeCanonicalFinancialMetrics(
     simulatedPrices,
   );
 
+  const liquidCashSar = kpiSnapshot?.liquidCashSar ?? 0;
+  const liquidity = computeLiquiditySlices(
+    data,
+    exchangeRate,
+    liquidCashSar,
+    headline.sarPerUsd,
+    getAvailableCashForAccount,
+  );
+
   return {
     headline,
     breakdown,
@@ -380,11 +476,15 @@ export function computeCanonicalFinancialMetrics(
     investableCashTotalSar,
     sarPerUsd: headline.sarPerUsd,
     netWorth: headline.netWorth,
-    liquidCashSar: kpiSnapshot?.liquidCashSar ?? 0,
+    liquidCashSar,
     nwOptions,
     investmentExposure,
     investmentsTotalSar,
     headlineExposureParts,
     investmentAllocation,
+    availableLiquiditySar: liquidity.availableLiquiditySar,
+    reservedLiquiditySar: liquidity.reservedLiquiditySar,
+    emergencyFundFloorSar: liquidity.emergencyFundFloorSar,
+    rewardsSar: liquidity.rewardsSar,
   };
 }

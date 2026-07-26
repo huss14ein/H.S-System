@@ -93,6 +93,8 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
     const [targetAmount, setTargetAmount] = useState('');
     const [deadline, setDeadline] = useState('');
     const [priority, setPriority] = useState<'High' | 'Medium' | 'Low'>('Medium');
+    const [isSinkingFund, setIsSinkingFund] = useState(false);
+    const [reservedAmount, setReservedAmount] = useState('');
 
     useEffect(() => {
         if (goalToEdit) {
@@ -100,11 +102,15 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
             setTargetAmount(String(goalToEdit.targetAmount));
             setDeadline(new Date(goalToEdit.deadline).toISOString().split('T')[0]);
             setPriority(goalToEdit.priority || 'Medium');
+            setIsSinkingFund(Boolean(goalToEdit.isSinkingFund));
+            setReservedAmount(goalToEdit.reservedAmount != null ? String(goalToEdit.reservedAmount) : '');
         } else {
             setName('');
             setTargetAmount('');
             setDeadline('');
             setPriority('Medium');
+            setIsSinkingFund(false);
+            setReservedAmount('');
         }
     }, [goalToEdit, isOpen]);
 
@@ -129,6 +135,8 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
             targetAmount: parsedTarget,
             deadline,
             priority,
+            isSinkingFund,
+            reservedAmount: Math.max(0, parseFloat(reservedAmount) || 0),
         };
 
         try {
@@ -170,6 +178,17 @@ const GoalModal: React.FC<GoalModalProps> = ({ isOpen, onClose, onSave, goalToEd
                         <option value="Medium">Medium Priority</option>
                         <option value="Low">Low Priority</option>
                     </select>
+                </div>
+                <div className="rounded-lg border border-gray-100 p-3 space-y-2">
+                    <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                        <input type="checkbox" checked={isSinkingFund} onChange={e => setIsSinkingFund(e.target.checked)} />
+                        Treat as sinking fund (virtual escrow)
+                        <InfoHint text="Sinking funds reserve liquid cash toward a known future expense. Reserved escrow is subtracted from Available Liquidity — it is not a separate bank account." />
+                    </label>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Reserved escrow (SAR)</label>
+                        <input type="number" min="0" placeholder="0" value={reservedAmount} onChange={e => setReservedAmount(e.target.value)} className="input-base"/>
+                    </div>
                 </div>
                 <button type="submit" className="w-full btn-primary">Save Goal</button>
             </form>
@@ -733,7 +752,7 @@ const Goals: React.FC<{
     const { aiHealthChecked, isAiAvailable } = useAI();
     const { trackAction } = useSelfLearning();
     const { currency: displayCurrency } = useCurrency();
-    const { kpiSnapshot, sarPerUsd, liquidCashSar } = useCanonicalFinancialMetrics();
+    const { kpiSnapshot, sarPerUsd, liquidCashSar, availableLiquiditySar, reservedLiquiditySar } = useCanonicalFinancialMetrics();
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -974,7 +993,7 @@ const Goals: React.FC<{
     >
       <GoalsFundingEnvelopeBanner goalNames={goalsWithDualFundingNames} />
       <div className="rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50/90 to-white px-4 py-3 text-sm text-slate-700 shadow-sm mb-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 tabular-nums">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 tabular-nums">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-800">FX (headline)</p>
             <p className="font-bold text-slate-900">1 USD = {sarPerUsd.toFixed(2)} SAR</p>
@@ -990,6 +1009,15 @@ const Goals: React.FC<{
             <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-800">Liquid cash (Dashboard KPI)</p>
             <p className="font-bold text-slate-900">{formatCurrencyString(liquidCashSar, { digits: 0 })}</p>
             <p className="text-[11px] text-slate-500">Runway ~{efGoals.monthsCovered.toFixed(1)} mo</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-800">Available liquidity</p>
+            <p className="font-bold text-slate-900">{formatCurrencyString(availableLiquiditySar, { digits: 0 })}</p>
+            <p className="text-[11px] text-slate-500">
+              {reservedLiquiditySar > 0
+                ? `After ${formatCurrencyString(reservedLiquiditySar, { digits: 0 })} goal escrow`
+                : 'Free after EF floor & escrow'}
+            </p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-800">Rolling surplus ({GOAL_NET_CASHFLOW_LOOKBACK_MONTHS} mo)</p>

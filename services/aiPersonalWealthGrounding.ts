@@ -20,6 +20,8 @@ import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { getPersonalTransactions, getPersonalSukukPositions } from '../utils/wealthScope';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
+import { sumRewardsFiatSar, rewardsExpiringWithinDays } from './rewards/rewardsDomain';
+import { buildAvailableLiquiditySnapshot } from './availableLiquidity';
 
 export type AiGroundingBuildOptions = {
   data: FinancialData;
@@ -132,6 +134,19 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   const goalsProgress = formatGoalsProgressForPrompt(data, headline.sarPerUsd);
   const holdings = topHoldingsLines(data, headline.sarPerUsd, simulatedPrices);
   const sukukLines = directSukukLines(data, headline.sarPerUsd);
+  const rewardsSar = sumRewardsFiatSar(data, headline.sarPerUsd);
+  const expiringN = rewardsExpiringWithinDays(
+    data.rewardsAccounts ?? [],
+    data.rewardsTransactions ?? [],
+    30,
+  ).length;
+  const monthsTarget = Number(data.settings?.emergencyFundMonthsTarget) || 6;
+  const liq = buildAvailableLiquiditySnapshot({
+    data,
+    liquidCashSar: snap?.liquidCashSar ?? 0,
+    monthlyEssentialExpenseSar: cf.monthlyExpensesSar,
+    monthsTarget,
+  });
   const recentTxLines = personalTx.slice(0, 8).map((t) => {
     const cat = t.budgetCategory || t.category || 'Uncategorized';
     return `${t.date?.slice(0, 10) ?? ''}: ${(t.description || '').slice(0, 48)} | ${fmt(Math.abs(Number(t.amount) || 0))} SAR | ${cat}`;
@@ -144,6 +159,8 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     `Financial month: ${finLabel}`,
     `Headline net worth (SAR): ${fmt(headline.netWorth)}`,
     `Liquid cash (SAR): ${fmt(snap?.liquidCashSar ?? 0)}`,
+    `Available liquidity (SAR): ${fmt(liq.availableLiquiditySar)} (reserved ${fmt(liq.reservedLiquiditySar)}; EF floor ${fmt(liq.emergencyFundFloorSar)})`,
+    `Rewards memo (SAR, not cash/Zakat): ${fmt(rewardsSar)}${expiringN ? `; ${expiringN} lot(s) expire ≤30d` : ''}`,
     `This financial month — income ${fmt(cf.monthlyIncomeSar)} SAR, expenses ${fmt(cf.monthlyExpensesSar)} SAR, net ${fmt(cf.monthlyPnLSar)} SAR`,
     `Investment ROI (% on net capital, app): ${roiPct.toFixed(2)}`,
     overspentBudgetLines.length ? `Budget pressure (≥75% used): ${overspentBudgetLines.join('; ')}` : 'Budget pressure: none ≥75% this month',

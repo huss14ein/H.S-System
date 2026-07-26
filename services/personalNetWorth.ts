@@ -12,6 +12,7 @@ import {
 } from './investmentPlatformCardMetrics';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 import { sumPersonalSukukPositionsSar } from './sukuk/sukukExposure';
+import { sumRewardsFiatSar } from './rewards/rewardsDomain';
 
 export type PersonalNetWorthOptions = {
   /** When set, cash sitting in investment accounts (ledger) is included in assets — matches Dashboard ROI / deployable cash. */
@@ -40,6 +41,11 @@ export type PersonalNetWorthChartBucketsSAR = {
   receivables: number;
   /** Negative total debt for signed stack / liability band */
   liabilities: number;
+  /**
+   * Optional non-cash Rewards bucket (points/miles at conversion rate).
+   * Never emergency-fund or investable cash. Controlled by settings.includeRewardsInNetWorth.
+   */
+  rewards?: number;
   netWorth: number;
 };
 
@@ -184,7 +190,7 @@ export function computeAllNetWorthChartBucketsSAR(
   options?: PersonalNetWorthOptions
 ): PersonalNetWorthChartBucketsSAR {
   if (!data) {
-    return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 };
+    return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, rewards: 0, netWorth: 0 };
   }
   const sarPerUsd = resolveBalanceSheetSarPerUsd(data, uiExchangeRate);
   const b = accumulateBalanceSheetSlices(
@@ -217,8 +223,9 @@ export function computeAllNetWorthChartBucketsSAR(
   /** Same bucket taxonomy as personal headline (commodities in investments, not physical). */
   const investments = totalInvestmentsValue + brokerageCashSAR + sukukPositionsSar + totalCommodities;
   const physicalAndCommodities = b.physicalAssetsSar;
-  const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
-  return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };
+  const rewards = sumRewardsFiatSar(data, sarPerUsd);
+  const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities + rewards;
+  return { cash, investments, physicalAndCommodities, receivables, liabilities, rewards, netWorth };
 }
 
 /**
@@ -242,7 +249,8 @@ export function computePersonalNetWorthBreakdownSAR(
     b.totalCommodities +
     b.totalInvestmentsValue +
     b.brokerageCashSAR +
-    b.sukukPositionsSar;
+    b.sukukPositionsSar +
+    sumRewardsFiatSar(data, sarPerUsd);
 
   /** With platform cash, investments use headline exposure (platforms + commodities + Sukuk) — match chart buckets NW. */
   const netWorth = options?.getAvailableCashForAccount
@@ -264,7 +272,7 @@ export function computePersonalNetWorthChartBucketsSAR(
   options?: PersonalNetWorthOptions
 ): PersonalNetWorthChartBucketsSAR {
   if (!data) {
-    return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 };
+    return { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, rewards: 0, netWorth: 0 };
   }
   const b = accumulatePersonalBalanceSheet(data, sarPerUsd, options);
   const cash = b.cashAndSavingsPositive;
@@ -280,8 +288,9 @@ export function computePersonalNetWorthChartBucketsSAR(
       ).totalExposureSar
     : b.totalInvestmentsValue + b.brokerageCashSAR + b.sukukPositionsSar + b.totalCommodities;
   const physicalAndCommodities = b.physicalAssetsSar;
-  const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities;
-  return { cash, investments, physicalAndCommodities, receivables, liabilities, netWorth };
+  const rewards = sumRewardsFiatSar(data, sarPerUsd);
+  const netWorth = cash + investments + physicalAndCommodities + receivables + liabilities + rewards;
+  return { cash, investments, physicalAndCommodities, receivables, liabilities, rewards, netWorth };
 }
 
 /**
@@ -315,6 +324,8 @@ export type TodayBalanceSheetSnapshotSAR = {
   investmentsSar: number;
   physicalAndCommoditiesSar: number;
   receivablesSar: number;
+  /** Rewards/points memo value (SAR) — inside `assetsSar`, never cash or Zakat base. */
+  rewardsSar: number;
 };
 
 /**
@@ -337,6 +348,7 @@ export function computeTodayBalanceSheetSnapshotSar(
     investmentsSar: b.investments,
     physicalAndCommoditiesSar: b.physicalAndCommodities,
     receivablesSar: b.receivables,
+    rewardsSar: b.rewards ?? 0,
   };
 }
 
@@ -357,7 +369,7 @@ export function computePersonalHeadlineNetWorthSar(
     const fallback = Number.isFinite(uiExchangeRate) && uiExchangeRate > 0 ? uiExchangeRate : 3.75;
     return {
       netWorth: 0,
-      buckets: { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, netWorth: 0 },
+      buckets: { cash: 0, investments: 0, physicalAndCommodities: 0, receivables: 0, liabilities: 0, rewards: 0, netWorth: 0 },
       sarPerUsd: fallback,
     };
   }

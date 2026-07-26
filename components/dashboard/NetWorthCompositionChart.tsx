@@ -20,6 +20,7 @@ export const NetWorthCompositionChart: React.FC<{
       { name: language === 'ar' ? 'استثمارات' : 'Investments', value: Math.max(0, buckets.investments), color: '#6366f1' },
       { name: language === 'ar' ? 'عقارات ومشتقات' : 'Physical & commodities', value: Math.max(0, buckets.physicalAndCommodities), color: '#f59e0b' },
       { name: language === 'ar' ? 'مستحقات' : 'Receivables', value: Math.max(0, buckets.receivables), color: '#10b981' },
+      { name: language === 'ar' ? 'مكافآت' : 'Rewards', value: Math.max(0, buckets.rewards ?? 0), color: '#a855f7' },
     ].filter((s) => s.value > 0);
     return rows;
   }, [buckets, language]);

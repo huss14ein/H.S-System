@@ -18,6 +18,7 @@ import {
 export type CorporateActionWizardActionType =
   | 'stock_split'
   | 'reverse_stock_split'
+  | 'stock_dividend'
   | 'cash_in_lieu'
   | 'spinoff'
   | 'merger';
@@ -66,6 +67,7 @@ export interface CorporateActionWizardPreview {
 const WIZARD_ACTION_TYPES: CorporateActionWizardActionType[] = [
   'stock_split',
   'reverse_stock_split',
+  'stock_dividend',
   'cash_in_lieu',
   'spinoff',
   'merger',
@@ -365,6 +367,8 @@ export function corporateActionWizardActionLabel(type: CorporateActionWizardActi
       return 'Stock split';
     case 'reverse_stock_split':
       return 'Reverse split';
+    case 'stock_dividend':
+      return 'Bonus / stock dividend';
     case 'cash_in_lieu':
       return 'Cash in lieu (fractional)';
     case 'spinoff':

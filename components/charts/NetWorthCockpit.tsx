@@ -358,6 +358,7 @@ function NetWorthCockpitContent(
       { key: 'inv', label: 'Investments', sar: Math.max(0, buckets.investments), color: '#10b981' },
       { key: 'phys', label: 'Physical', sar: Math.max(0, buckets.physicalAndCommodities), color: '#f59e0b' },
       { key: 'rec', label: 'Receivables', sar: Math.max(0, buckets.receivables), color: '#a855f7' },
+      { key: 'rew', label: 'Rewards', sar: Math.max(0, buckets.rewards ?? 0), color: '#c084fc' },
     ].filter((x) => x.sar > 0.5);
     const compositionTotal = compositionStrip.reduce((s, x) => s + x.sar, 0);
     const compositionPieData = compositionStrip.map((s) => ({
@@ -538,6 +539,12 @@ function NetWorthCockpitContent(
                   <span className="text-slate-600">Receivables</span>
                   <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(todaySnapshot.receivablesSar, { digits: 0 })}</span>
                 </li>
+                {todaySnapshot.rewardsSar > 0.5 && (
+                  <li className="flex items-center justify-between gap-2">
+                    <span className="text-slate-600" title="Loyalty points and cashback at your conversion rate. Memo value — not spendable cash and not part of the Zakat base.">Rewards (memo)</span>
+                    <span className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(todaySnapshot.rewardsSar, { digits: 0 })}</span>
+                  </li>
+                )}
               </ul>
             ) : (
               <p className="text-sm text-slate-500">Add accounts and assets to populate this view.</p>

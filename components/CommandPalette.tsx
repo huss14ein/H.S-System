@@ -159,6 +159,79 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
         });
         if (triggerPageAction) {
             quick.push({
+                name: 'Reconcile account balance (audited delta)',
+                action: () => {
+                    trackAction('open-reconcile-balance', 'Accounts');
+                    triggerPageAction('Accounts', 'open-reconcile-balance');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Accounts')!.icon,
+            });
+            quick.push({
+                name: 'Reconcile holding quantity',
+                action: () => {
+                    trackAction('open-reconcile-quantity', 'Investments');
+                    // Prefer integrity / holding detail deep-links with an id; bare action opens guidance.
+                    triggerPageAction('Investments', 'open-reconcile-quantity');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Investments')!.icon,
+            });
+            quick.push({
+                name: 'Reconcile broker cash',
+                action: () => {
+                    trackAction('open-reconcile-broker-cash', 'Investments');
+                    triggerPageAction('Investments', 'open-reconcile-broker-cash');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Investments')!.icon,
+            });
+            quick.push({
+                name: 'Revalue physical asset',
+                action: () => {
+                    trackAction('open-revalue', 'Assets');
+                    triggerPageAction('Assets', 'open-revalue');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Assets')!.icon,
+            });
+            quick.push({
+                name: 'Restate liability / receivable',
+                action: () => {
+                    trackAction('open-restate', 'Liabilities');
+                    triggerPageAction('Liabilities', 'open-restate');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Liabilities')!.icon,
+            });
+            quick.push({
+                name: 'Earn rewards points',
+                action: () => {
+                    trackAction('open-earn', 'Rewards');
+                    triggerPageAction('Rewards', 'open-earn');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Rewards')!.icon,
+            });
+            quick.push({
+                name: 'Redeem rewards',
+                action: () => {
+                    trackAction('open-redeem', 'Rewards');
+                    triggerPageAction('Rewards', 'open-redeem');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Rewards')!.icon,
+            });
+            quick.push({
+                name: 'Rewards expiring soon',
+                action: () => {
+                    trackAction('open-rewards-expire', 'Rewards');
+                    triggerPageAction('Rewards', 'open-rewards-expire');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Rewards')!.icon,
+            });
+            quick.push({
                 name: 'Borrow from next month (Budgets)',
                 action: () => {
                     trackAction('budgets-advance', 'Budgets');
@@ -168,6 +241,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                 icon: NAVIGATION_ITEMS.find((i) => i.name === 'Budgets')!.icon,
             });
         }
+        quick.push({
+            name: 'Open reconciliation audit log (System Health)',
+            action: () => {
+                trackAction('open-reconciliation-audit', 'System Health');
+                setActivePage('System & APIs Health');
+                if (typeof window !== 'undefined') window.location.hash = 'reconciliation-audit-log';
+                setIsOpen(false);
+            },
+            icon: NAVIGATION_ITEMS.find((i) => i.name === 'System & APIs Health')!.icon,
+        });
         quick.push({
             name: 'Open data reconciliation (System Health)',
             action: () => {

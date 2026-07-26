@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSarPerUsdForCalendarDay } from './fxDailySeries';
 import { bucketSumMatchesNetWorth } from './netWorthReconciliation';
+import { fetchLatestNetWorthSnapshotRevisions } from './reconciliation/snapshotRevisions';
 
 const KEY = 'finova_nw_snapshots_v1';
 /** One-time localStorage backfill: stamp legacy rows that predate explicit bucket schema versioning. */
@@ -30,6 +31,11 @@ export interface NetWorthSnapshot {
     liabilities: number;
     /** SAR — optional audit trail (schema v2+). */
     sukukSar?: number;
+    /**
+     * Rewards/points memo bucket (SAR). Absent on rows captured before rewards existed —
+     * those rows also excluded rewards from `netWorth`, so the bucket identity still holds.
+     */
+    rewards?: number;
   };
 }
 
@@ -89,6 +95,7 @@ function serverRowToSnapshot(row: {
           receivables: Number(raw.receivables) || 0,
           liabilities: Number(raw.liabilities) || 0,
           sukukSar: raw.sukukSar != null && Number.isFinite(Number(raw.sukukSar)) ? Number(raw.sukukSar) : undefined,
+          rewards: raw.rewards != null && Number.isFinite(Number(raw.rewards)) ? Number(raw.rewards) : undefined,
         };
   return normalizeSnapshotRead({
     at: row.captured_at || `${row.snapshot_day}T12:00:00.000Z`,
@@ -115,7 +122,11 @@ function mergeSnapshotsByDay(snapshots: NetWorthSnapshot[]): NetWorthSnapshot[] 
   return Array.from(byDay.values()).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 }
 
-/** Pull server history and merge into localStorage (dedupe by day, keep latest capture). */
+/**
+ * Pull server history and merge into localStorage (dedupe by day, keep latest capture).
+ * Days restated by a reconciliation adjustment win: the newest `net_worth_snapshot_revisions` row
+ * for a day replaces the plain snapshot so corrected history is what charts read.
+ */
 export async function mergeNetWorthSnapshotsFromServer(client: SupabaseClient, userId: string): Promise<void> {
   try {
     const local = listNetWorthSnapshots();
@@ -127,7 +138,21 @@ export async function mergeNetWorthSnapshotsFromServer(client: SupabaseClient, u
       .limit(500);
     if (error || !data?.length) return;
     const remote = (data as any[]).map((row) => serverRowToSnapshot(row));
-    const merged = mergeSnapshotsByDay([...local, ...remote]);
+    const revisions = await fetchLatestNetWorthSnapshotRevisions(client, userId);
+    const restated = revisions.map((rev) =>
+      serverRowToSnapshot({
+        snapshot_day: rev.snapshotDay,
+        captured_at: rev.capturedAt,
+        net_worth: rev.netWorth,
+        buckets: rev.buckets ?? null,
+        sar_per_usd: rev.sarPerUsd ?? null,
+      }),
+    );
+    const restatedDays = new Set(restated.map((s) => snapshotDayFromAt(s.at)));
+    const merged = mergeSnapshotsByDay([
+      ...restated,
+      ...[...local, ...remote].filter((s) => !restatedDays.has(snapshotDayFromAt(s.at))),
+    ]);
     localStorage.setItem(KEY, JSON.stringify(merged.slice(0, MAX)));
   } catch (e) {
     console.warn('mergeNetWorthSnapshotsFromServer:', e);
@@ -260,6 +285,22 @@ export function restoreHistoricalView(snapshots: NetWorthSnapshot[], date: strin
 
 const LOCK_KEY = 'finova_nw_month_lock_v1';
 
+/**
+ * Server-sourced period locks (from `data.periodLocks`), cached at module level so
+ * non-React reconciliation guards (`isMonthLocked`) can honor the durable DB SOT
+ * in addition to the local-only localStorage set. Populated via {@link setServerPeriodLocks}.
+ */
+const serverLockedMonths = new Set<string>();
+
+/** Replace the server period-lock cache (call from DataContext after hydrating `period_locks`). */
+export function setServerPeriodLocks(locks: Array<{ yearMonth: string } | string> | null | undefined): void {
+  serverLockedMonths.clear();
+  for (const l of locks ?? []) {
+    const ym = typeof l === 'string' ? l : l?.yearMonth;
+    if (ym) serverLockedMonths.add(String(ym).slice(0, 7));
+  }
+}
+
 /** Mark a month as locked (no more edits to that month's snapshot). */
 export function lockMonthEnd(yearMonth: string): void {
   try {
@@ -270,8 +311,10 @@ export function lockMonthEnd(yearMonth: string): void {
   } catch {}
 }
 
-/** Check if a month is locked. */
+/** Check if a month is locked (durable server lock OR local-only month-close lock). */
 export function isMonthLocked(yearMonth: string): boolean {
+  const ym = String(yearMonth ?? '').slice(0, 7);
+  if (serverLockedMonths.has(ym)) return true;
   try {
     const raw = localStorage.getItem(LOCK_KEY);
     const set: string[] = raw ? JSON.parse(raw) : [];

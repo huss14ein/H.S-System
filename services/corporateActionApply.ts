@@ -27,7 +27,7 @@ export type CorporateActionEventRow = {
   id: string;
   user_id?: string;
   portfolio_id: string;
-  action_type: CorporateActionType | 'dividend_cash' | 'dividend_drip';
+  action_type: CorporateActionType | 'dividend_cash' | 'dividend_drip' | 'stock_dividend';
   symbol: string;
   linked_symbol?: string | null;
   execution_date: string;

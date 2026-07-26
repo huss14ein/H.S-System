@@ -19,4 +19,12 @@ describe('canPostTransactionToAccount', () => {
     });
     expect(out.allowed).toBe(false);
   });
+
+  it('allows reconciliation adjustment onto zero-balance checking', () => {
+    const out = canPostTransactionToAccount(
+      { id: 'chk-1', type: 'Checking', balance: 0 },
+      { transactionType: 'income', category: 'Reconciliation Adjustment' },
+    );
+    expect(out.allowed).toBe(true);
+  });
 });

@@ -176,7 +176,10 @@ See [DATA_MODEL_SPEC.md](./DATA_MODEL_SPEC.md).
 
 | Item | Status | Where |
 |------|--------|--------|
-| Household members, dependents, spouse allocation, personal allowance, shared expense, family obligations, education planning | **Partial** | Plan page; householdBudgetEngine; household_budget_profiles; no full family model |
+| Household members, dependents, spouse allocation, personal allowance, shared expense, family obligations, education planning | **Partial→Stronger** | `household_members` + `member_allocations` + HouseholdMembersPanel on Plan; engine `buildMemberAllocationRows` |
+| Rewards / points / cashback ledger | **Done** | `rewards_*` tables; Rewards page; statement credit ≠ Income; points→broker dual entry; expiry Edge `rewards-expiry-scan`; NW memo bucket via `sumRewardsFiatSar`; Zakat excludes unredeemed points |
+| Available Liquidity (liquid − EF floor − goal reserves) | **Done** | `services/availableLiquidity.ts` + canonical metrics / Dashboard KPI |
+| Server period locks | **Partial→Stronger** | `period_locks` table + `services/periodLocks.ts` (localStorage fallback remains until fully cut over) |
 
 ---
 

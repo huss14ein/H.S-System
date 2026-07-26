@@ -6,6 +6,7 @@ import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { toSAR, totalLiquidCashSARFromAccounts } from '../utils/currencyMath';
 import { hydrateSarPerUsdDailySeries, fxMapForKpiCompute, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
+import { computeAvailableLiquiditySar, computeEmergencyFundFloorSar, sumGoalReservesSar } from './availableLiquidity';
 import {
   computeHeadlinePersonalInvestmentRoiDecimal,
   type HeadlinePersonalInvestmentRoi,
@@ -97,6 +98,8 @@ export type DashboardKpiSnapshot = {
   pnlTrend: number;
   /** Checking + Savings, non-negative, converted to SAR (matches KPI cashflow conventions). */
   liquidCashSar: number;
+  /** Free-to-deploy liquidity after goal escrow reserves (see `services/availableLiquidity`). */
+  availableLiquiditySar: number;
   /** Sum of income (SAR) over the last ~6 months ÷ 6; 0 if no income in window. */
   avgMonthlyIncomeSar6Mo: number;
   /** How ROI net-capital denominator was chosen (`investmentKpiCore`). */
@@ -189,6 +192,22 @@ export function computeDashboardKpiSnapshot(
       getAvailableCashForAccount as (id: string) => { SAR: number; USD: number },
       sarPerUsd,
     );
+    const monthsTarget = Math.max(
+      1,
+      Math.min(24, Number(data.settings?.emergencyFundMonthsTarget) || 6),
+    );
+    // Approximate essential spend from this month's expenses for the KPI snapshot floor
+    // (canonical metrics use the richer useEmergencyFund path; keep this cheap and pure).
+    const emergencyFundFloorSar = computeEmergencyFundFloorSar(
+      liquidCashSar,
+      Math.max(0, monthlyExpenses),
+      monthsTarget,
+    );
+    const availableLiquiditySar = computeAvailableLiquiditySar({
+      liquidCashSar,
+      reservedSar: sumGoalReservesSar(data),
+      emergencyFundFloorSar,
+    });
 
     return {
       netWorth,
@@ -198,6 +217,7 @@ export function computeDashboardKpiSnapshot(
       netWorthTrend,
       pnlTrend,
       liquidCashSar,
+      availableLiquiditySar,
       avgMonthlyIncomeSar6Mo,
       investmentCapitalSource,
       headlineInvestmentExposure: headlineInv,

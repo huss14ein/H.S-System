@@ -205,7 +205,9 @@ describe('corporateActionUndo', () => {
     expect(ctx).toContain('syncPortfolioAfterLedgerMutation');
     expect(ctx).toContain("status: 'reversed'");
     expect(ctx).toContain('removeCorporateActionCashDeposits');
+    // Ledger-backed: exclude reversed event (replay_derived). Manual-only: inverse event + holdingsReplayEvents.
+    expect(ctx).toContain("holdingsBaselineMode: 'replay_derived'");
+    expect(ctx).toContain('holdingsReplayEvents: [reversalEv]');
     expect(ctx).toContain('id: `local-reversal-${eventId}`');
-    expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [reversalEv] } : {})');
   });
 });

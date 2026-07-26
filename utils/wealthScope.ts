@@ -10,6 +10,7 @@ import type {
   InvestmentPortfolio,
   CommodityHolding,
   SukukPosition,
+  RewardsAccount,
   Transaction,
   FinancialData,
 } from '../types';
@@ -39,6 +40,7 @@ export interface PersonalWealthData {
   personalInvestments: InvestmentPortfolio[];
   personalCommodityHoldings: CommodityHolding[];
   personalSukukPositions: SukukPosition[];
+  personalRewardsAccounts: RewardsAccount[];
   /** Transactions that hit personal accounts only (for "my" income/expense). */
   personalTransactions: Transaction[];
 }
@@ -50,6 +52,7 @@ const emptyPersonal: PersonalWealthData = {
   personalInvestments: [],
   personalCommodityHoldings: [],
   personalSukukPositions: [],
+  personalRewardsAccounts: [],
   personalTransactions: [],
 };
 
@@ -66,6 +69,7 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
   const personalInvestments = (data.investments ?? []).filter(isPersonalWealth) as InvestmentPortfolio[];
   const personalCommodityHoldings = (data.commodityHoldings ?? []).filter(isPersonalWealth) as CommodityHolding[];
   const personalSukukPositions = (data.sukukPositions ?? []) as SukukPosition[];
+  const personalRewardsAccounts = (data.rewardsAccounts ?? []).filter(isPersonalWealth) as RewardsAccount[];
 
   const personalAccountIds = new Set(personalAccounts.map((a) => a.id));
   const personalTransactions = (data.transactions ?? []).filter((t) => {
@@ -81,6 +85,7 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
     personalInvestments,
     personalCommodityHoldings,
     personalSukukPositions,
+    personalRewardsAccounts,
     personalTransactions,
   };
 }
@@ -152,4 +157,11 @@ export function getPersonalCommodityHoldings(data: FinancialData | null | undefi
 export function getPersonalSukukPositions(data: FinancialData | null | undefined): SukukPosition[] {
   const p = getPersonalWealthData(data);
   return p.personalSukukPositions.length > 0 ? p.personalSukukPositions : (data?.sukukPositions ?? []);
+}
+
+export function getPersonalRewardsAccounts(data: FinancialData | null | undefined): RewardsAccount[] {
+  const p = getPersonalWealthData(data);
+  return p.personalRewardsAccounts.length > 0
+    ? p.personalRewardsAccounts
+    : (data?.rewardsAccounts ?? []).filter(isPersonalWealth);
 }

@@ -198,7 +198,10 @@ export function computeEmergencyFundMetrics(
         }
     }
 
-    const targetMonths = EMERGENCY_FUND_TARGET_MONTHS;
+    const targetMonths = Math.max(
+        1,
+        Math.min(24, Number(data.settings?.emergencyFundMonthsTarget) || EMERGENCY_FUND_TARGET_MONTHS),
+    );
     const hasEssentialExpenseEstimate = monthlyCoreExpenses > 0;
     /** Only meaningful when `hasEssentialExpenseEstimate` (avoid fake “99 months” when essential spend is unknown). */
     const monthsCovered = monthlyCoreExpenses > 0 ? emergencyCash / monthlyCoreExpenses : 0;

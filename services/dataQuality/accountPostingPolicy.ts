@@ -13,6 +13,7 @@ export interface AccountPostingPolicyInput {
 /**
  * Posting policy:
  * - Credit accounts are exempt (can post at any balance).
+ * - Reconciliation Adjustment / Opening Balance may post onto zero/negative non-credit accounts.
  * - All other accounts require strictly positive current balance.
  */
 export function canPostTransactionToAccount(
@@ -25,6 +26,10 @@ export function canPostTransactionToAccount(
   // Allow inbound transfers so users can fund depleted accounts/platforms.
   const isTransferIn = input?.transactionType === 'income' && String(input?.category || '').trim().toLowerCase() === 'transfer';
   if (isTransferIn) return { allowed: true };
+  const cat = String(input?.category || '').trim().toLowerCase();
+  const isReconcile =
+    cat === 'reconciliation adjustment' || cat === 'opening balance';
+  if (isReconcile) return { allowed: true };
   const bal = Number(account.balance) || 0;
   if (bal <= 0) {
     return {

@@ -18,12 +18,15 @@ type Props = {
     linkedSymbol?: string;
   }) => Promise<void>;
   onUndo?: (eventId: string) => Promise<void>;
+  /** Correct = undo original then launch wizard prefilled with the same symbol/portfolio/action family. */
+  onCorrect?: (event: CorporateActionEvent) => Promise<void>;
   onLaunchWizard?: (prefill?: { portfolioId?: string; symbol?: string; actionType?: CorporateActionType }) => void;
 };
 
 const ACTION_TYPES: { value: CorporateActionType; label: string }[] = [
   { value: 'stock_split', label: 'Stock split' },
   { value: 'reverse_stock_split', label: 'Reverse split' },
+  { value: 'stock_dividend', label: 'Bonus / stock dividend' },
   { value: 'cash_in_lieu', label: 'Cash in lieu (fractional)' },
   { value: 'spinoff', label: 'Spinoff' },
   { value: 'merger', label: 'Merger / acquisition' },
@@ -35,6 +38,7 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({
   investmentTransactions = [],
   onApply,
   onUndo,
+  onCorrect,
   onLaunchWizard,
 }) => {
   const [portfolioId, setPortfolioId] = useState(portfolios[0]?.id ?? '');
@@ -149,6 +153,10 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({
       });
       if (actionType === 'stock_split' || actionType === 'reverse_stock_split') {
         toast('Split applied — net worth unchanged; share count and avg cost updated.', 'success');
+      } else if (actionType === 'stock_dividend') {
+        toast('Stock dividend applied — share count and avg cost updated (no cash).', 'success');
+      } else {
+        toast('Corporate action applied.', 'success');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to apply corporate action.');
@@ -165,6 +173,23 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({
       await onUndo(eventId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to undo corporate action.');
+    } finally {
+      setUndoBusyId(null);
+    }
+  };
+
+  const handleCorrect = async (ev: CorporateActionEvent) => {
+    if (!onCorrect) return;
+    const ok = window.confirm(
+      `Correct ${ev.symbol} ${ev.actionType.replace(/_/g, ' ')}?\n\nThis undoes the original action, then opens the wizard so you can re-apply the corrected terms. Both steps are audited.`,
+    );
+    if (!ok) return;
+    setUndoBusyId(ev.id);
+    setError(null);
+    try {
+      await onCorrect(ev);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start corporate action correction.');
     } finally {
       setUndoBusyId(null);
     }
@@ -291,14 +316,26 @@ export const CorporateActionApplyPanel: React.FC<Props> = ({
                   <strong>{ev.symbol}</strong> · {ev.actionType.replace(/_/g, ' ')} · {ev.executionDate}
                 </span>
                 {onUndo && (
-                  <button
-                    type="button"
-                    className="text-primary font-medium hover:underline"
-                    disabled={undoBusyId === ev.id}
-                    onClick={() => void handleUndo(ev.id)}
-                  >
-                    {undoBusyId === ev.id ? 'Undoing…' : 'Undo'}
-                  </button>
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-primary font-medium hover:underline"
+                      disabled={undoBusyId === ev.id}
+                      onClick={() => void handleUndo(ev.id)}
+                    >
+                      {undoBusyId === ev.id ? 'Working…' : 'Undo'}
+                    </button>
+                    {onCorrect && (
+                      <button
+                        type="button"
+                        className="text-emerald-700 font-medium hover:underline"
+                        disabled={undoBusyId === ev.id}
+                        onClick={() => void handleCorrect(ev)}
+                      >
+                        Correct
+                      </button>
+                    )}
+                  </span>
                 )}
               </li>
             ))}

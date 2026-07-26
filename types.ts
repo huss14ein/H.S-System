@@ -4,7 +4,7 @@
 
 
 
-export type Page = 'Dashboard' | 'Summary' | 'Wealth Analytics' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools' | 'Installments';
+export type Page = 'Dashboard' | 'Summary' | 'Wealth Analytics' | 'Accounts' | 'Goals' | 'Liabilities' | 'Transactions' | 'Budgets' | 'Analysis' | 'Forecast' | 'Zakat' | 'Notifications' | 'Settings' | 'Investments' | 'Plan' | 'Wealth Ultra' | 'Market Events' | 'Recovery Plan' | 'Investment Plan' | 'Dividend Tracker' | 'AI Rebalancer' | 'Watchlist' | 'Assets' | 'System & APIs Health' | 'Statement Upload' | 'Statement History' | 'Commodities' | 'Engines & Tools' | 'Installments' | 'Rewards' | 'Documents' | 'Subscriptions' | 'Estate';
 
 /** User tasks on the Notifications page (persisted per account). */
 export type TodoPriority = 'low' | 'medium' | 'high';
@@ -118,6 +118,154 @@ export interface Goal {
   deadline: string;
   savingsAllocationPercent?: number;
   priority?: 'High' | 'Medium' | 'Low';
+  /**
+   * Virtual escrow reserved toward this goal (SAR-equivalent stored in goal currency as number).
+   * Subtracted from Available Liquidity; not a separate bank account.
+   */
+  reservedAmount?: number;
+  /** When true, treat as a sinking-fund milestone (vehicle, real estate, etc.). */
+  isSinkingFund?: boolean;
+}
+
+export type RewardsType = 'points' | 'miles' | 'cash';
+export type RewardsTxType = 'earn' | 'redeem' | 'expire' | 'adjust' | 'transfer_in' | 'transfer_out';
+export type RewardsTxLinkKind =
+  | 'statement_credit'
+  | 'broker_deposit'
+  | 'cash_deposit'
+  | 'spend_earn'
+  | 'other';
+
+export interface RewardsAccount {
+  id: string;
+  providerName: string;
+  rewardType: RewardsType;
+  unitLabel: string;
+  fiatCurrency: 'SAR' | 'USD';
+  /** e.g. 100 points = 1.00 fiat unit */
+  pointsPerFiatUnit: number;
+  currentBalance: number;
+  linkedAccountId?: string | null;
+  linkedLiabilityId?: string | null;
+  owner?: string;
+  expiryPolicyDays?: number | null;
+  templateKey?: string | null;
+  archived?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RewardsTransaction {
+  id: string;
+  accountId: string;
+  transactionType: RewardsTxType;
+  amount: number;
+  fiatEquivalent: number;
+  rateSnapshot?: number | null;
+  effectiveDate: string;
+  expiresOn?: string | null;
+  note?: string;
+  reason?: string;
+  idempotencyKey: string;
+  redemptionGroupId?: string | null;
+  status: 'posted' | 'incomplete' | 'reversed';
+  reversesTxId?: string | null;
+  createdAt?: string;
+}
+
+export interface RewardsTxLink {
+  id: string;
+  rewardTxId: string;
+  financialTxId?: string | null;
+  investmentTxId?: string | null;
+  linkKind: RewardsTxLinkKind;
+  createdAt?: string;
+}
+
+export interface RewardsLot {
+  id: string;
+  accountId: string;
+  earnTxId: string;
+  quantityRemaining: number;
+  expiresOn?: string | null;
+  createdAt?: string;
+}
+
+/** Household member for multi-tier allocations (KSA family budgets). */
+export type HouseholdMemberRole = 'self' | 'spouse' | 'dependent';
+export interface HouseholdMember {
+  id: string;
+  name: string;
+  role: HouseholdMemberRole;
+  owner?: string;
+  notes?: string;
+}
+
+export type MemberAllocationKind = 'allowance' | 'education_public' | 'education_private' | 'other';
+export interface MemberAllocation {
+  id: string;
+  memberId: string;
+  kind: MemberAllocationKind;
+  categoryId: string;
+  label: string;
+  monthlyAmount: number;
+  /** Months 1–12 when this allocation applies; empty = every month. */
+  scheduleMonths?: number[];
+  enabled?: boolean;
+}
+
+/** Durable closed-period lock (server SOT; replaces localStorage-only month lock). */
+export interface PeriodLock {
+  id: string;
+  yearMonth: string;
+  lockedAt: string;
+  reason?: string;
+}
+
+/** Non-insurance document vault entry. */
+export interface VaultDocument {
+  id: string;
+  title: string;
+  kind: 'deed' | 'contract' | 'statement' | 'other';
+  linkedEntityType?: 'asset' | 'liability' | 'account' | 'goal' | null;
+  linkedEntityId?: string | null;
+  notes?: string;
+  createdAt?: string;
+}
+
+/** Subscription lifecycle (beyond raw recurring txs). */
+export interface SubscriptionRecord {
+  id: string;
+  name: string;
+  amount: number;
+  currency?: 'SAR' | 'USD';
+  cadence: 'monthly' | 'yearly' | 'weekly';
+  nextRenewalDate?: string;
+  status: 'active' | 'paused' | 'cancelled';
+  priceHistory?: { at: string; amount: number }[];
+  accountId?: string;
+  categoryId?: string;
+  notes?: string;
+}
+
+/** GOSI / pension / provident contribution schedule (KSA). */
+export interface PensionAccount {
+  id: string;
+  name: string;
+  kind: 'gosi' | 'provident' | 'pension' | 'other';
+  balance: number;
+  currency?: 'SAR' | 'USD';
+  employeeContributionMonthly?: number;
+  employerContributionMonthly?: number;
+  owner?: string;
+}
+
+export interface EstateBeneficiary {
+  id: string;
+  name: string;
+  relationship?: string;
+  sharePercent?: number;
+  notes?: string;
 }
 
 export interface Account {
@@ -343,7 +491,8 @@ export type CorporateActionDbType =
   | 'spinoff'
   | 'merger'
   | 'dividend_cash'
-  | 'dividend_drip';
+  | 'dividend_drip'
+  | 'stock_dividend';
 
 export interface CorporateActionEvent {
   id: string;
@@ -519,6 +668,13 @@ export interface Settings {
     spendingIntelMapping?: { spouseCats?: string[]; educationCats?: string[] };
     /** Optional: nisab amount override (e.g. in SAR). When set, Zakat uses this instead of goldPrice * 85. */
     nisabAmount?: number;
+    /**
+     * When true (default), unredeemed rewards points/miles count in a separate non-cash Rewards NW bucket
+     * via sumRewardsFiatSar. Never income / EF / investable cash.
+     */
+    includeRewardsInNetWorth?: boolean;
+    /** Months of essential expenses to treat as emergency-fund floor when computing Available Liquidity. */
+    emergencyFundMonthsTarget?: number;
 }
 
 export interface ZakatPayment {
@@ -606,6 +762,17 @@ export interface FinancialData {
   sukukPositions?: SukukPosition[];
   sukukPayoutSchedules?: SukukPayoutSchedule[];
   sukukPayoutEvents?: SukukPayoutEvent[];
+  rewardsAccounts?: RewardsAccount[];
+  rewardsTransactions?: RewardsTransaction[];
+  rewardsTxLinks?: RewardsTxLink[];
+  rewardsLots?: RewardsLot[];
+  householdMembers?: HouseholdMember[];
+  memberAllocations?: MemberAllocation[];
+  periodLocks?: PeriodLock[];
+  vaultDocuments?: VaultDocument[];
+  subscriptions?: SubscriptionRecord[];
+  pensionAccounts?: PensionAccount[];
+  estateBeneficiaries?: EstateBeneficiary[];
   budgets: Budget[];
   commodityHoldings: CommodityHolding[];
   watchlist: WatchlistItem[];
@@ -633,8 +800,63 @@ export interface FinancialData {
   personalInvestments?: InvestmentPortfolio[];
   personalCommodityHoldings?: CommodityHolding[];
   personalSukukPositions?: SukukPosition[];
+  personalRewardsAccounts?: RewardsAccount[];
   /** Transactions that hit personal accounts only (for "my" income/expense). */
   personalTransactions?: Transaction[];
+  /** Durable reconciliation ledger (from Supabase; optional until migration applied). */
+  reconciliationAdjustments?: ReconciliationAdjustmentRecord[];
+  reconciliationAuditEvents?: ReconciliationAuditEventRecord[];
+  reconciliationRuns?: ReconciliationRunRecord[];
+}
+
+/** Lightweight shapes for hydrate — full helpers live in services/reconciliation. */
+export interface ReconciliationAdjustmentRecord {
+  id: string;
+  mechanism: string;
+  entityType: string;
+  entityId: string;
+  effectiveDate: string;
+  currency: string;
+  beforeValue: number;
+  actualValue: number;
+  delta: number;
+  reason: string;
+  idempotencyKey: string;
+  status: string;
+  reversedByAdjustmentId?: string | null;
+  reversesAdjustmentId?: string | null;
+  createdAt?: string;
+}
+
+export interface ReconciliationAuditEventRecord {
+  id: string;
+  at: string;
+  kind: string;
+  mechanism: string;
+  entityType: string;
+  entityId: string;
+  effectiveDate?: string | null;
+  beforeValue?: number | null;
+  afterValue?: number | null;
+  delta?: number | null;
+  currency?: string | null;
+  reason?: string | null;
+  adjustmentId?: string | null;
+  runId?: string | null;
+  summary: string;
+}
+
+export interface ReconciliationRunRecord {
+  id: string;
+  adjustmentId?: string | null;
+  status: string;
+  effectiveFrom?: string | null;
+  entityType?: string | null;
+  entityIds?: string[];
+  errorMessage?: string | null;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  completedAt?: string | null;
 }
 
 /**
@@ -648,6 +870,7 @@ export type DataContextFinancialData = FinancialData & {
   personalInvestments: InvestmentPortfolio[];
   personalCommodityHoldings: CommodityHolding[];
   personalSukukPositions: SukukPosition[];
+  personalRewardsAccounts: RewardsAccount[];
   personalTransactions: Transaction[];
 };
 

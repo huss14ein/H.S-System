@@ -25,8 +25,8 @@ import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { DocumentArrowUpIcon } from '../components/icons/DocumentArrowUpIcon';
 import { GoldBarIcon } from '../components/icons/GoldBarIcon';
 import { UsersIcon } from '../components/icons/UsersIcon';
-import { useEmergencyFund, EMERGENCY_FUND_TARGET_MONTHS } from '../hooks/useEmergencyFund';
-import { useCanonicalSpotFx, useDashboardCanonicalMetrics, useExtendedMetricsReady } from '../hooks/useCanonicalFinancialMetrics';
+import { useEmergencyFund } from '../hooks/useEmergencyFund';
+import { useCanonicalSpotFx, useCanonicalFinancialMetrics, useDashboardCanonicalMetrics, useExtendedMetricsReady } from '../hooks/useCanonicalFinancialMetrics';
 import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
@@ -223,9 +223,9 @@ const RecentTransactions: React.FC<{ transactions: Transaction[], accounts: Acco
     );
 };
 
-type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
+type KpiCardKey = 'netWorth' | 'monthlyPnL' | 'emergencyFund' | 'availableLiquidity' | 'budgetVariance' | 'investmentRoi' | 'investmentPlan' | 'wealthUltra' | 'marketEvents';
 
-const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
+const KPI_CARD_ORDER: KpiCardKey[] = ['netWorth', 'monthlyPnL', 'emergencyFund', 'availableLiquidity', 'budgetVariance', 'investmentRoi', 'investmentPlan'];
 
 const SYSTEM_HEALTH_PAGE = 'System & APIs Health' as Page;
 
@@ -245,6 +245,7 @@ const DashboardContent: React.FC<{
         investableCashBars: dashboardInvestableCashBars,
         sarPerUsd: canonicalSarPerUsd,
     } = useDashboardCanonicalMetrics();
+    const { availableLiquiditySar, reservedLiquiditySar, emergencyFundFloorSar } = useCanonicalFinancialMetrics();
     const liveQuotePrices = useLiveQuotePrices();
     const metricsExtendedReady = useExtendedMetricsReady();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
@@ -568,13 +569,17 @@ const DashboardContent: React.FC<{
         const efTrend = !emergencyFund.hasEssentialExpenseEstimate
             ? 'Add expense data'
             : emergencyFund.status === 'healthy'
-              ? `${EMERGENCY_FUND_TARGET_MONTHS} mo target met`
+              ? `${emergencyFund.targetMonths} mo target met`
               : emergencyFund.status === 'adequate'
                 ? 'Adequate'
                 : emergencyFund.status === 'low'
                   ? 'Build more'
                   : 'Critical';
         const efColor = emergencyFund.status === 'healthy' ? 'green' : emergencyFund.status === 'adequate' ? 'green' : emergencyFund.status === 'low' ? 'yellow' : 'red';
+        const reservedHint =
+          reservedLiquiditySar > 0
+            ? ` · ${formatCurrencyString(reservedLiquiditySar, { digits: 0 })} escrowed in goals`
+            : '';
         return {
             netWorth: <Card
                 {...cardProps}
@@ -588,7 +593,17 @@ const DashboardContent: React.FC<{
                 icon={<ScaleIcon className="h-5 w-5 text-slate-400" />}
             />,
             monthlyPnL: <Card {...cardProps} title="This Month's P&L" value={formatCurrency(kpiSummary.monthlyPnL || 0, { colorize: true })} trend={(kpiSummary.monthlyPnL || 0) >= 0 ? 'Surplus' : 'Deficit'} indicatorColor={(kpiSummary.monthlyPnL || 0) >= 0 ? 'green' : 'red'} tooltip="Financial-month cashflow P/L (income minus expenses). Not portfolio mark-to-market — use Wealth Analytics or Investments for portfolio week/month P/L." onClick={() => setActivePage('Transactions')} icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />} footer={<button type="button" className="text-left text-xs font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openMonthlyPnLPassport(); }}>Explain this metric →</button>} />,
-            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (bank + idle cash on investment platforms from Accounts) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${EMERGENCY_FUND_TARGET_MONTHS} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
+            emergencyFund: <Card {...cardProps} title="Emergency Fund" value={emergencyFund.hasEssentialExpenseEstimate ? `${emergencyFund.monthsCovered.toFixed(1)} mo` : '—'} trend={efTrend} indicatorColor={efColor} tooltip={emergencyFund.hasEssentialExpenseEstimate ? `Liquid cash (bank + idle cash on investment platforms from Accounts) covers ${emergencyFund.monthsCovered.toFixed(1)} months of essential expenses. Target: ${emergencyFund.targetMonths} months.${emergencyFund.shortfall > 0 ? ` Shortfall: ${formatCurrencyString(emergencyFund.shortfall)}.` : ''}` : 'Categorize essential spending or add budgets so we can estimate months of coverage.'} onClick={() => setActivePage('Summary')} icon={<ShieldCheckIcon className="h-5 w-5 text-slate-400" />} />,
+            availableLiquidity: <Card
+                {...cardProps}
+                title="Available Liquidity"
+                value={maskBalance(formatCurrencyString(availableLiquiditySar))}
+                trend={reservedLiquiditySar > 0 ? `After ${formatCurrencyString(reservedLiquiditySar, { digits: 0 })} goal escrow` : 'Free to deploy'}
+                indicatorColor={availableLiquiditySar > 0 ? 'green' : 'yellow'}
+                tooltip={`Liquid cash minus the emergency-fund floor (${formatCurrencyString(emergencyFundFloorSar, { digits: 0 })}) and sinking-fund / goal escrow reserves${reservedHint}. Not investable broker cash alone — open Goals to manage reserved escrow.`}
+                onClick={() => setActivePage('Goals')}
+                icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />}
+            />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
             investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Same formula as Investments: platform value (live rollup) + commodities + Sukuk vs net capital (deposits or fallback) including commodity and Sukuk cost. Uses your live quote feed when available." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
                 <button type="button" className="text-left w-full font-medium text-primary hover:underline" onClick={(e) => { e.stopPropagation(); goToInvestmentKpiReconciliation(); }}>
@@ -601,7 +616,7 @@ const DashboardContent: React.FC<{
             wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,
             marketEvents: <Card {...cardProps} title="Market Events" value="Calendar" trend="Upcoming" indicatorColor="yellow" tooltip="View upcoming FOMC meetings, earnings, and market-impacting events with AI insights." onClick={() => setActivePage('Market Events')} icon={<CalendarDaysIcon className="h-5 w-5 text-indigo-500" />} />,
         };
-    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation, openMonthlyPnLPassport, openInvestmentRoiPassport]);
+    }, [formatCurrencyString, formatCurrency, kpiSummary, investmentProgress, emergencyFund, availableLiquiditySar, reservedLiquiditySar, emergencyFundFloorSar, setActivePage, kpiDensity, maskBalance, goToInvestmentKpiReconciliation, openMonthlyPnLPassport, openInvestmentRoiPassport]);
     
     const accounts = getPersonalAccounts(data);
     const goals = data?.goals ?? [];
@@ -811,7 +826,7 @@ const DashboardContent: React.FC<{
                     <div className="mt-3 pt-3 border-t border-slate-200">
                         <p className="text-sm text-slate-700"><strong>Emergency fund:</strong> {maskBalance(formatCurrencyString(emergencyFund.emergencyCash))} liquid cash (Checking, Savings, and idle broker cash per Investment account in Accounts — holdings/market value are separate)
                             {emergencyFund.hasEssentialExpenseEstimate ? (
-                                <> = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {EMERGENCY_FUND_TARGET_MONTHS} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${maskBalance(formatCurrencyString(emergencyFund.shortfall))}.` : 'Target met.'}</>
+                                <> = <strong>{emergencyFund.monthsCovered.toFixed(1)} months</strong> of essential expenses (target {emergencyFund.targetMonths} months). {emergencyFund.shortfall > 0 ? `Shortfall: ${maskBalance(formatCurrencyString(emergencyFund.shortfall))}.` : 'Target met.'}</>
                             ) : (
                                 <>. Add essential expense categories or budgets to estimate months covered.</>
                             )}

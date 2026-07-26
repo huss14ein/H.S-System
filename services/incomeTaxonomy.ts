@@ -18,7 +18,7 @@ const LABEL_HINTS: Record<IncomeTaxonomyLabel, string[]> = {
   interest: ['interest', 'فائدة'],
   rental: ['rent', 'rental', 'إيجار'],
   business: ['business', 'consult', 'freelance', 'عمولة'],
-  refund: ['refund', 'reimburse', 'استرداد'],
+  refund: ['refund', 'reimburse', 'استرداد', 'cashback', 'rewards statement credit'],
   other: [],
 };
 

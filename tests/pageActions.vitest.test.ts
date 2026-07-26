@@ -33,9 +33,33 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Investments', 'focus-dividend-sms')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-corporate-action-wizard')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-corporate-action-wizard:from-plan')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'open-reconcile-quantity')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'open-reconcile-quantity:h-1')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'open-reconcile-broker-cash:a-1')).toBe(true);
+    expect(isSupportedPageAction('Accounts', 'open-reconcile-balance')).toBe(true);
+    expect(isSupportedPageAction('Accounts', 'open-reconcile-balance:acc-1')).toBe(true);
+    expect(isSupportedPageAction('Liabilities', 'open-restate:l-1')).toBe(true);
+    expect(isSupportedPageAction('Commodities', 'open-revalue:c-1')).toBe(true);
+    expect(isSupportedPageAction('Assets', 'open-revalue')).toBe(true);
     expect(isSupportedPageAction('Engines & Tools', 'openLogic')).toBe(true);
     expect(isSupportedPageAction('Budgets', 'budgets-focus-admin-pending')).toBe(true);
     expect(isSupportedPageAction('Budgets', 'budgets-open-request-form')).toBe(true);
+  });
+
+  it('accepts known Rewards actions', () => {
+    expect(isSupportedPageAction('Rewards', 'open-create-reward')).toBe(true);
+    expect(isSupportedPageAction('Rewards', 'open-earn')).toBe(true);
+    expect(isSupportedPageAction('Rewards', 'open-earn:acc-1')).toBe(true);
+    expect(isSupportedPageAction('Rewards', 'open-redeem')).toBe(true);
+    expect(isSupportedPageAction('Rewards', 'open-redeem:acc-1')).toBe(true);
+    expect(isSupportedPageAction('Rewards', 'open-rewards-expire')).toBe(true);
+    expect(isSupportedPageAction('Rewards', 'open-apply-cashback:acc-1')).toBe(true);
+  });
+
+  it('rejects unknown or malformed Rewards actions', () => {
+    expect(isSupportedPageAction('Rewards', 'totally-unknown')).toBe(false);
+    expect(isSupportedPageAction('Rewards', 'open-earn:')).toBe(false);
+    expect(isSupportedPageAction('Rewards', 'focus-goal:g-1')).toBe(false);
   });
 
   it('rejects unknown or malformed actions', () => {

@@ -30,6 +30,7 @@ const PERIOD_LABELS: Record<TimePeriod, string> = {
 };
 
 const RECEIVABLES_COLOR = CHART_COLORS.categorical[1];
+const REWARDS_COLOR = CHART_COLORS.categorical[3] ?? '#a855f7';
 
 type DailyNwRow = {
   date: string;
@@ -40,6 +41,7 @@ type DailyNwRow = {
   Investments: number;
   Physical: number;
   Receivables: number;
+  Rewards: number;
   Liabilities: number;
 };
 
@@ -81,8 +83,16 @@ function shortDayLabel(dayKey: string): string {
     return t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function positiveAssetStackTotal(row: Pick<DailyNwRow, 'Cash' | 'Investments' | 'Physical' | 'Receivables'>): number {
-    return Math.max(0, row.Cash) + Math.max(0, row.Investments) + Math.max(0, row.Physical) + Math.max(0, row.Receivables);
+function positiveAssetStackTotal(
+    row: Pick<DailyNwRow, 'Cash' | 'Investments' | 'Physical' | 'Receivables' | 'Rewards'>,
+): number {
+    return (
+        Math.max(0, row.Cash) +
+        Math.max(0, row.Investments) +
+        Math.max(0, row.Physical) +
+        Math.max(0, row.Receivables) +
+        Math.max(0, row.Rewards ?? 0)
+    );
 }
 
 function NetWorthStackTooltip(props: {
@@ -102,6 +112,7 @@ function NetWorthStackTooltip(props: {
         { key: 'Investments', label: 'Investments', value: row.Investments, color: CHART_COLORS.secondary },
         { key: 'Physical', label: 'Physical & commodities', value: row.Physical, color: CHART_COLORS.tertiary },
         { key: 'Receivables', label: 'Receivables', value: row.Receivables, color: RECEIVABLES_COLOR },
+        { key: 'Rewards', label: 'Rewards (memo)', value: row.Rewards ?? 0, color: REWARDS_COLOR },
         { key: 'Liabilities', label: 'Debt', value: row.Liabilities, color: CHART_COLORS.liability },
     ];
     return (
@@ -129,7 +140,7 @@ function NetWorthStackTooltip(props: {
                     );
                 })}
             </ul>
-            <p className="mt-2 text-[10px] text-slate-400 leading-snug">Percentages are shares of the positive asset stack (cash through receivables). Debt is shown on a separate signed stack.</p>
+            <p className="mt-2 text-[10px] text-slate-400 leading-snug">Percentages are shares of the positive asset stack (cash through rewards). Debt is shown on a separate signed stack.</p>
         </div>
     );
 }
@@ -168,13 +179,17 @@ function filterRowsByTimePeriod(rows: DailyNwRow[], period: TimePeriod): DailyNw
     return rows.filter((r) => parseLocalDayKey(r.dayKey) >= cutoff);
 }
 
-type SeriesVisibility = Record<'Cash' | 'Investments' | 'Physical' | 'Receivables' | 'Liabilities', boolean>;
+type SeriesVisibility = Record<
+    'Cash' | 'Investments' | 'Physical' | 'Receivables' | 'Rewards' | 'Liabilities',
+    boolean
+>;
 
 const SERIES_DEFAULT: SeriesVisibility = {
     Cash: true,
     Investments: true,
     Physical: true,
     Receivables: true,
+    Rewards: true,
     Liabilities: true,
 };
 
@@ -223,6 +238,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
             investments: number;
             physical: number;
             receivables: number;
+            rewards: number;
             liabilities: number;
         }>();
 
@@ -239,6 +255,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                 investments: hasBuckets ? (Number(b!.investments) || 0) : 0,
                 physical: hasBuckets ? (Number(b!.physicalAndCommodities) || 0) : 0,
                 receivables: hasBuckets ? (Number(b!.receivables) || 0) : 0,
+                rewards: hasBuckets ? (Number(b!.rewards) || 0) : 0,
                 liabilities: hasBuckets ? (Number(b!.liabilities) || 0) : 0,
             });
         });
@@ -252,6 +269,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
             investments: Math.round(buckets.investments),
             physical: Math.round(buckets.physicalAndCommodities),
             receivables: Math.round(buckets.receivables),
+            rewards: Math.round(buckets.rewards ?? 0),
             liabilities: Math.round(buckets.liabilities),
         });
 
@@ -266,11 +284,15 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                 Investments: Math.round(x.investments),
                 Physical: Math.round(x.physical),
                 Receivables: Math.round(x.receivables),
+                Rewards: Math.round(x.rewards),
                 Liabilities: Math.round(x.liabilities),
             }));
 
         if (!useLedgerEstimateWhenSparse || finalData.length >= 2) {
-            finalData = forwardFillDailyNetWorthRows(inheritBucketsWhenMissing(finalData));
+            finalData = forwardFillDailyNetWorthRows(inheritBucketsWhenMissing(finalData)).map((r) => ({
+                ...r,
+                Rewards: r.Rewards ?? 0,
+            }));
         }
 
         // If snapshots are sparse, optionally synthesize a monthly line from ledger cashflow (cashflow-only; not full NW).
@@ -307,6 +329,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                     Investments: 0,
                     Physical: 0,
                     Receivables: 0,
+                    Rewards: 0,
                     Liabilities: 0,
                 };
             });
@@ -341,6 +364,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                 physicalAndCommodities: liveBuckets.physicalAndCommodities,
                 receivables: liveBuckets.receivables,
                 liabilities: liveBuckets.liabilities,
+                rewards: liveBuckets.rewards ?? 0,
             },
         });
         if (!r.matches) {
@@ -359,6 +383,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                   physicalAndCommodities: liveBuckets.physicalAndCommodities,
                   receivables: liveBuckets.receivables,
                   liabilities: liveBuckets.liabilities,
+                  rewards: liveBuckets.rewards ?? 0,
               },
           })
         : null;
@@ -508,6 +533,10 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                                 <stop offset="5%" stopColor={RECEIVABLES_COLOR} stopOpacity={0.75} />
                                 <stop offset="95%" stopColor={RECEIVABLES_COLOR} stopOpacity={0.12} />
                             </linearGradient>
+                            <linearGradient id="chartColorRewards" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={REWARDS_COLOR} stopOpacity={0.75} />
+                                <stop offset="95%" stopColor={REWARDS_COLOR} stopOpacity={0.12} />
+                            </linearGradient>
                             <linearGradient id="chartColorLiabilities" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%" stopColor={CHART_COLORS.liability} stopOpacity={0.8} />
                                 <stop offset="95%" stopColor={CHART_COLORS.liability} stopOpacity={0.1} />
@@ -517,6 +546,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                         <Area type="monotone" dataKey="Investments" name="Investments" stackId="1" hide={!seriesVisible.Investments} stroke={CHART_COLORS.secondary} fill="url(#chartColorInvestments)" />
                         <Area type="monotone" dataKey="Physical" name="Physical & commodities" stackId="1" hide={!seriesVisible.Physical} stroke={CHART_COLORS.tertiary} fill="url(#chartColorPhysical)" />
                         <Area type="monotone" dataKey="Receivables" name="Receivables" stackId="1" hide={!seriesVisible.Receivables} stroke={RECEIVABLES_COLOR} fill="url(#chartColorReceivables)" />
+                        <Area type="monotone" dataKey="Rewards" name="Rewards (memo)" stackId="1" hide={!seriesVisible.Rewards} stroke={REWARDS_COLOR} fill="url(#chartColorRewards)" />
                         <Area type="monotone" dataKey="Liabilities" name="Debt" stackId="2" hide={!seriesVisible.Liabilities} stroke={CHART_COLORS.liability} fill="url(#chartColorLiabilities)" />
                         {showBrush ? (
                             <Brush dataKey="name" height={22} stroke="#94a3b8" travellerWidth={10} tickFormatter={() => ''} />
@@ -525,7 +555,7 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                 </ResponsiveContainer>
             </ChartContainer>
             {liveBuckets && !isEmpty && (
-                <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-[11px]">
+                <div className={`mt-3 grid grid-cols-2 sm:grid-cols-3 ${(liveBuckets.rewards ?? 0) > 0 ? 'lg:grid-cols-7' : 'lg:grid-cols-6'} gap-2 text-[11px]`}>
                     <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-2 py-1.5">
                         <p className="text-slate-500 font-medium uppercase tracking-wide">Net worth</p>
                         <p className="font-semibold text-slate-900 tabular-nums">{formatCurrencyString(liveBuckets.netWorth, { digits: 0 })}</p>
@@ -547,6 +577,13 @@ const NetWorthCompositionChart: React.FC<{ title: string; onOpenSummary?: () => 
                         <p className="text-cyan-900/80 font-medium">Receivables</p>
                         <p className="font-semibold text-cyan-950 tabular-nums">{formatCurrencyString(liveBuckets.receivables, { digits: 0 })}</p>
                     </div>
+                    {(liveBuckets.rewards ?? 0) > 0 && (
+                        <div className="rounded-lg border border-purple-100 bg-purple-50/60 px-2 py-1.5">
+                            <p className="text-purple-900/80 font-medium">Rewards</p>
+                            <p className="font-semibold text-purple-950 tabular-nums">{formatCurrencyString(liveBuckets.rewards ?? 0, { digits: 0 })}</p>
+                            <p className="text-[10px] text-purple-700/80 mt-0.5">Memo — not cash or Zakat base</p>
+                        </div>
+                    )}
                     <div className="rounded-lg border border-rose-100 bg-rose-50/60 px-2 py-1.5">
                         <p className="text-rose-900/80 font-medium">Debt</p>
                         <p className="font-semibold text-rose-950 tabular-nums">{formatCurrencyString(liveBuckets.liabilities, { digits: 0 })}</p>

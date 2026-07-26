@@ -21,6 +21,10 @@ import { getPersonalAccounts, getPersonalCommodityHoldings, getPersonalInvestmen
 import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
+import {
+  buildHoldingsQtyDriftReport,
+  holdingsQtyDriftNeedsAttention,
+} from '../services/holdingsIntegrityRepair';
 import { useEnhancementSignals } from '../hooks/useEnhancementSignals';
 import { buildNotificationsDataFingerprint } from '../services/budgetSpendFingerprint';
 import {
@@ -37,6 +41,7 @@ import { buildBudgetDrillDownAction } from '../services/spendingDrillDown';
 import { cachedSupabaseHeadCount } from '../services/supabaseQueryCache';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
+import { rewardsExpiringWithinDays } from '../services/rewards/rewardsDomain';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -122,6 +127,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       data?.investmentPlan,
       data?.plannedTrades,
       data?.executionLogs,
+      data?.rewardsAccounts,
+      data?.rewardsTransactions,
     ],
   );
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
@@ -380,7 +387,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
-    const driftCashNames: string[] = [];
+    const driftCashAccounts: { id: string; name: string }[] = [];
     accountsForRunway
       .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
       .forEach((acc: { id: string; type: string; balance?: number; name?: string }) => {
@@ -388,19 +395,82 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           { id: acc.id, type: acc.type as 'Checking' | 'Savings', balance: acc.balance ?? 0 },
           transactionsForRunway as Transaction[]
         );
-        if (r?.showWarning && acc.name) driftCashNames.push(String(acc.name));
+        if (r?.showWarning && acc.name) driftCashAccounts.push({ id: acc.id, name: String(acc.name) });
       });
-    if (driftCashNames.length > 0) {
+    if (driftCashAccounts.length > 0) {
+      const primary = driftCashAccounts[0];
       push({
         id: 'balance-reconciliation-drift',
         category: 'System',
-        message: `Cash account balance may not match recorded transactions: ${driftCashNames.slice(0, 3).join(', ')}${driftCashNames.length > 3 ? '…' : ''}.`,
+        message: `Cash account balance may not match recorded transactions: ${driftCashAccounts.map((a) => a.name).slice(0, 3).join(', ')}${driftCashAccounts.length > 3 ? '…' : ''}.`,
         date: now.toISOString(),
         isRead: false,
-        pageLink: 'System & APIs Health',
-        pageHash: '#data-reconciliation',
+        pageLink: 'Accounts',
+        pageAction: safePageAction('Accounts', `open-reconcile-balance:${primary.id}`),
         severity: 'warning',
-        actionHint: 'Open System & APIs Health → Data reconciliation for cash drift and repair suggestions.',
+        actionHint: 'Opens Reconcile Balance for the first drifted account (append-only delta). Audit trail is under System & APIs Health.',
+      });
+    }
+
+    const qtyDrift = holdingsQtyDriftNeedsAttention(buildHoldingsQtyDriftReport(data));
+    if (qtyDrift.length > 0) {
+      const primary = qtyDrift[0];
+      const holdingId = getPersonalInvestments(data)
+        .find((p) => p.id === primary.portfolioId)
+        ?.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === primary.symbol)?.id;
+      push({
+        id: 'holdings-qty-integrity-drift',
+        category: 'System',
+        message: `Holding quantity may not match the investment ledger: ${qtyDrift
+          .map((r) => r.symbol)
+          .slice(0, 3)
+          .join(', ')}${qtyDrift.length > 3 ? '…' : ''}.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Investments',
+        pageAction: holdingId
+          ? safePageAction('Investments', `open-reconcile-quantity:${holdingId}`)
+          : undefined,
+        severity: 'warning',
+        actionHint: 'Opens Reconcile quantity for the first drifted holding (symbol-only; audited).',
+      });
+    }
+
+    const expiringRewards = rewardsExpiringWithinDays(
+      data.rewardsAccounts ?? [],
+      data.rewardsTransactions ?? [],
+      30,
+      new Date().toISOString().slice(0, 10),
+      data.rewardsLots,
+    );
+    if (expiringRewards.length > 0) {
+      push({
+        id: 'rewards-expiring-30d',
+        category: 'System',
+        message: `${expiringRewards.length} rewards earn lot(s) expire within 30 days (${expiringRewards
+          .slice(0, 3)
+          .map((e) => e.providerName)
+          .join(', ')}${expiringRewards.length > 3 ? '…' : ''}).`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Rewards',
+        pageAction: safePageAction('Rewards', 'open-rewards-expire'),
+        severity: 'warning',
+        actionHint: 'Open Rewards to redeem or review expiring lots before they lapse.',
+      });
+    }
+    const incompleteRedeems = (data.rewardsTransactions ?? []).filter((t) => t.status === 'incomplete');
+    if (incompleteRedeems.length > 0) {
+      push({
+        id: 'rewards-incomplete-redeem',
+        category: 'System',
+        message: `${incompleteRedeems.length} rewards redemption(s) incomplete — ledger leg may have failed.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Rewards',
+        pageAction: safePageAction('Rewards', 'open-redeem'),
+        severity: 'urgent',
+        actionHint: 'Review Rewards activity and retry or reverse incomplete redemptions.',
       });
     }
 

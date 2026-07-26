@@ -10,7 +10,7 @@ type Props = {
   portfolio?: InvestmentPortfolio;
 };
 
-const SPLIT_TYPES: CorporateActionWizardActionType[] = ['stock_split', 'reverse_stock_split'];
+const SPLIT_TYPES: CorporateActionWizardActionType[] = ['stock_split', 'reverse_stock_split', 'stock_dividend'];
 
 export const SplitWizardSteps: React.FC<Props> = ({ state, onChange, portfolio }) => {
   if (!SPLIT_TYPES.includes(state.actionType)) return null;
@@ -25,7 +25,9 @@ export const SplitWizardSteps: React.FC<Props> = ({ state, onChange, portfolio }
       <p className="text-slate-600">
         {state.actionType === 'stock_split'
           ? 'Enter the split ratio as new shares : old shares (e.g. 2:1 doubles quantity and halves average cost).'
-          : 'Enter the reverse split ratio as new shares : old shares (e.g. 1:10 reduces quantity and raises average cost).'}
+          : state.actionType === 'stock_dividend'
+            ? 'Bonus / stock dividend ratio as new total shares : old shares (e.g. 1.1:1 for a 10% stock dividend). Adjusts quantity and average cost with no cash.'
+            : 'Enter the reverse split ratio as new shares : old shares (e.g. 1:10 reduces quantity and raises average cost).'}
       </p>
       <label className="block space-y-1">
         <span className="text-slate-600">Ratio (new : old)</span>

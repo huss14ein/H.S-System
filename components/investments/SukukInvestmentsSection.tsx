@@ -3,11 +3,13 @@ import { BanknotesIcon } from '../icons/BanknotesIcon';
 import { PencilIcon } from '../icons/PencilIcon';
 import { TrashIcon } from '../icons/TrashIcon';
 import { DataContext } from '../../context/DataContext';
+import { AuthContext } from '../../context/AuthContext';
 import type { Account, Goal, SukukPayoutCadence, SukukPayoutEvent, SukukPayoutSchedule, SukukPosition } from '../../types';
 import Modal from '../Modal';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { parseMoneyInput, roundMoney } from '../../utils/money';
 import { getPersonalSukukPositions } from '../../utils/wealthScope';
+import RevaluationModal from '../reconciliation/RevaluationModal';
 
 const SukukPositionModal: React.FC<{
   isOpen: boolean;
@@ -105,7 +107,12 @@ const SukukPositionModal: React.FC<{
           <option value="SAR">SAR</option>
           <option value="USD">USD</option>
         </select>
-        <input className="input-base" type="number" min={0} step="any" value={faceValue} onChange={(e) => setFaceValue(e.target.value)} placeholder="Face value" />
+        <input className="input-base" type="number" min={0} step="any" value={faceValue} onChange={(e) => setFaceValue(e.target.value)} placeholder="Face value" disabled={!!positionToEdit} />
+        {positionToEdit ? (
+          <p className="text-xs text-slate-500 -mt-2">
+            Face value and outstanding principal are locked after create — use <strong>Restate principal</strong> for audited corrections.
+          </p>
+        ) : null}
         <input className="input-base" type="number" min={0} step="any" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} placeholder="Purchase price (optional)" />
         <div className="grid grid-cols-2 gap-3">
           <input className="input-base" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
@@ -251,11 +258,21 @@ const SukukPayoutScheduleModal: React.FC<{
 };
 
 export const SukukInvestmentsSection: React.FC = () => {
-  const { data, addSukukPosition, updateSukukPosition, deleteSukukPosition, saveSukukPayoutSchedule } = useContext(DataContext)!;
+  const {
+    data,
+    addSukukPosition,
+    updateSukukPosition,
+    deleteSukukPosition,
+    saveSukukPayoutSchedule,
+    applyReconciliationAdjustment,
+  } = useContext(DataContext)!;
+  const auth = useContext(AuthContext);
+  const canRestate = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
   const { formatCurrencyString } = useFormatCurrency();
   const [statusFilter, setStatusFilter] = useState<'active' | 'completed' | 'all'>('active');
   const [modalOpen, setModalOpen] = useState(false);
   const [editPosition, setEditPosition] = useState<SukukPosition | null>(null);
+  const [restatePosition, setRestatePosition] = useState<SukukPosition | null>(null);
   const [schedulePosition, setSchedulePosition] = useState<SukukPosition | null>(null);
 
   const positions = useMemo(() => getPersonalSukukPositions(data), [data]);
@@ -328,6 +345,15 @@ export const SukukInvestmentsSection: React.FC = () => {
                   <div><span className="text-slate-500">Outstanding</span><p className="font-semibold tabular-nums">{formatCurrencyString(p.outstandingPrincipal, { inCurrency: p.currency })}</p></div>
                   <div><span className="text-slate-500">Face value</span><p className="font-medium tabular-nums">{formatCurrencyString(p.faceValue, { inCurrency: p.currency })}</p></div>
                 </div>
+                {canRestate && (
+                <button
+                  type="button"
+                  className="self-start px-2 py-1 text-[11px] font-medium text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50"
+                  onClick={() => setRestatePosition(p)}
+                >
+                  Restate principal
+                </button>
+                )}
                 {next && <p className="text-xs text-slate-700">Next payout: <strong>{next.payoutDate}</strong> ({next.kind}, {roundMoney(next.amount)} {next.currency})</p>}
                 <button type="button" className="btn-secondary text-sm mt-auto" onClick={() => setSchedulePosition(p)}>
                   {schedule ? 'Edit payouts' : 'Set payouts'}
@@ -347,6 +373,27 @@ export const SukukInvestmentsSection: React.FC = () => {
         onSave={async (pos) => {
           if ('id' in pos && pos.id) await updateSukukPosition(pos as SukukPosition);
           else await addSukukPosition(pos as Omit<SukukPosition, 'id' | 'user_id'>);
+        }}
+      />
+      <RevaluationModal
+        isOpen={!!restatePosition}
+        onClose={() => setRestatePosition(null)}
+        title={`Restate principal — ${restatePosition?.name ?? ''}`}
+        entityType="sukuk_position"
+        entityId={restatePosition?.id ?? ''}
+        entityLabel={restatePosition?.name ?? 'Sukuk'}
+        beforeValue={Number(restatePosition?.outstandingPrincipal ?? 0)}
+        currency={restatePosition?.currency === 'USD' ? 'USD' : 'SAR'}
+        maxValue={Number(restatePosition?.faceValue ?? 0)}
+        onApply={async ({ entityId, actualValue, reason }) => {
+          const result = await applyReconciliationAdjustment({
+            mechanism: 'sukuk_face_yield',
+            entityType: 'sukuk_position',
+            entityId,
+            actualValue,
+            reason,
+          });
+          if (!result.ok) throw new Error(result.error || 'Could not restate Sukuk principal.');
         }}
       />
       {schedulePosition && (

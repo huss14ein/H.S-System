@@ -67,6 +67,8 @@ export function buildNotificationsDataFingerprint(data: {
   investmentPlan?: { monthlyBudget?: number };
   plannedTrades?: unknown[];
   executionLogs?: unknown[];
+  rewardsAccounts?: Array<{ id?: string; currentBalance?: number }>;
+  rewardsTransactions?: Array<{ id?: string; status?: string; expiresOn?: string | null }>;
 } | null | undefined): string {
   if (!data) return 'empty';
   const budgets = data.budgets ?? [];
@@ -90,6 +92,19 @@ export function buildNotificationsDataFingerprint(data: {
     const days = Math.ceil((d.getTime() - now) / 86400000);
     if (days >= 0 && days < nearestGoalDays) nearestGoalDays = days;
   }
+  const rewardsAccounts = data.rewardsAccounts ?? [];
+  const rewardsTxs = data.rewardsTransactions ?? [];
+  const rewardsBalanceSum = rewardsAccounts.reduce((s, a) => s + (Number(a.currentBalance) || 0), 0);
+  let incompleteRewards = 0;
+  let nearestRewardExpiryDays = 9999;
+  for (const t of rewardsTxs) {
+    if (t.status === 'incomplete') incompleteRewards += 1;
+    if (!t.expiresOn) continue;
+    const d = new Date(t.expiresOn);
+    if (Number.isNaN(d.getTime())) continue;
+    const days = Math.ceil((d.getTime() - now) / 86400000);
+    if (days >= 0 && days < nearestRewardExpiryDays) nearestRewardExpiryDays = days;
+  }
   const requests = data.budgetRequests ?? [];
   const requestStatusKey = requests
     .map((r) => `${r.id ?? ''}:${r.status ?? ''}`)
@@ -110,5 +125,10 @@ export function buildNotificationsDataFingerprint(data: {
     (data.executionLogs ?? []).length,
     requests.length,
     requestStatusKey,
+    rewardsAccounts.length,
+    Math.round(rewardsBalanceSum),
+    rewardsTxs.length,
+    incompleteRewards,
+    nearestRewardExpiryDays === 9999 ? '' : nearestRewardExpiryDays,
   ].join('|');
 }

@@ -23,6 +23,9 @@ import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import AIAdvisor from '../components/AIAdvisor';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeCommodityForConfirm } from '../utils/recordConfirmMessages';
+import RevaluationModal from '../components/reconciliation/RevaluationModal';
+import { AuthContext } from '../context/AuthContext';
+import { toast } from '../context/ToastContext';
 
 const CommodityHoldingModal: React.FC<{
     isOpen: boolean;
@@ -98,8 +101,12 @@ const CommodityHoldingModal: React.FC<{
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setFormError(null);
-        const parsedQuantity = roundQuantity(parseFloat(quantity) || 0);
-        const parsedPurchaseValue = parseMoneyInput(purchaseValue);
+        const parsedQuantity = holdingToEdit
+            ? roundQuantity(Number(holdingToEdit.quantity) || 0)
+            : roundQuantity(parseFloat(quantity) || 0);
+        const parsedPurchaseValue = holdingToEdit
+            ? Number(holdingToEdit.purchaseValue) || 0
+            : parseMoneyInput(purchaseValue);
         if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
             setFormError('Quantity must be a positive number.');
             return;
@@ -112,10 +119,14 @@ const CommodityHoldingModal: React.FC<{
         const sym = getSymbol(name, unit, goldKarat);
         let parsedCurrentValue = 0;
         if (name === 'Other') {
-            parsedCurrentValue = parseMoneyInput(otherCurrentValue);
-            if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
-                setFormError('Current value cannot be negative.');
-                return;
+            if (holdingToEdit) {
+                parsedCurrentValue = Number(holdingToEdit.currentValue) || 0;
+            } else {
+                parsedCurrentValue = parseMoneyInput(otherCurrentValue);
+                if (!Number.isFinite(parsedCurrentValue) || parsedCurrentValue < 0) {
+                    setFormError('Current value cannot be negative.');
+                    return;
+                }
             }
         }
 
@@ -183,7 +194,13 @@ const CommodityHoldingModal: React.FC<{
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Quantity & Unit <InfoHint text="Amount you hold; unit (grams/ounces/BTC) for correct valuation and Zakat." /></label>
-                    <div className="grid grid-cols-2 gap-4"><input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="input-base w-full" /><select value={unit} onChange={e => setUnit(e.target.value as any)} className="select-base w-full">{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select></div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <input type="number" placeholder="Quantity" value={quantity} onChange={e => setQuantity(e.target.value)} required min="0" step="any" className="input-base w-full" disabled={!!holdingToEdit} />
+                      <select value={unit} onChange={e => setUnit(e.target.value as any)} className="select-base w-full" disabled={!!holdingToEdit}>{name === 'Gold' || name === 'Silver' ? <> <option value="gram">grams</option> <option value="ounce">ounces</option> </> : name === 'Bitcoin' ? <option value="BTC">BTC</option> : <option value="unit">units</option>}</select>
+                    </div>
+                    {holdingToEdit ? (
+                      <p className="text-xs text-slate-500 mt-1">Quantity and purchase cost are locked after create — use <strong>Revalue</strong> to correct market value.</p>
+                    ) : null}
                     {name === 'Gold' && (
                         <div className="mt-3">
                             <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Gold Purity (Karat) <InfoHint text="Gold valuation depends on purity. 24K is pure gold; 22K/21K/18K are priced proportionally." /></label>
@@ -199,12 +216,21 @@ const CommodityHoldingModal: React.FC<{
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Purchase Value <InfoHint text="Your cost basis." /></label>
-                        <input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="input-base w-full" />
+                        <input type="number" placeholder="Purchase Value" value={purchaseValue} onChange={e => setPurchaseValue(e.target.value)} required min="0" step="any" className="input-base w-full" disabled={!!holdingToEdit} />
+                        {holdingToEdit ? (
+                          <p className="text-xs text-slate-500 mt-1">Purchase cost is locked — use Revalue for market value corrections.</p>
+                        ) : null}
                     </div>
                     {name === 'Other' ? (
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Current Value <InfoHint text='No market quote for "Other"; enter an estimate or pick Gold, Silver, or Bitcoin for live pricing.' /></label>
-                            <input type="number" placeholder="Current Value" value={otherCurrentValue} onChange={e => setOtherCurrentValue(e.target.value)} required min="0" step="any" className="input-base w-full" />
+                            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">Current Value <InfoHint text='No market quote for "Other"; enter an estimate on create, then use Revalue for audited corrections.' /></label>
+                            {holdingToEdit ? (
+                                <p className="text-xs text-slate-600 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    Book value is locked here ({formatCurrencyString(holdingToEdit.currentValue ?? 0)}). Use <strong>Revalue</strong> on the card for an audited appraisal (no cash TX).
+                                </p>
+                            ) : (
+                                <input type="number" placeholder="Current Value" value={otherCurrentValue} onChange={e => setOtherCurrentValue(e.target.value)} required min="0" step="any" className="input-base w-full" />
+                            )}
                         </div>
                     ) : (
                         <div>
@@ -231,7 +257,12 @@ const CommodityHoldingModal: React.FC<{
     );
 };
 
-const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: CommodityHolding) => void; onDelete: (h: CommodityHolding) => void; }> = ({ holding, onEdit, onDelete }) => {
+const CommodityHoldingCard: React.FC<{
+  holding: CommodityHolding;
+  onEdit: (h: CommodityHolding) => void;
+  onDelete: (h: CommodityHolding) => void;
+  onRevalue?: (h: CommodityHolding) => void;
+}> = ({ holding, onEdit, onDelete, onRevalue }) => {
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const unrealizedGain = holding.currentValue - holding.purchaseValue;
     const getIcon = (type: CommodityHolding['name']) => {
@@ -251,7 +282,13 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
                         {getIcon(holding.name)}
                         <div><h3 className="font-bold text-dark text-xl">{holding.name}</h3><p className="text-sm text-gray-500">{holding.quantity} {holding.unit}{holding.name === 'Gold' && holding.goldKarat ? ` • ${holding.goldKarat}K` : ''}</p></div>
                     </div>
-                    <div className="flex space-x-1"><button type="button" onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button><button type="button" onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button></div>
+                    <div className="flex space-x-1 items-center">
+                        {onRevalue && (
+                            <button type="button" onClick={() => onRevalue(holding)} className="px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50">Revalue</button>
+                        )}
+                        <button type="button" onClick={() => onEdit(holding)} className="p-1 text-gray-400 hover:text-primary" aria-label="Edit commodity"><PencilIcon className="h-4 w-4"/></button>
+                        <button type="button" onClick={() => onDelete(holding)} className="p-1 text-gray-400 hover:text-danger" aria-label="Delete commodity"><TrashIcon className="h-4 w-4"/></button>
+                    </div>
                 </div>
                 <OwnerBadge owner={holding.owner} className="mt-2" />
                 <div className="mt-4 space-y-3 min-w-0 overflow-hidden">
@@ -267,10 +304,14 @@ const CommodityHoldingCard: React.FC<{ holding: CommodityHolding; onEdit: (h: Co
 
 interface CommoditiesProps {
     setActivePage?: (page: Page) => void;
+    pageAction?: string | null;
+    clearPageAction?: () => void;
 }
 
-const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
-    const { data, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues } = useContext(DataContext)!;
+const Commodities: React.FC<CommoditiesProps> = ({ setActivePage, pageAction, clearPageAction }) => {
+    const { data, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, applyReconciliationAdjustment } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
+    const canRevalue = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
     const metrics = useExtendedCanonicalMetrics();
@@ -284,12 +325,29 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
     const [isCommodityModalOpen, setIsCommodityModalOpen] = useState(false);
     const [commodityToEdit, setCommodityToEdit] = useState<CommodityHolding | null>(null);
     const [commodityToDelete, setCommodityToDelete] = useState<CommodityHolding | null>(null);
+    const [revalueHolding, setRevalueHolding] = useState<CommodityHolding | null>(null);
     const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
     const commodityRows = useMemo(
         () => (data as any)?.personalCommodityHoldings ?? data?.commodityHoldings ?? [],
         [data, (data as any)?.personalCommodityHoldings, data?.commodityHoldings],
     );
+
+    useEffect(() => {
+        if (!pageAction || !pageAction.startsWith('open-revalue')) return;
+        if (!canRevalue) {
+            toast('Your role cannot post reconciliation adjustments.', 'error');
+            clearPageAction?.();
+            return;
+        }
+        const requestedId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
+        const target = requestedId
+            ? (commodityRows as CommodityHolding[]).find((h) => h.id === requestedId) ?? null
+            : (commodityRows as CommodityHolding[])[0] ?? null;
+        if (target) setRevalueHolding(target);
+        else toast('No commodity found to revalue.', 'info');
+        clearPageAction?.();
+    }, [pageAction, clearPageAction, canRevalue, commodityRows]);
 
     const commoditiesAiContext = useMemo(
         () => ({
@@ -388,7 +446,15 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
                     </button>
                 </div>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {commodityRows.map((h: CommodityHolding) => <CommodityHoldingCard key={h.id} holding={h} onEdit={handleOpenCommodityModal} onDelete={handleOpenCommodityDeleteModal} />)}
+                    {commodityRows.map((h: CommodityHolding) => (
+                      <CommodityHoldingCard
+                        key={h.id}
+                        holding={h}
+                        onEdit={handleOpenCommodityModal}
+                        onDelete={handleOpenCommodityDeleteModal}
+                        onRevalue={canRevalue ? setRevalueHolding : undefined}
+                      />
+                    ))}
                     {commodityRows.length === 0 && <p className="text-sm text-gray-500 md:col-span-2 xl:col-span-3 text-center py-8">No commodities added yet.</p>}
                 </div>
             </div>
@@ -402,6 +468,27 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage }) => {
             />
             
             <CommodityHoldingModal isOpen={isCommodityModalOpen} onClose={() => setIsCommodityModalOpen(false)} onSave={handleSaveCommodity} holdingToEdit={commodityToEdit} sarPerUsd={sarPerUsd} />
+            <RevaluationModal
+                isOpen={!!revalueHolding}
+                onClose={() => setRevalueHolding(null)}
+                title={`Revalue — ${revalueHolding?.name ?? 'Commodity'}`}
+                entityType="commodity"
+                entityId={revalueHolding?.id ?? ''}
+                entityLabel={revalueHolding?.name ?? 'Commodity'}
+                beforeValue={Number(revalueHolding?.currentValue ?? 0)}
+                currency="SAR"
+                onApply={async ({ entityId, actualValue, reason }) => {
+                    const result = await applyReconciliationAdjustment({
+                        mechanism: 'commodity_revaluation',
+                        entityType: 'commodity',
+                        entityId,
+                        actualValue,
+                        reason,
+                    });
+                    if (!result.ok) throw new Error(result.error || 'Revaluation failed');
+                    toast('Commodity revalued.', 'success');
+                }}
+            />
             <DeleteConfirmationModal isOpen={!!commodityToDelete} onClose={() => setCommodityToDelete(null)} onConfirm={handleConfirmCommodityDelete} itemName={commodityToDelete?.name || ''} />
         </div>
         </PageLayout>

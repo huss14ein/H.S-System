@@ -25,6 +25,13 @@ export const HYDRATE_FETCH_KEYS = [
   'sukukPayoutEvents',
   'corporateActionEvents',
   'investmentCostLots',
+  'reconciliationAdjustments',
+  'reconciliationAuditEvents',
+  'reconciliationRuns',
+  'rewardsAccounts',
+  'rewardsTransactions',
+  'rewardsTxLinks',
+  'rewardsLots',
 ] as const;
 
 export type HydrateFetchKey = (typeof HYDRATE_FETCH_KEYS)[number];

@@ -13,6 +13,8 @@ export type DailyNwRowDense = {
     Physical: number;
     Receivables: number;
     Liabilities: number;
+    /** Rewards/points memo band — absent on rows built before rewards existed. */
+    Rewards?: number;
 };
 
 function parseLocalDayKey(dayKey: string): Date {
@@ -25,8 +27,16 @@ function shortDayLabelLocal(dayKey: string): string {
     return t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function positiveAssetStackTotal(row: Pick<DailyNwRowDense, 'Cash' | 'Investments' | 'Physical' | 'Receivables'>): number {
-    return Math.max(0, row.Cash) + Math.max(0, row.Investments) + Math.max(0, row.Physical) + Math.max(0, row.Receivables);
+function positiveAssetStackTotal(
+    row: Pick<DailyNwRowDense, 'Cash' | 'Investments' | 'Physical' | 'Receivables' | 'Rewards'>,
+): number {
+    return (
+        Math.max(0, row.Cash) +
+        Math.max(0, row.Investments) +
+        Math.max(0, row.Physical) +
+        Math.max(0, row.Receivables) +
+        Math.max(0, row.Rewards ?? 0)
+    );
 }
 
 /**
@@ -47,6 +57,7 @@ export function inheritBucketsWhenMissing(rows: DailyNwRowDense[]): DailyNwRowDe
                 Investments: Math.round(prev.Investments * r),
                 Physical: Math.round(prev.Physical * r),
                 Receivables: Math.round(prev.Receivables * r),
+                Rewards: Math.round((prev.Rewards ?? 0) * r),
                 Liabilities: Math.round(prev.Liabilities * r),
             };
             prev = next;

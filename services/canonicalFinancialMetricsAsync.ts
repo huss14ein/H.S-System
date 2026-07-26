@@ -6,6 +6,7 @@ import type {
 } from './canonicalFinancialMetrics';
 import {
   buildFastCanonicalFinancialMetrics,
+  computeLiquiditySlices,
   deriveHeadlineExposureParts,
   mergeExtendedIntoDashboard,
 } from './canonicalFinancialMetrics';
@@ -104,15 +105,27 @@ export async function extendCanonicalFinancialMetricsAsync(
     simulatedPrices,
   );
 
-  return mergeExtendedIntoDashboard(dashboard, {
-    breakdown,
-    wealthSummary,
-    investableCashTotalSar,
-    investmentExposure,
-    investmentsTotalSar,
-    headlineExposureParts,
-    investmentAllocation,
-  });
+  const liquidity = computeLiquiditySlices(
+    data,
+    exchangeRate,
+    dashboard.liquidCashSar,
+    dashboard.sarPerUsd,
+    getAvailableCashForAccount,
+  );
+
+  return mergeExtendedIntoDashboard(
+    dashboard,
+    {
+      breakdown,
+      wealthSummary,
+      investableCashTotalSar,
+      investmentExposure,
+      investmentsTotalSar,
+      headlineExposureParts,
+      investmentAllocation,
+    },
+    liquidity,
+  );
 }
 
 /** Full bundle in two idle-friendly phases. */

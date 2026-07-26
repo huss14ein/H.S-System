@@ -36,6 +36,9 @@ import {
     countsAsIncomeForCashflowKpi,
     isInternalTransferTransaction,
 } from '../services/transactionFilters';
+import { isReconciliationLedgerCategory } from '../services/reconciliation/constants';
+import { isTransferLeg } from '../services/reconciliation/transferSafety';
+import { toast } from '../context/ToastContext';
 import { validateSplitTotal } from '../services/transactionIntelligence';
 import { encodeNoteWithSplits } from '../services/transactionSplitNote';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
@@ -1672,6 +1675,22 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
     }, [filteredTransactions, availableAccounts]);
 
     const handleOpenTransactionModal = (transaction: Transaction | null = null) => {
+        if (transaction && isReconciliationLedgerCategory(transaction.category)) {
+            toast(
+                'Reconciliation / Opening Balance rows are protocol-managed. Use Accounts → Reconcile Balance, or reverse from System Health → Reconciliation audit.',
+                'info',
+            );
+            if (typeof window !== 'undefined') {
+                window.location.hash = 'reconciliation-audit-log';
+            }
+            return;
+        }
+        if (transaction && isTransferLeg(transaction)) {
+            toast(
+                'This is one leg of a transfer: amount, account, date and direction are locked so the paired leg cannot be orphaned. Description and memo can still be edited.',
+                'info',
+            );
+        }
         setTransactionToEdit(transaction);
         setIsTransactionModalOpen(true);
     };
@@ -2456,6 +2475,11 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                                 <div className="text-sm text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                                     <span>{new Date(transaction.date).toLocaleDateString()} ({toHijri(transaction.date)})</span>
                                     <span className="badge-neutral">{transaction.category}</span>
+                                    {isReconciliationLedgerCategory(transaction.category) && (
+                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded">
+                                            Book adjust
+                                        </span>
+                                    )}
                                     {isInternalTransferTransaction(transaction) && (
                                         <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-800 bg-sky-100 px-1.5 py-0.5 rounded">
                                             Between accounts
@@ -2527,7 +2551,16 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 sarPerUsd={sarPerUsd}
                 monthStartDay={monthStartDay}
             />
-             <DeleteConfirmationModal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} onConfirm={handleConfirmDelete} itemName={itemToDelete?.description || ''} />
+             <DeleteConfirmationModal
+                isOpen={!!itemToDelete}
+                onClose={() => setItemToDelete(null)}
+                onConfirm={handleConfirmDelete}
+                itemName={
+                    itemToDelete && isTransferLeg(itemToDelete)
+                        ? `${itemToDelete.description || 'this transfer'} — both transfer legs will be removed together`
+                        : itemToDelete?.description || ''
+                }
+            />
             <RecurringModal
                 isOpen={isRecurringModalOpen}
                 onClose={() => { setIsRecurringModalOpen(false); setRecurringToEdit(null); }}

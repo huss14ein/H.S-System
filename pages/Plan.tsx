@@ -9,6 +9,7 @@ import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AIAdvisor from '../components/AIAdvisor';
 import SalaryPlanningExperts from '../components/SalaryPlanningExperts';
 import SinkingFunds from './SinkingFunds';
+import HouseholdMembersPanel from '../components/household/HouseholdMembersPanel';
 import InfoHint from '../components/InfoHint';
 import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
@@ -1461,6 +1462,8 @@ const AnnualFinancialPlan: React.FC<{
             />
 
              <SinkingFunds />
+
+             <HouseholdMembersPanel />
             
             {/* Plan Grid: actuals from Transactions, planned from Budgets + recurring; investment from Investment Plan */}
             <div className="space-y-2">

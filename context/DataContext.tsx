@@ -2,17 +2,19 @@ import React, { createContext, useState, ReactNode, useEffect, useLayoutEffect, 
 import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent, type SukukPosition, type CorporateActionEvent } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent, type SukukPosition, type CorporateActionEvent, type RewardsTxLink, type RewardsLot } from '../types';
 import { getDefaultWealthUltraSystemConfig, mergeWealthUltraSystemConfigFromRow } from '../wealth-ultra/config';
 import {
   getPersonalAccounts,
   getPersonalAssets,
   getPersonalCommodityHoldings,
   getPersonalSukukPositions,
+  getPersonalRewardsAccounts,
   getPersonalInvestments,
   getPersonalLiabilities,
   getPersonalTransactions,
 } from '../utils/wealthScope';
+import { isRestrictedRole } from '../utils/role';
 import { resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
 import {
     inferInvestmentTransactionCurrency,
@@ -27,6 +29,39 @@ import { buildInvestmentTradeInsertVariants } from '../services/investmentTradeI
 import { stampInvestmentTradeIdentity } from '../services/investmentTradeIdentity';
 import { auditChangeLog } from '../services/auditLog';
 import { toast } from './ToastContext';
+import {
+  appCalendarTodayYmd,
+  fetchReconciliationAdjustments,
+  fetchReconciliationAuditEvents,
+  fetchReconciliationRuns,
+  insertNetWorthSnapshotRevision,
+  insertReconciliationAudit,
+  insertReconciliationAdjustment,
+  isReconciliationLedgerCategory,
+  normalizeReconciliationAdjustmentRow,
+  normalizeReconciliationAuditRow,
+  normalizeReconciliationRunRow,
+  updateReconciliationRunStatus,
+  replayAffectedPortfolioSymbols,
+  type ReconciliationAdjustment,
+} from '../services/reconciliation';
+import { computePersonalHeadlineNetWorthSar } from '../services/personalNetWorth';
+import {
+  assertTransferEditAllowed,
+  describeTransferDeleteCascade,
+  transferDeleteCascadeIds,
+} from '../services/reconciliation/transferSafety';
+import {
+  orchestrateApplyReconciliation,
+  orchestratePreviewReconciliation,
+  orchestrateReverseReconciliation,
+} from '../services/reconciliation/orchestrator';
+import type { ApplyReconciliationInput, ApplyReconciliationResult } from '../services/reconciliation';
+import {
+  normalizeRewardsAccountsFromRows,
+  normalizeRewardsTransactionsFromRows,
+} from '../services/rewards';
+import type { RewardsOrchestratorDeps } from '../services/rewards/orchestrator';
 import { validateAccount, validateGoal, validateHolding, validateTrade, validateTransactionCore, validateSettings, validateBackup, validateLiability, validateCommodityHolding, validateBudget, validateAsset, validatePlannedTrade, validateUniverseTicker, validatePortfolio, validateRecurringTransaction, validatePriceAlert, validateZakatPayment, validateWatchlistItem, validateGoalAllocation, validateTickerStatus, validateInvestmentPlan, validateExecutionLog, validateSukukPosition } from '../services/dataQuality/validation';
 import { normalizeSukukPositionRow, sukukPositionToRow } from '../services/sukuk/sukukPositionDb';
 import { normalizeSukukPayoutScheduleRow, normalizeSukukPayoutEventRow, sukukPayoutScheduleToRow, sukukPayoutEventToRow } from '../services/sukuk/sukukPayoutDb';
@@ -85,7 +120,8 @@ import {
 } from '../services/workspaceHydrateTiers';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { yieldToMain } from '../utils/yieldToMain';
-import { mergeNetWorthSnapshotsFromServer } from '../services/netWorthSnapshot';
+import { isMonthLocked, mergeNetWorthSnapshotsFromServer, setServerPeriodLocks } from '../services/netWorthSnapshot';
+import { hydrateFoundationsTables } from '../services/foundationsHydrate';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
@@ -128,6 +164,8 @@ const initialData: FinancialData = {
     accounts: [], assets: [], liabilities: [], goals: [], transactions: [], recurringTransactions: [],
     investments: [], investmentTransactions: [], budgets: [], commodityHoldings: [], watchlist: [],
     sukukPositions: [], sukukPayoutSchedules: [], sukukPayoutEvents: [], corporateActionEvents: [], investmentCostLots: [],
+    reconciliationAdjustments: [], reconciliationAuditEvents: [], reconciliationRuns: [],
+    rewardsAccounts: [], rewardsTransactions: [], rewardsTxLinks: [], rewardsLots: [], personalRewardsAccounts: [],
     settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 28 },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
@@ -235,6 +273,22 @@ interface DataContextType {
     linkedSymbol?: string;
   }) => Promise<void>;
   reverseCorporateActionEvent: (eventId: string) => Promise<void>;
+  /** Preview a targeted reconciliation adjustment (server/client preview). */
+  previewReconciliationAdjustment: (input: ApplyReconciliationInput) => Promise<ApplyReconciliationResult | { preview: unknown; error?: string }>;
+  applyReconciliationAdjustment: (input: ApplyReconciliationInput) => Promise<ApplyReconciliationResult>;
+  reverseReconciliationAdjustment: (adjustmentId: string, reason: string) => Promise<ApplyReconciliationResult>;
+  /** Re-read adjustments/audit/runs from the DB (multi-device audit trail). */
+  refreshReconciliationAudit: () => Promise<{ ok: boolean; error?: string }>;
+  /** Re-drive a blocked/failed reconciliation run (client lots sync + optional Edge worker). */
+  retryReconciliationRun: (runId: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Deps for rewards earn/redeem/expire orchestrator (client-side). */
+  getRewardsOrchestratorDeps: () => RewardsOrchestratorDeps | null;
+  /**
+   * Low-level local-state patch (eagerly updates `dataRef` before React commits).
+   * Used by lightweight optional-table panels (household members, documents,
+   * subscriptions, estate) that persist via Supabase directly then mirror locally.
+   */
+  applyFinancialDataPatch: (recipe: (prev: FinancialData) => FinancialData) => void;
   /** Explicit repair — rebuild named symbols from portfolio_id ledger (never runs on trade). */
   rebuildHoldingsFromLedgerForSymbols: (args: { portfolioId: string; symbols: string[] }) => Promise<void>;
   addWatchlistItem: (item: WatchlistItem, opts?: RecordWriteOptions) => Promise<void>;
@@ -256,7 +310,7 @@ interface DataContextType {
   deleteCommodityHolding: (holdingId: string) => Promise<void>;
   batchUpdateCommodityHoldingValues: (updates: { id: string; currentValue: number }[]) => Promise<void>;
   addSukukPosition: (position: Omit<SukukPosition, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
-  updateSukukPosition: (position: SukukPosition) => Promise<void>;
+  updateSukukPosition: (position: SukukPosition, opts?: { viaReconciliation?: boolean }) => Promise<void>;
   deleteSukukPosition: (positionId: string) => Promise<void>;
   saveSukukPayoutSchedule: (input: {
     position: SukukPosition;
@@ -291,6 +345,13 @@ interface DataContextType {
 }
 
 export const DataContext = createContext<DataContextType | null>(null);
+
+/** Hook accessor for the financial data context (throws if used outside the provider). */
+export const useData = (): DataContextType => {
+  const ctx = useContext(DataContext);
+  if (!ctx) throw new Error('useData must be used within a DataProvider');
+  return ctx;
+};
 
 const DATA_CONTEXT_ACTION_KEYS = [
   'refreshData',
@@ -332,6 +393,11 @@ const DATA_CONTEXT_ACTION_KEYS = [
   'deleteInvestmentTransaction',
   'applyCorporateActionEvent',
   'reverseCorporateActionEvent',
+  'previewReconciliationAdjustment',
+  'applyReconciliationAdjustment',
+  'reverseReconciliationAdjustment',
+  'refreshReconciliationAudit',
+  'retryReconciliationRun',
   'rebuildHoldingsFromLedgerForSymbols',
   'addWatchlistItem',
   'updateWatchlistItem',
@@ -378,7 +444,18 @@ function normalizeSettings(raw: any): Settings {
             return Math.min(31, Math.max(1, Math.round(n)));
         })(),
         nisabAmount: raw.nisab_amount != null || raw.nisabAmount != null ? Number(raw.nisab_amount ?? raw.nisabAmount) : undefined,
+        includeRewardsInNetWorth: (raw.includeRewardsInNetWorth ?? raw.include_rewards_in_net_worth) !== false,
+        emergencyFundMonthsTarget: clampEmergencyFundMonthsTarget(
+            raw.emergencyFundMonthsTarget ?? raw.emergency_fund_months_target,
+        ),
     };
+}
+
+/** Same 1–24 window the Settings input, useEmergencyFund, and the KPI snapshot enforce. */
+function clampEmergencyFundMonthsTarget(value: unknown): number {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return 6;
+    return Math.min(24, Math.max(1, Math.round(n)));
 }
 
 function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
@@ -390,6 +467,10 @@ function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
     if (settings.goldPrice != null) row.gold_price = settings.goldPrice;
     if (settings.monthStartDay != null) row.month_start_day = settings.monthStartDay;
     if (settings.nisabAmount != null) row.nisab_amount = settings.nisabAmount;
+    if (settings.includeRewardsInNetWorth != null) row.include_rewards_in_net_worth = settings.includeRewardsInNetWorth;
+    if (settings.emergencyFundMonthsTarget != null) {
+        row.emergency_fund_months_target = clampEmergencyFundMonthsTarget(settings.emergencyFundMonthsTarget);
+    }
     return row;
 }
 
@@ -605,6 +686,11 @@ function normalizeGoalRow(raw: any): Goal {
         deadline: String(raw.deadline ?? ''),
         savingsAllocationPercent: raw.savings_allocation_percent ?? raw.savingsAllocationPercent,
         priority: normalizeGoalPriority(raw.priority ?? raw.goal_priority),
+        reservedAmount:
+            (raw.reserved_amount ?? raw.reservedAmount) != null
+                ? Number(raw.reserved_amount ?? raw.reservedAmount) || 0
+                : undefined,
+        isSinkingFund: Boolean(raw.is_sinking_fund ?? raw.isSinkingFund ?? false) || undefined,
     };
 }
 
@@ -839,12 +925,52 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
     const dataRef = useRef(data);
+    const getRewardsOrchestratorDepsRef = useRef<() => RewardsOrchestratorDeps | null>(() => null);
     /** Eagerly patch dataRef before setState so sequential awaits (recordTrade → holdings patch) see fresh state. */
     const applyFinancialDataPatch = (recipe: (prev: FinancialData) => FinancialData) => {
         const next = recipe(dataRef.current);
         dataRef.current = next;
         setData(next);
     };
+    /** Stable identity for context consumers (behavior only touches refs + setData). */
+    const applyFinancialDataPatchStable = useCallback(
+        (recipe: (prev: FinancialData) => FinancialData) => applyFinancialDataPatch(recipe),
+        [],
+    );
+
+    /**
+     * Optional "foundations" tables (period locks, household members/allocations, docs,
+     * subscriptions, pension, estate) hydrate out-of-band from the main tiered fetch so
+     * they never block first paint and degrade gracefully before their migrations apply.
+     * Also seeds the server period-lock cache used by reconciliation guards.
+     */
+    useEffect(() => {
+        const userId = auth?.user?.id;
+        if (!userId || !supabase) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const foundations = await hydrateFoundationsTables(supabase, userId);
+                if (cancelled) return;
+                setServerPeriodLocks(foundations.periodLocks);
+                applyFinancialDataPatch((prev) => ({
+                    ...prev,
+                    periodLocks: foundations.periodLocks,
+                    householdMembers: foundations.householdMembers,
+                    memberAllocations: foundations.memberAllocations,
+                    vaultDocuments: foundations.vaultDocuments,
+                    subscriptions: foundations.subscriptions,
+                    pensionAccounts: foundations.pensionAccounts,
+                    estateBeneficiaries: foundations.estateBeneficiaries,
+                }));
+            } catch (e) {
+                if (import.meta.env.DEV) console.warn('foundations hydrate failed:', e);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [auth?.user?.id, dataResetKey]);
     const bumpHoldingsBookGeneration = () => {
         holdingsBookGenerationRef.current += 1;
     };
@@ -1040,6 +1166,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             currentAmount: goal.currentAmount,
             deadline: goal.deadline,
             savingsAllocationPercent: goal.savingsAllocationPercent,
+            reservedAmount: goal.reservedAmount,
+            isSinkingFund: goal.isSinkingFund,
         };
         const snake = {
             name: goal.name,
@@ -1047,6 +1175,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             current_amount: goal.currentAmount,
             deadline: goal.deadline,
             savings_allocation_percent: goal.savingsAllocationPercent,
+            reserved_amount: goal.reservedAmount,
+            is_sinking_fund: goal.isSinkingFund,
         };
         // Prefer snake_case + priority (typical Postgres), then legacy `goal_priority`, then camelCase; schemas without priority last.
         return [
@@ -1093,6 +1223,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const investmentCostLotsPromise = trySelectOptionalTable<any>(
                 db.from('investment_cost_lots').select('*').eq('user_id', auth.user.id),
             );
+            const reconciliationAdjustmentsPromise = trySelectOptionalTable<any>(
+                db.from('reconciliation_adjustments').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }).limit(200),
+            );
+            const reconciliationAuditEventsPromise = trySelectOptionalTable<any>(
+                db.from('reconciliation_audit_events').select('*').eq('user_id', auth.user.id).order('at', { ascending: false }).limit(200),
+            );
+            const reconciliationRunsPromise = trySelectOptionalTable<any>(
+                db.from('reconciliation_runs').select('*').eq('user_id', auth.user.id).order('created_at', { ascending: false }).limit(100),
+            );
+            const rewardsAccountsPromise = trySelectOptionalTable<any>(
+                db.from('rewards_accounts').select('*').eq('user_id', auth.user.id),
+            );
+            const rewardsTransactionsPromise = trySelectOptionalTable<any>(
+                db.from('rewards_transactions').select('*').eq('user_id', auth.user.id),
+            );
+            const rewardsTxLinksPromise = trySelectOptionalTable<any>(
+                db.from('rewards_tx_links').select('*').eq('user_id', auth.user.id),
+            );
+            const rewardsLotsPromise = trySelectOptionalTable<any>(
+                db.from('rewards_lots').select('*').eq('user_id', auth.user.id),
+            );
 
             const fetchPromises = [
                 db.from('accounts').select('*').eq('user_id', auth.user.id),
@@ -1121,6 +1272,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 sukukEventsPromise,
                 corporateActionEventsPromise,
                 investmentCostLotsPromise,
+                reconciliationAdjustmentsPromise,
+                reconciliationAuditEventsPromise,
+                reconciliationRunsPromise,
+                rewardsAccountsPromise,
+                rewardsTransactionsPromise,
+                rewardsTxLinksPromise,
+                rewardsLotsPromise,
             ];
             const keys = HYDRATE_FETCH_KEYS;
             const emptyResult = (err?: any) => ({ data: null, error: err || { code: 'FETCH_FAILED' } });
@@ -1183,6 +1341,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             let sukukPayoutEvents = emptyResult();
             let corporateActionEvents = emptyResult();
             let investmentCostLots = emptyResult();
+            let reconciliationAdjustments = emptyResult();
+            let reconciliationAuditEvents = emptyResult();
+            let reconciliationRuns = emptyResult();
+            let rewardsAccounts = emptyResult();
+            let rewardsTransactions = emptyResult();
+            let rewardsTxLinks = emptyResult();
+            let rewardsLots = emptyResult();
             const allFetches = {
                 accounts,
                 goals,
@@ -1247,6 +1412,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 sukukPositions: patch.sukukPositions ?? prev.sukukPositions,
                 corporateActionEvents: patch.corporateActionEvents ?? prev.corporateActionEvents,
                 investmentCostLots: patch.investmentCostLots ?? prev.investmentCostLots,
+                reconciliationAdjustments: patch.reconciliationAdjustments ?? prev.reconciliationAdjustments,
+                reconciliationAuditEvents: patch.reconciliationAuditEvents ?? prev.reconciliationAuditEvents,
+                reconciliationRuns: patch.reconciliationRuns ?? prev.reconciliationRuns,
+                rewardsAccounts: patch.rewardsAccounts ?? prev.rewardsAccounts,
+                rewardsTransactions: patch.rewardsTransactions ?? prev.rewardsTransactions,
+                rewardsTxLinks: patch.rewardsTxLinks ?? prev.rewardsTxLinks,
+                rewardsLots: patch.rewardsLots ?? prev.rewardsLots,
                 budgets: patch.budgets ?? prev.budgets,
                 commodityHoldings: patch.commodityHoldings ?? prev.commodityHoldings,
                 watchlist: patch.watchlist ?? prev.watchlist,
@@ -1388,6 +1560,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         sukukPayoutEvents,
                         corporateActionEvents,
                         investmentCostLots,
+                        reconciliationAdjustments,
+                        reconciliationAuditEvents,
+                        reconciliationRuns,
+                        rewardsAccounts,
+                        rewardsTransactions,
+                        rewardsTxLinks,
+                        rewardsLots,
                     ] = secondaryResults;
                     const secondaryFetches = {
                         zakatPayments,
@@ -1405,6 +1584,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         sukukPayoutEvents,
                         corporateActionEvents,
                         investmentCostLots,
+                        reconciliationAdjustments,
+                        reconciliationAuditEvents,
+                        reconciliationRuns,
+                        rewardsAccounts,
+                        rewardsTransactions,
+                        rewardsTxLinks,
+                        rewardsLots,
                     };
                     Object.entries(secondaryFetches).forEach(([key, value]) => {
                         if (value?.error && value.error.code !== 'PGRST116') {
@@ -1422,6 +1608,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             if (key === 'investmentCostLots' && value.error.code === 'PGRST205') {
                                 console.warn(
                                     'investment_cost_lots table missing — apply migration 20260706130000_corporate_actions_and_cost_lots.sql.',
+                                );
+                            }
+                            if (
+                                (key === 'rewardsAccounts' ||
+                                    key === 'rewardsTransactions' ||
+                                    key === 'rewardsTxLinks' ||
+                                    key === 'rewardsLots') &&
+                                value.error.code === 'PGRST205'
+                            ) {
+                                console.warn(
+                                    'rewards tables missing — apply migration 20260726180000_rewards_domain.sql on Supabase.',
                                 );
                             }
                         }
@@ -1462,6 +1659,43 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     const normalizedCostLotsBg = filterOwnedRows(
                         ((investmentCostLots.data ?? undefined) as any[] | undefined) || [],
                     ).map((row) => normalizeInvestmentCostLotRow(row as Record<string, unknown>));
+                    const normalizedReconciliationAdjustmentsBg = filterOwnedRows(
+                        ((reconciliationAdjustments.data ?? undefined) as any[] | undefined) || [],
+                    ).map((row) => normalizeReconciliationAdjustmentRow(row as Record<string, unknown>));
+                    const normalizedReconciliationAuditBg = filterOwnedRows(
+                        ((reconciliationAuditEvents.data ?? undefined) as any[] | undefined) || [],
+                    ).map((row) => normalizeReconciliationAuditRow(row as Record<string, unknown>));
+                    const normalizedReconciliationRunsBg = filterOwnedRows(
+                        ((reconciliationRuns.data ?? undefined) as any[] | undefined) || [],
+                    ).map((row) => normalizeReconciliationRunRow(row as Record<string, unknown>));
+                    const normalizedRewardsAccountsBg = normalizeRewardsAccountsFromRows(
+                        filterOwnedRows(((rewardsAccounts.data ?? undefined) as any[] | undefined) || []),
+                    );
+                    const normalizedRewardsTransactionsBg = normalizeRewardsTransactionsFromRows(
+                        filterOwnedRows(((rewardsTransactions.data ?? undefined) as any[] | undefined) || []),
+                    );
+                    const normalizedRewardsTxLinksBg: RewardsTxLink[] = filterOwnedRows(
+                        ((rewardsTxLinks.data ?? undefined) as any[] | undefined) || [],
+                    ).map((row: any) => ({
+                        id: String(row.id ?? ''),
+                        rewardTxId: String(row.reward_tx_id ?? row.rewardTxId ?? ''),
+                        financialTxId: (row.financial_tx_id ?? row.financialTxId ?? null) as string | null,
+                        investmentTxId: (row.investment_tx_id ?? row.investmentTxId ?? null) as string | null,
+                        linkKind: String(row.link_kind ?? row.linkKind ?? 'other') as RewardsTxLink['linkKind'],
+                        createdAt: row.created_at ? String(row.created_at) : undefined,
+                    }));
+                    const normalizedRewardsLotsBg: RewardsLot[] = filterOwnedRows(
+                        ((rewardsLots.data ?? undefined) as any[] | undefined) || [],
+                    ).map((row: any) => ({
+                        id: String(row.id ?? ''),
+                        accountId: String(row.account_id ?? row.accountId ?? ''),
+                        earnTxId: String(row.earn_tx_id ?? row.earnTxId ?? ''),
+                        quantityRemaining: Number(row.quantity_remaining ?? row.quantityRemaining ?? 0) || 0,
+                        expiresOn: row.expires_on || row.expiresOn
+                            ? String(row.expires_on ?? row.expiresOn).slice(0, 10)
+                            : null,
+                        createdAt: row.created_at ? String(row.created_at) : undefined,
+                    }));
                     await yieldToMain();
                     applyHydrateFinancialDataPatch(
                         {
@@ -1471,6 +1705,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             sukukPayoutEvents: normalizedSukukEventsBg,
                             corporateActionEvents: normalizedCorporateActionEventsBg,
                             investmentCostLots: normalizedCostLotsBg,
+                            reconciliationAdjustments: normalizedReconciliationAdjustmentsBg as any,
+                            reconciliationAuditEvents: normalizedReconciliationAuditBg as any,
+                            reconciliationRuns: normalizedReconciliationRunsBg as any,
+                            rewardsAccounts: normalizedRewardsAccountsBg,
+                            rewardsTransactions: normalizedRewardsTransactionsBg,
+                            rewardsTxLinks: normalizedRewardsTxLinksBg,
+                            rewardsLots: normalizedRewardsLotsBg,
                             commodityHoldings: filterOwnedRows((commodityHoldings.data ?? undefined) as any[] | undefined).map(normalizeCommodityHolding),
                             zakatPayments: sortByNewestFirst(filterOwnedRows((zakatPayments.data ?? undefined) as any[] | undefined)),
                             priceAlerts: filterOwnedRows((priceAlerts.data ?? undefined) as any[] | undefined).map(normalizePriceAlert),
@@ -1800,6 +2041,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             'sukuk_payout_events',
             'sukuk_payout_schedules',
             'sukuk_positions',
+            'reconciliation_adjustments',
+            'reconciliation_runs',
+            'reconciliation_audit_events',
+            'rewards_accounts',
+            'rewards_transactions',
+            'rewards_tx_links',
+            'rewards_lots',
+            'net_worth_snapshot_revisions',
         ];
         // allSettled so missing tables (e.g. recurring_transactions) don't fail the whole reset
         await Promise.allSettled(tables.map(table => db.from(table).delete().eq('user_id', auth.user!.id)));
@@ -1855,6 +2104,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 { key: 'executionLogs', dbTable: 'execution_logs' },
                 { key: 'recurringTransactions', dbTable: 'recurring_transactions' },
                 { key: 'budgetRequests', dbTable: 'budget_requests' },
+                { key: 'rewardsAccounts', dbTable: 'rewards_accounts' },
+                { key: 'rewardsTransactions', dbTable: 'rewards_transactions' },
+                { key: 'rewardsTxLinks', dbTable: 'rewards_tx_links' },
+                { key: 'rewardsLots', dbTable: 'rewards_lots' },
             ];
             for (const { key, dbTable } of tables) {
                 const rows = arr(backup[key] ?? backup[key.replace(/([A-Z])/g, '_$1').toLowerCase()]);
@@ -2245,6 +2498,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // --- Budgets ---
     const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
       if(!supabase) return;
+      if (isReconciliationLedgerCategory(budget.category)) {
+        toast(
+          'Reconciliation Adjustment / Opening Balance cannot be budget categories. Those rows are excluded from cashflow and budgets by design.',
+          'error',
+        );
+        return;
+      }
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: (budget as Budget).period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const budgetOk = await guardRecordWrite(opts, summarizeBudgetForConfirm({
@@ -2284,6 +2544,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateBudget = async (budget: Budget) => {
       if (!supabase || !auth?.user) return;
+      if (isReconciliationLedgerCategory(budget.category)) {
+        toast(
+          'Reconciliation Adjustment / Opening Balance cannot be budget categories.',
+          'error',
+        );
+        return;
+      }
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: budget.period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
       const db = supabase;
@@ -2512,10 +2779,34 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await up({ ...acc, balance: newBalance }, { fromTransactionDelta: true });
     };
 
+    const assertPeriodUnlocked = (dateYmd: string | undefined | null, action: string): boolean => {
+        const ym = String(dateYmd ?? '').slice(0, 7);
+        if (!ym || ym.length < 7) return true;
+        if (!isMonthLocked(ym)) return true;
+        toast(
+          `Period ${ym} is locked. Unlock period close before you ${action}.`,
+          'error',
+        );
+        return false;
+    };
+
     const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a transaction.", 'error');
             return;
+        }
+        if (!(opts as { system?: boolean } | undefined)?.system && !assertPeriodUnlocked(transaction.date, 'add transactions')) {
+            return;
+        }
+        if (
+          isReconciliationLedgerCategory(transaction.category) &&
+          !(opts as { system?: boolean } | undefined)?.system
+        ) {
+          toast(
+            'Reconciliation Adjustment / Opening Balance can only be posted via Reconcile Balance — not as a manual transaction.',
+            'error',
+          );
+          return;
         }
         const core = validateTransactionCore({
             date: transaction.date,
@@ -2877,8 +3168,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateTransaction = async (transaction: Transaction, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) return;
+        if (!(opts as { system?: boolean } | undefined)?.system) {
+            const existing = (dataRef.current?.transactions ?? data?.transactions ?? []).find(
+                (t) => t.id === transaction.id,
+            );
+            if (!assertPeriodUnlocked(existing?.date ?? transaction.date, 'edit transactions')) return;
+            if (existing?.date && existing.date.slice(0, 7) !== String(transaction.date ?? '').slice(0, 7)) {
+                if (!assertPeriodUnlocked(transaction.date, 'move transactions into')) return;
+            }
+        }
         const core = validateTransactionCore({ date: transaction.date, amount: transaction.amount, accountId: transaction.accountId, description: transaction.description });
         if (!core.valid) { toast(core.errors.join('\n'), 'error'); return; }
+        const existingForTransferCheck = (dataRef.current?.transactions ?? data?.transactions ?? []).find(
+            (t) => t.id === transaction.id,
+        );
+        const transferEditBlock = assertTransferEditAllowed(existingForTransferCheck, transaction);
+        if (transferEditBlock) { toast(transferEditBlock, 'error'); return; }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
         const updateOk = await guardRecordWrite(opts, summarizeUpdateTransactionForConfirm(transaction, postingAccount?.name));
         if (!updateOk) return;
@@ -2982,15 +3287,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const deleteTransaction = async (transactionId: string) => {
         if(!supabase || !auth?.user) return;
         const db = supabase;
-        const prevTx = data?.transactions?.find((t) => t.id === transactionId);
-        const { error } = await db.from('transactions').delete().match({ id: transactionId, user_id: auth.user.id });
+        const snapshotTxs = dataRef.current?.transactions ?? data?.transactions ?? [];
+        const prevTx = snapshotTxs.find((t) => t.id === transactionId);
+        if (prevTx && !assertPeriodUnlocked(prevTx.date, 'delete transactions')) return;
+        /** Transfers are removed as a group; deleting one leg alone would create or destroy money. */
+        const cascadeIds = transferDeleteCascadeIds(snapshotTxs, transactionId);
+        const cascadeRows = snapshotTxs.filter((t) => cascadeIds.includes(String(t.id)));
+        const { error } = await db
+            .from('transactions')
+            .delete()
+            .in('id', cascadeIds)
+            .eq('user_id', auth.user.id);
         if(error) console.error("Error deleting transaction:", error);
         else {
-            await applyLedgerAccountDeltaForTransaction(prevTx?.accountId, -(Number(prevTx?.amount) || 0));
+            for (const row of cascadeRows.length ? cascadeRows : prevTx ? [prevTx] : []) {
+                await applyLedgerAccountDeltaForTransaction(row.accountId, -(Number(row.amount) || 0));
+            }
             startTransition(() => {
-                setData((prev) => ({ ...prev, transactions: prev.transactions.filter((t) => t.id !== transactionId) }));
+                setData((prev) => ({
+                    ...prev,
+                    transactions: prev.transactions.filter((t) => !cascadeIds.includes(String(t.id))),
+                }));
             });
-            await removeSharedBudgetTransactionMirror(transactionId);
+            for (const id of cascadeIds) {
+                await removeSharedBudgetTransactionMirror(id);
+            }
+            const cascadeNote = describeTransferDeleteCascade(cascadeIds.length);
+            if (cascadeNote) toast(cascadeNote, 'info');
             auditChangeLog({
                 action: 'delete',
                 entity: 'transaction',
@@ -3020,8 +3343,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Recurring transactions ---
+    /**
+     * Reconciliation rows are engine-generated one-off corrections. A schedule that mints them every
+     * month would silently re-inject drift, so rules may never carry those categories.
+     */
+    const RECURRING_RECONCILE_CATEGORY_ERROR =
+        'Reconciliation Adjustment / Opening Balance cannot be used in a recurring rule. Use Reconcile Balance on the account instead.';
+
     const addRecurringTransaction = async (recurring: Omit<RecurringTransaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
+        if (isReconciliationLedgerCategory(recurring.category)) {
+            toast(RECURRING_RECONCILE_CATEGORY_ERROR, 'error');
+            return;
+        }
         const v = validateRecurringTransaction({ description: recurring.description, amount: recurring.amount, type: recurring.type, accountId: recurring.accountId, category: recurring.category, dayOfMonth: recurring.dayOfMonth });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const acc = (data?.accounts ?? []).find((a) => a.id === recurring.accountId);
@@ -3059,6 +3393,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const updateRecurringTransaction = async (recurring: RecurringTransaction) => {
         if (!supabase || !auth?.user) return;
+        if (isReconciliationLedgerCategory(recurring.category)) {
+            toast(RECURRING_RECONCILE_CATEGORY_ERROR, 'error');
+            return;
+        }
         const v = validateRecurringTransaction({ description: recurring.description, amount: recurring.amount, type: recurring.type, accountId: recurring.accountId, category: recurring.category, dayOfMonth: recurring.dayOfMonth });
         if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
         const db = supabase;
@@ -3100,6 +3438,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!rule) return { applied: false, skipped: true, skipReason: 'not_found' };
         if (!rule.enabled) return { applied: false, skipped: true, skipReason: 'disabled' };
         if (rule.addManually === true) return { applied: false, skipped: true, skipReason: 'manual' };
+        // Legacy rules created before the ban must not auto-post reconciliation rows either.
+        if (isReconciliationLedgerCategory(rule.category)) return { applied: false, skipped: true, skipReason: 'disabled' };
         if (!supabase || !auth?.user) return { applied: false, skipped: true };
 
         const monthStartDay = resolveMonthStartDayFromData(data);
@@ -3860,6 +4200,58 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const portfolio = (snapshot?.investments ?? []).find((p) => p.id === ev.portfolioId);
         if (!portfolio) throw new Error('Portfolio not found.');
 
+        const replayTxs = filterTransactionsForPortfolioReplay({
+            portfolioId: ev.portfolioId,
+            transactions: snapshot?.investmentTransactions ?? [],
+            holdingSymbols: portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+            accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
+        });
+        const manualOnly = !hasPositionAffectingTransactions(replayTxs);
+        const undoSymbols = [ev.symbol, ev.linkedSymbol]
+            .map((s) => String(s ?? '').trim().toUpperCase())
+            .filter(Boolean);
+
+        // Ledger-backed undo: mark original reversed and exclude from replay — do NOT insert an inverse event
+        // (that would reverse-split an already-unsplit buy history).
+        if (!manualOnly) {
+            const { error: markErr } = await supabase
+                .from('corporate_action_events')
+                .update({ status: 'reversed', reversed_by_event_id: null })
+                .match({ id: eventId, user_id: auth.user.id });
+            if (markErr && markErr.code !== 'PGRST205') throw markErr;
+
+            const mergedEvents = (snapshot?.corporateActionEvents ?? []).map((e) =>
+                e.id === eventId ? { ...e, status: 'reversed' as const } : e,
+            );
+            setData((prev) => ({
+                ...prev,
+                corporateActionEvents: mergedEvents,
+            }));
+            await removeCorporateActionCashDeposits(ev.idempotencyKey);
+            await yieldToMain();
+            await syncPortfolioAfterLedgerMutation(ev.portfolioId, {
+                corporateActionEvents: mergedEvents,
+                holdingsBaselineMode: 'replay_derived',
+                symbols: undoSymbols,
+            });
+            adjustQuotesForCorporateActionNow({
+                symbol: ev.symbol,
+                action: buildReverseCorporateAction(corporateActionFromEvent(ev)),
+                portfolioId: ev.portfolioId,
+            });
+            await insertReconciliationAudit(supabase, auth.user.id, {
+                kind: 'corporate_action',
+                mechanism: 'corporate_action_undo',
+                entityType: 'corporate_action',
+                entityId: eventId,
+                effectiveDate: ev.executionDate,
+                reason: 'Undo corporate action (ledger exclude)',
+                summary: `Undo CA ${ev.actionType} on ${ev.symbol} — excluded from replay`,
+            }).catch(() => null);
+            return;
+        }
+
+        // Manual-only books: scoped inverse / delta replay remains valid.
         const reverseAction = buildReverseCorporateAction(corporateActionFromEvent(ev));
         const payload = buildCorporateActionEventPayload({
             portfolioId: ev.portfolioId,
@@ -3899,20 +4291,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }));
         await removeCorporateActionCashDeposits(ev.idempotencyKey);
         await yieldToMain();
-        const replayTxs = filterTransactionsForPortfolioReplay({
-            portfolioId: ev.portfolioId,
-            transactions: snapshot?.investmentTransactions ?? [],
-            holdingSymbols: portfolio.holdings?.map((h) => String(h.symbol ?? '')),
-            accountId: portfolio.accountId ?? (portfolio as { account_id?: string }).account_id,
-        });
-        const manualOnly = !hasPositionAffectingTransactions(replayTxs);
-        const undoSymbols = [ev.symbol, ev.linkedSymbol]
-            .map((s) => String(s ?? '').trim().toUpperCase())
-            .filter(Boolean);
         await syncPortfolioAfterLedgerMutation(ev.portfolioId, {
             corporateActionEvents: mergedEvents,
-            holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived',
-            ...(manualOnly ? { holdingsReplayEvents: [reversalEv] } : {}),
+            holdingsBaselineMode: 'as_stored',
+            holdingsReplayEvents: [reversalEv],
             symbols: undoSymbols,
         });
         adjustQuotesForCorporateActionNow({
@@ -3922,6 +4304,467 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         } finally {
             corporateActionInFlightRef.current = false;
+        }
+    };
+
+    /**
+     * Broker uninvested-cash reconcile row. A reconcile is not a transfer from a bank account, so it
+     * must never demand `linkedCashAccountId` the way `recordTrade` deposits/withdrawals do.
+     */
+    const recordBrokerCashReconcileRow = async (row: {
+        type: 'deposit' | 'withdrawal';
+        total: number;
+        date: string;
+        accountId: string;
+        portfolioId?: string;
+        currency: 'SAR' | 'USD';
+        note: string;
+        idempotencyKey?: string;
+    }): Promise<{ id: string | null }> => {
+        if (!supabase || !auth?.user) return { id: null };
+        const snap = dataRef.current ?? data;
+        const accountId = resolveCanonicalAccountId(row.accountId, snap?.accounts ?? []);
+        const account = (snap?.accounts ?? []).find((a) => a.id === accountId);
+        if (!account) throw new Error('Investment platform not found for broker cash reconcile.');
+        if (account.type !== 'Investment') throw new Error('Broker cash reconcile requires an Investment platform.');
+        const total = roundMoney(Math.abs(Number(row.total) || 0));
+        if (!(total > 0)) return { id: null };
+        const payload = {
+            type: row.type,
+            symbol: 'CASH',
+            quantity: 0,
+            price: 0,
+            total,
+            date: row.date,
+            accountId,
+            portfolioId: row.portfolioId,
+            currency: row.currency,
+            note: row.note,
+            ...(row.idempotencyKey ? { idempotencyKey: row.idempotencyKey } : {}),
+        } as unknown as Omit<InvestmentTransaction, 'id' | 'user_id'>;
+        let inserted: Record<string, unknown> | null = null;
+        let lastErr: unknown = null;
+        for (const variant of tradePayloadVariants(payload)) {
+            const res = await supabase
+                .from('investment_transactions')
+                .insert(withUser(variant))
+                .select('*')
+                .maybeSingle();
+            if (!res.error && res.data) {
+                inserted = res.data as Record<string, unknown>;
+                lastErr = null;
+                break;
+            }
+            lastErr = res.error;
+            if (!isMissingColumnError(res.error)) break;
+        }
+        if (!inserted) {
+            throw new Error(lastErr ? formatDbError(lastErr) : 'Could not record broker cash adjustment.');
+        }
+        const normalized = stampInvestmentTradeIdentity(normalizeInvestmentTransaction(inserted), {
+            portfolioId: row.portfolioId,
+            currency: row.currency,
+        });
+        applyFinancialDataPatch((prev) => ({
+            ...prev,
+            investmentTransactions: [normalized, ...prev.investmentTransactions],
+        }));
+        await applyInvestmentAccountDeltaForTrade(accountId, row.type === 'deposit' ? total : -total, {
+            includeTransaction: normalized,
+        });
+        sealHoldingsBookAfterTrade();
+        return { id: String(normalized.id || '') || null };
+    };
+
+    /**
+     * Append the post-adjust net worth for the effective day so corrected history is auditable and
+     * charts read the restated value. Uses the canonical headline helper (stored marks — a revision is
+     * a historical artifact, not a live quote read).
+     */
+    const captureReconciliationSnapshotRevision = async (args: {
+        snapshotDay: string;
+        adjustmentId?: string | null;
+        runId?: string | null;
+        reason: string;
+        mechanism: string;
+    }) => {
+        if (!supabase || !auth?.user) return;
+        const snap = dataRef.current ?? data;
+        if (!snap || !financialDataHasHydrated(snap)) return;
+        const headline = computePersonalHeadlineNetWorthSar(snap, DEFAULT_SAR_PER_USD, {
+            getAvailableCashForAccount,
+            simulatedPrices: {},
+        });
+        const { error } = await insertNetWorthSnapshotRevision(supabase, auth.user.id, {
+            snapshotDay: args.snapshotDay,
+            netWorth: headline.netWorth,
+            buckets: {
+                cash: headline.buckets.cash,
+                investments: headline.buckets.investments,
+                physicalAndCommodities: headline.buckets.physicalAndCommodities,
+                receivables: headline.buckets.receivables,
+                liabilities: headline.buckets.liabilities,
+                ...(headline.buckets.rewards ? { rewards: headline.buckets.rewards } : {}),
+            },
+            sarPerUsd: headline.sarPerUsd,
+            supersededByAdjustmentId: args.adjustmentId ?? null,
+            runId: args.runId ?? null,
+            metadata: { mechanism: args.mechanism, reason: args.reason },
+        });
+        if (error) console.warn('net_worth_snapshot_revisions insert:', error.message);
+    };
+
+    /** Rebuild only unposted future payout events for a Sukuk position (posted rows are never touched). */
+    const regenerateSukukFutureSchedule = async (positionId: string) => {
+        const snap = dataRef.current ?? data;
+        const position = (snap?.sukukPositions ?? []).find((p) => p.id === positionId);
+        const schedule = (snap?.sukukPayoutSchedules ?? []).find((s) => s.sukukPositionId === positionId) ?? null;
+        if (!position || !schedule) return;
+        await saveSukukPayoutSchedule({
+            position,
+            existingSchedule: schedule,
+            investmentAccountId: schedule.investmentAccountId || position.investmentAccountId,
+            currency: schedule.currency === 'USD' ? 'USD' : 'SAR',
+            cadence: schedule.cadence,
+            dayOfMonth: schedule.dayOfMonth ?? null,
+            couponAmount: schedule.couponAmount ?? null,
+            principalAmount: schedule.principalAmount ?? null,
+            principalInstallmentAmount: schedule.principalInstallmentAmount ?? null,
+            startDate: schedule.startDate ?? null,
+            endDate: schedule.endDate ?? null,
+            enabled: schedule.enabled,
+        });
+    };
+
+    const getReconciliationOrchestratorDeps = () => {
+        if (!supabase || !auth?.user) return null;
+        return {
+            db: supabase,
+            userId: auth.user.id,
+            userRole: auth.userRole ?? null,
+            getData: () => dataRef.current ?? data,
+            addTransaction: async (tx: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
+                await addTransaction(tx, { ...opts, system: true });
+            },
+            recordBrokerCashAdjust: recordBrokerCashReconcileRow,
+            updatePlatform,
+            updateAsset,
+            updateCommodityHolding,
+            updateLiability,
+            updateHolding,
+            updateSukukPosition,
+            regenerateSukukFutureSchedule,
+            syncLotsForSymbols: async ({
+                portfolioId,
+                symbols,
+            }: {
+                portfolioId: string;
+                symbols: string[];
+            }) => {
+                const snap = dataRef.current;
+                const portfolio = (snap?.investments ?? []).find((p) => p.id === portfolioId);
+                if (!portfolio || !auth?.user) return;
+                await syncLotsAfterTrade({
+                    portfolio,
+                    investmentTransactions: snap?.investmentTransactions ?? [],
+                    corporateActionEvents: snap?.corporateActionEvents ?? [],
+                    touchedSymbols: symbols,
+                    resolveHolding: (sym) => {
+                        const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
+                        return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                    },
+                    updateHolding,
+                    supabase,
+                    userId: auth.user.id,
+                    onLotsUpdated: (updatedLots) => {
+                        applyFinancialDataPatch((prev) => ({
+                            ...prev,
+                            investmentCostLots: [
+                                ...updatedLots,
+                                ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
+                            ],
+                        }));
+                    },
+                });
+            },
+            reverseInvestmentTransactionEdit: async (adj: ReconciliationAdjustment) => {
+                if (!supabase || !auth?.user) throw new Error('Not logged in');
+                const existing = (dataRef.current?.investmentTransactions ?? []).find(
+                    (t) => t.id === adj.entityId,
+                );
+                if (!existing) throw new Error('Investment transaction not found for reverse.');
+                const restoredTotal = roundMoney(Number(adj.beforeValue) || 0);
+                const restored: InvestmentTransaction = {
+                    ...existing,
+                    total: restoredTotal,
+                    quantity:
+                        adj.metadata?.quantityBefore != null
+                            ? Number(adj.metadata.quantityBefore)
+                            : existing.quantity,
+                };
+                const row = investmentTransactionToRow(restored, dataRef.current ?? null);
+                const { error } = await supabase
+                    .from('investment_transactions')
+                    .update(row)
+                    .match({ id: existing.id, user_id: auth.user.id });
+                if (error) throw new Error(formatDbError(error));
+                const netDelta = netBalanceDeltaForInvestmentTxUpdate(existing, restored);
+                applyFinancialDataPatch((prev) => ({
+                    ...prev,
+                    investmentTransactions: prev.investmentTransactions.map((t) =>
+                        t.id === existing.id ? normalizeInvestmentTransaction(restored) : t,
+                    ),
+                }));
+                const accountId = resolveCanonicalAccountId(
+                    existing.accountId,
+                    dataRef.current?.accounts ?? [],
+                );
+                if (netDelta !== 0) {
+                    await applyInvestmentAccountDeltaForTrade(accountId, netDelta);
+                }
+                if (
+                    (existing.type === 'buy' || existing.type === 'sell') &&
+                    existing.portfolioId &&
+                    existing.symbol &&
+                    existing.symbol !== 'CASH'
+                ) {
+                    await rebuildHoldingsFromLedgerForSymbols({
+                        portfolioId: existing.portfolioId,
+                        symbols: [String(existing.symbol)],
+                    });
+                }
+            },
+            applyFinancialDataPatch,
+            bumpHoldingsBookGeneration: () => {
+                holdingsBookGenerationRef.current += 1;
+            },
+            sealBookAfterAdjust: sealHoldingsBookAfterTrade,
+            captureSnapshotRevision: captureReconciliationSnapshotRevision,
+            toast,
+        };
+    };
+
+    const getRewardsOrchestratorDeps = (): RewardsOrchestratorDeps | null => {
+        if (!supabase || !auth?.user) return null;
+        return {
+            db: supabase,
+            userId: auth.user.id,
+            getData: () => dataRef.current,
+            applyFinancialDataPatch,
+            addTransaction: async (tx: Transaction) => {
+                await addTransaction(tx, { system: true });
+            },
+            updateAccount: updatePlatform,
+            updateLiability,
+            deleteTransaction,
+            deleteInvestmentTransaction: async (transactionId: string) => {
+                await deleteInvestmentTransaction(transactionId, { system: true });
+            },
+            addInvestmentTransaction: async (tx: InvestmentTransaction) => {
+                if (!supabase || !auth?.user) throw new Error('Not logged in');
+                const snap = dataRef.current ?? data;
+                const accountId = resolveCanonicalAccountId(tx.accountId, snap?.accounts ?? []);
+                const total = roundMoney(Math.abs(Number(tx.total) || 0));
+                if (!(total > 0)) return;
+                const rawTx = tx as InvestmentTransaction & { name?: string; notes?: string; note?: string };
+                const payload = {
+                    id: rawTx.id,
+                    type: rawTx.type,
+                    symbol: rawTx.symbol || 'CASH',
+                    quantity: rawTx.quantity ?? 0,
+                    price: rawTx.price ?? 0,
+                    total,
+                    fees: rawTx.fees ?? 0,
+                    date: rawTx.date,
+                    accountId,
+                    portfolioId: rawTx.portfolioId,
+                    note: rawTx.notes ?? rawTx.note,
+                } as unknown as Omit<InvestmentTransaction, 'id' | 'user_id'> & { id?: string };
+                let inserted: Record<string, unknown> | null = null;
+                let lastErr: unknown = null;
+                for (const variant of tradePayloadVariants(payload)) {
+                    const res = await supabase
+                        .from('investment_transactions')
+                        .insert(withUser(variant))
+                        .select('*')
+                        .maybeSingle();
+                    if (!res.error && res.data) {
+                        inserted = res.data as Record<string, unknown>;
+                        lastErr = null;
+                        break;
+                    }
+                    lastErr = res.error;
+                    if (!isMissingColumnError(res.error)) break;
+                }
+                if (!inserted) {
+                    throw new Error(lastErr ? formatDbError(lastErr) : 'Could not record rewards broker deposit.');
+                }
+                const normalized = stampInvestmentTradeIdentity(normalizeInvestmentTransaction(inserted), {
+                    portfolioId: tx.portfolioId,
+                });
+                // Orchestrator links by the client-generated id — keep that id when DB returns a different one.
+                if (tx.id && normalized.id !== tx.id) {
+                    (normalized as InvestmentTransaction).id = tx.id;
+                }
+                applyFinancialDataPatch((prev) => ({
+                    ...prev,
+                    investmentTransactions: [normalized, ...prev.investmentTransactions],
+                }));
+                if (tx.type === 'deposit' || tx.type === 'withdrawal') {
+                    await applyInvestmentAccountDeltaForTrade(
+                        accountId,
+                        tx.type === 'deposit' ? total : -total,
+                        { includeTransaction: normalized },
+                    );
+                }
+                sealHoldingsBookAfterTrade();
+            },
+            toast,
+            canMutate: !isRestrictedRole(auth?.userRole),
+        };
+    };
+    getRewardsOrchestratorDepsRef.current = getRewardsOrchestratorDeps;
+    const getRewardsOrchestratorDepsStable = useCallback(
+        () => getRewardsOrchestratorDepsRef.current(),
+        [],
+    );
+
+    const previewReconciliationAdjustment = async (input: ApplyReconciliationInput) => {
+        const snap = dataRef.current ?? data;
+        const preview = await orchestratePreviewReconciliation(snap, input);
+        if ('error' in preview) return { ok: false, error: preview.error, preview };
+        return { ok: true, preview } as any;
+    };
+
+    const applyReconciliationAdjustment = async (input: ApplyReconciliationInput): Promise<ApplyReconciliationResult> => {
+        const deps = getReconciliationOrchestratorDeps();
+        if (!deps) return { ok: false, error: 'Not logged in' };
+        return orchestrateApplyReconciliation(deps, input);
+    };
+
+    const reverseReconciliationAdjustment = async (
+        adjustmentId: string,
+        reason: string,
+    ): Promise<ApplyReconciliationResult> => {
+        const deps = getReconciliationOrchestratorDeps();
+        if (!deps) return { ok: false, error: 'Not logged in' };
+        return orchestrateReverseReconciliation(deps, adjustmentId, reason);
+    };
+
+    /** Pull the audit trail straight from the DB so adjustments made on another device show up here. */
+    const refreshReconciliationAudit = async (): Promise<{ ok: boolean; error?: string }> => {
+        if (!supabase || !auth?.user) return { ok: false, error: 'Not logged in' };
+        try {
+            const [events, adjustments, runs] = await Promise.all([
+                fetchReconciliationAuditEvents(supabase, auth.user.id, 300),
+                fetchReconciliationAdjustments(supabase, auth.user.id, 300),
+                fetchReconciliationRuns(supabase, auth.user.id, 100),
+            ]);
+            applyFinancialDataPatch((prev) => ({
+                ...prev,
+                reconciliationAuditEvents: events,
+                reconciliationAdjustments: adjustments,
+                reconciliationRuns: runs,
+            }));
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: formatUnknownError(e) };
+        }
+    };
+
+    const retryReconciliationRun = async (runId: string): Promise<{ ok: boolean; error?: string }> => {
+        if (!supabase || !auth?.user) return { ok: false, error: 'Not logged in' };
+        const snap = dataRef.current ?? data;
+        const run = (snap?.reconciliationRuns ?? []).find((r) => r.id === runId);
+        if (!run) return { ok: false, error: 'Replay run not found.' };
+        if (run.status !== 'blocked' && run.status !== 'failed' && run.status !== 'pending') {
+            return { ok: false, error: 'Only pending, blocked, or failed runs can be retried.' };
+        }
+        const meta = (run.metadata ?? {}) as Record<string, unknown>;
+        const portfolioId = String(meta.portfolioId ?? meta.portfolio_id ?? '').trim();
+        const symbolsRaw = meta.symbols ?? meta.symbol;
+        const symbols = Array.isArray(symbolsRaw)
+            ? symbolsRaw.map((s) => String(s).trim().toUpperCase()).filter(Boolean)
+            : String(symbolsRaw ?? '')
+                .split(',')
+                .map((s) => s.trim().toUpperCase())
+                .filter(Boolean);
+        const effectiveFrom = String(run.effectiveFrom ?? meta.effectiveFrom ?? appCalendarTodayYmd()).slice(0, 10);
+
+        let status: 'completed' | 'blocked' | 'failed' = 'completed';
+        let errorMessage: string | null = null;
+        try {
+            if (portfolioId && symbols.length) {
+                const replayed = await replayAffectedPortfolioSymbols({
+                    data: snap,
+                    request: {
+                        portfolioId,
+                        symbols,
+                        effectiveFrom,
+                        requireHistoricalMarks: Boolean(meta.requireHistoricalMarks),
+                    },
+                });
+                status =
+                    replayed.status === 'completed'
+                        ? 'completed'
+                        : ((replayed.status as 'blocked' | 'failed') || 'failed');
+                errorMessage = replayed.errorMessage ?? null;
+                const retryPortfolio = (snap.investments ?? []).find((p) => p.id === portfolioId);
+                if (status === 'completed' && retryPortfolio) {
+                    await syncLotsAfterTrade({
+                        portfolio: retryPortfolio,
+                        investmentTransactions: snap.investmentTransactions ?? [],
+                        corporateActionEvents: snap.corporateActionEvents ?? [],
+                        touchedSymbols: symbols,
+                        resolveHolding: (sym) => {
+                            const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
+                            return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                        },
+                        updateHolding,
+                        supabase,
+                        userId: auth.user.id,
+                        onLotsUpdated: (updatedLots) => {
+                            applyFinancialDataPatch((prev) => ({
+                                ...prev,
+                                investmentCostLots: [
+                                    ...updatedLots,
+                                    ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
+                                ],
+                            }));
+                        },
+                    });
+                }
+            }
+            const updated = await updateReconciliationRunStatus(supabase, auth.user.id, runId, {
+                status,
+                errorMessage,
+                metadata: { ...meta, retriedAt: new Date().toISOString() },
+            });
+            if (updated) {
+                applyFinancialDataPatch((prev) => ({
+                    ...prev,
+                    reconciliationRuns: (prev.reconciliationRuns ?? []).map((r) =>
+                        r.id === runId ? updated : r,
+                    ),
+                }));
+            }
+            try {
+                await supabase.functions.invoke('reconciliation-replay', { body: { runId } });
+            } catch {
+                /* Edge may be undeployed — client retry above is authoritative for lots. */
+            }
+            if (status !== 'completed') {
+                return { ok: false, error: errorMessage || `Run still ${status}.` };
+            }
+            return { ok: true };
+        } catch (e) {
+            const msg = formatUnknownError(e);
+            await updateReconciliationRunStatus(supabase, auth.user.id, runId, {
+                status: 'failed',
+                errorMessage: msg,
+                metadata: { ...meta, retriedAt: new Date().toISOString() },
+            });
+            return { ok: false, error: msg };
         }
     };
 
@@ -4151,6 +4994,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         if (!tradeVal.valid) {
             throw new Error(tradeVal.errors.join('\n'));
+        }
+        if (!(opts as { system?: boolean } | undefined)?.system && !assertPeriodUnlocked(trade.date, 'record investment trades')) {
+            throw new Error(`Period ${String(trade.date ?? '').slice(0, 7)} is locked.`);
         }
 
         const portfolioForConfirm = (data?.investments ?? []).find((p) => p.id === trade.portfolioId);
@@ -4885,40 +5731,82 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const updateInvestmentTransaction = async (tx: InvestmentTransaction, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
-        const editOk = await guardRecordWrite(opts, {
-            title: 'Save dividend changes?',
-            message: 'Update this dividend in your investment ledger?',
-            confirmLabel: 'Save changes',
-            details: [`Symbol: ${tx.symbol}`, `Date: ${tx.date}`, `Amount: ${tx.total}`],
-        });
-        if (!editOk) return;
         const existing = (data?.investmentTransactions ?? []).find((t) => t.id === tx.id);
         if (!existing) throw new Error('Transaction not found.');
-        if (existing.type !== 'dividend' || tx.type !== 'dividend') {
-            throw new Error('Only dividend rows can be edited here. For buys/sells, adjust via Record Trade or holdings.');
+        if (!(opts as { system?: boolean } | undefined)?.system) {
+            if (!assertPeriodUnlocked(existing.date ?? tx.date, 'edit investment ledger rows')) return;
+            if (String(existing.date ?? '').slice(0, 7) !== String(tx.date ?? '').slice(0, 7)) {
+                if (!assertPeriodUnlocked(tx.date, 'move investment ledger rows into')) return;
+            }
         }
-        const total = roundMoney(Math.max(0, Number(tx.total) || 0));
+        const editableCashTypes = new Set(['dividend', 'fee', 'vat', 'deposit', 'withdrawal']);
+        const editableTradeTypes = new Set(['buy', 'sell']);
+        const type = String(existing.type);
+        const isCashEdit = editableCashTypes.has(type);
+        const isTradeEdit = editableTradeTypes.has(type);
+        if ((!isCashEdit && !isTradeEdit) || existing.type !== tx.type) {
+            throw new Error(
+                'Only buy, sell, dividend, fee, VAT, deposit, and withdrawal rows can be edited here. For current share counts use Reconcile quantity.',
+            );
+        }
+        const isDividend = existing.type === 'dividend';
+        const mechanism = isDividend
+            ? 'dividend_edit'
+            : existing.type === 'fee' || existing.type === 'vat'
+              ? 'fee_vat_edit'
+              : 'edit_trade';
+        const editOk = await guardRecordWrite(opts, {
+            title: `Save ${existing.type} changes?`,
+            message: isTradeEdit
+                ? `Update this ${existing.type} in your investment ledger, cascade broker cash if the total changes, and rebuild that symbol’s lots?`
+                : `Update this ${existing.type} in your investment ledger and cascade the cash delta?`,
+            confirmLabel: 'Save changes',
+            details: [
+                `Symbol: ${tx.symbol || existing.symbol || 'CASH'}`,
+                `Date: ${tx.date}`,
+                isTradeEdit
+                    ? `Qty ${tx.quantity ?? existing.quantity} @ ${tx.price ?? existing.price} → total ${tx.total}`
+                    : `Amount: ${tx.total}`,
+            ],
+        });
+        if (!editOk) return;
+        const qty = isTradeEdit ? Math.max(0, Number(tx.quantity) || 0) : Number(tx.quantity) || 0;
+        const price = isTradeEdit ? Math.max(0, Number(tx.price) || 0) : Number(tx.price) || 0;
+        let total = roundMoney(Math.max(0, Number(tx.total) || 0));
+        if (isTradeEdit) {
+            if (!(qty > 0) || !(price >= 0)) {
+                throw new Error('Buy/sell edits require a positive quantity and a non-negative price.');
+            }
+            if (!(total > 0)) total = roundMoney(qty * price);
+        }
         const book: 'USD' | 'SAR' = tx.currency === 'SAR' ? 'SAR' : 'USD';
-        const v = validateDividendTransactionUpdate({
-            symbol: tx.symbol,
-            date: tx.date,
-            total,
-            portfolioId: tx.portfolioId,
-            accountId: tx.accountId,
-        });
-        if (!v.valid) throw new Error(v.errors.join('\n'));
-        assertDividendUpdateNotDuplicate({
-            existingId: tx.id,
-            transactions: data?.investmentTransactions ?? [],
-            accounts: data?.accounts ?? [],
-            accountId: tx.accountId,
-            portfolioId: tx.portfolioId,
-            symbol: tx.symbol,
-            payDate: tx.date,
-            totalBook: total,
-            bookCurrency: book,
-        });
-        const row = investmentTransactionToRow({ ...tx, total, currency: book }, data ?? null);
+        if (isDividend) {
+            const v = validateDividendTransactionUpdate({
+                symbol: tx.symbol,
+                date: tx.date,
+                total,
+                portfolioId: tx.portfolioId,
+                accountId: tx.accountId,
+            });
+            if (!v.valid) throw new Error(v.errors.join('\n'));
+            assertDividendUpdateNotDuplicate({
+                existingId: tx.id,
+                transactions: data?.investmentTransactions ?? [],
+                accounts: data?.accounts ?? [],
+                accountId: tx.accountId,
+                portfolioId: tx.portfolioId,
+                symbol: tx.symbol,
+                payDate: tx.date,
+                totalBook: total,
+                bookCurrency: book,
+            });
+        } else if (!(total > 0)) {
+            throw new Error('Amount must be greater than zero.');
+        }
+        const row = investmentTransactionToRow(
+            { ...tx, quantity: isTradeEdit ? qty : tx.quantity, price: isTradeEdit ? price : tx.price, total, currency: book },
+            data ?? null,
+        );
         let lastUpdateErr: unknown = null;
         const updateVariants: Record<string, unknown>[] = [row];
         if ('portfolio_id' in row) {
@@ -4949,7 +5837,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.error(lastUpdateErr);
             throw new Error(formatDbError(lastUpdateErr));
         }
-        const normalized: InvestmentTransaction = normalizeInvestmentTransaction({ ...existing, ...tx, total, currency: book });
+        const normalized: InvestmentTransaction = normalizeInvestmentTransaction({
+            ...existing,
+            ...tx,
+            quantity: isTradeEdit ? qty : tx.quantity,
+            price: isTradeEdit ? price : tx.price,
+            total,
+            currency: book,
+        });
         const netDelta = netBalanceDeltaForInvestmentTxUpdate(existing, normalized);
         applyFinancialDataPatch((prev) => ({
             ...prev,
@@ -4959,23 +5854,91 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (netDelta !== 0) {
             await applyInvestmentAccountDeltaForTrade(accountId, netDelta);
         }
+        if (isTradeEdit && normalized.portfolioId && normalized.symbol && normalized.symbol !== 'CASH') {
+            await rebuildHoldingsFromLedgerForSymbols({
+                portfolioId: normalized.portfolioId,
+                symbols: [String(normalized.symbol)],
+            });
+        }
+        const editIdempotency = `inv-tx-edit|${tx.id}|${String(normalized.date).slice(0, 10)}|${total}|${Date.now()}`;
+        const { data: editAdj } = await insertReconciliationAdjustment(supabase, auth.user.id, {
+            mechanism,
+            entityType: 'investment_transaction',
+            entityId: String(tx.id),
+            portfolioId: tx.portfolioId ?? null,
+            accountId,
+            symbol: tx.symbol || existing.symbol || null,
+            effectiveDate: String(normalized.date ?? tx.date).slice(0, 10),
+            currency: book,
+            beforeValue: Number(existing.total) || 0,
+            actualValue: total,
+            delta: roundMoney(total - (Number(existing.total) || 0)),
+            reason: `${existing.type} edited (${tx.symbol || existing.symbol || 'CASH'})`,
+            idempotencyKey: editIdempotency,
+            metadata: {
+                quantityBefore: existing.quantity ?? null,
+                quantityAfter: normalized.quantity ?? null,
+                netCashDelta: roundMoney(netDelta),
+            },
+        });
+        const cashAudit = await insertReconciliationAudit(supabase, auth.user.id, {
+            kind: 'correction',
+            mechanism,
+            entityType: 'investment_transaction',
+            entityId: String(tx.id),
+            effectiveDate: String(normalized.date ?? tx.date).slice(0, 10),
+            beforeValue: Number(existing.total) || 0,
+            afterValue: total,
+            delta: roundMoney(total - (Number(existing.total) || 0)),
+            currency: book,
+            reason: `${existing.type} edited (${tx.symbol || existing.symbol || 'CASH'})`,
+            summary: `${existing.type} ${existing.date} → ${normalized.date}: ${existing.total} → ${total} ${book}; net cash delta ${roundMoney(netDelta)}`,
+            adjustmentId: editAdj?.id ?? null,
+            metadata: {
+                accountId,
+                portfolioId: tx.portfolioId ?? null,
+                netCashDelta: roundMoney(netDelta),
+                quantityBefore: existing.quantity ?? null,
+                quantityAfter: normalized.quantity ?? null,
+            },
+        });
+        if (cashAudit || editAdj) {
+            applyFinancialDataPatch((prev) => ({
+                ...prev,
+                reconciliationAdjustments: editAdj
+                    ? [editAdj as any, ...(prev.reconciliationAdjustments ?? [])]
+                    : prev.reconciliationAdjustments,
+                reconciliationAuditEvents: cashAudit
+                    ? [cashAudit as any, ...(prev.reconciliationAuditEvents ?? [])]
+                    : prev.reconciliationAuditEvents,
+            }));
+        }
+        sealHoldingsBookAfterTrade();
     };
 
     const deleteInvestmentTransaction = async (transactionId: string, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
         const existing = (data?.investmentTransactions ?? []).find((t) => t.id === transactionId);
+        const editableCashTypes = new Set(['dividend', 'fee', 'vat', 'deposit', 'withdrawal']);
+        if (existing && !editableCashTypes.has(String(existing.type))) {
+            throw new Error(
+                'Only dividend, fee, VAT, deposit, and withdrawal rows can be deleted here to protect buy/sell history.',
+            );
+        }
+        if (!(opts as { system?: boolean } | undefined)?.system && existing) {
+            if (!assertPeriodUnlocked(existing.date, 'delete investment ledger rows')) {
+                throw new Error(`Period ${String(existing.date ?? '').slice(0, 7)} is locked.`);
+            }
+        }
         const delOk = await guardRecordWrite(opts, {
-            title: 'Delete dividend?',
-            message: 'Remove this dividend from your ledger and reverse its cash impact?',
+            title: `Delete ${existing?.type ?? 'row'}?`,
+            message: 'Remove this row from your ledger and reverse its cash impact?',
             confirmLabel: 'Delete',
             variant: 'danger',
-            details: existing ? [`Symbol: ${existing.symbol}`, `Date: ${existing.date}`] : [],
+            details: existing ? [`Symbol: ${existing.symbol || 'CASH'}`, `Date: ${existing.date}`] : [],
         });
         if (!delOk) return;
         if (!existing) throw new Error('Transaction not found.');
-        if (existing.type !== 'dividend') {
-            throw new Error('Only dividend rows can be deleted here to protect buy/sell history. Contact support if you need to remove other trade types.');
-        }
         const { error } = await supabase
             .from('investment_transactions')
             .delete()
@@ -4993,6 +5956,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (reverseDelta !== 0) {
             await applyInvestmentAccountDeltaForTrade(accountId, reverseDelta);
         }
+        const mechanism =
+            existing.type === 'dividend'
+                ? 'dividend_edit'
+                : existing.type === 'fee' || existing.type === 'vat'
+                  ? 'fee_vat_edit'
+                  : 'edit_trade';
+        const deleteAudit = await insertReconciliationAudit(supabase, auth.user.id, {
+            kind: 'reversal',
+            mechanism,
+            entityType: 'investment_transaction',
+            entityId: String(transactionId),
+            effectiveDate: String(existing.date ?? '').slice(0, 10) || null,
+            beforeValue: Number(existing.total) || 0,
+            afterValue: 0,
+            delta: roundMoney(reverseDelta),
+            currency: existing.currency === 'SAR' ? 'SAR' : 'USD',
+            reason: `${existing.type} deleted (${existing.symbol || 'CASH'})`,
+            summary: `${existing.type} removed ${existing.symbol || 'CASH'} ${existing.date}: ${existing.total} → 0; cash reversed by ${roundMoney(reverseDelta)}`,
+            metadata: { accountId, portfolioId: existing.portfolioId ?? null },
+        });
+        if (deleteAudit) {
+            applyFinancialDataPatch((prev) => ({
+                ...prev,
+                reconciliationAuditEvents: [deleteAudit as any, ...(prev.reconciliationAuditEvents ?? [])],
+            }));
+        }
+        sealHoldingsBookAfterTrade();
     };
 
     // --- Planned Trades ---
@@ -5140,8 +6130,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
     };
 
-    const updateSukukPosition = async (position: SukukPosition) => {
+    const updateSukukPosition = async (position: SukukPosition, opts?: { viaReconciliation?: boolean }) => {
         if (!supabase || !auth?.user) return;
+        const priorSukuk = (dataRef.current?.sukukPositions ?? data?.sukukPositions ?? []).find(
+            (p) => p.id === position.id,
+        );
+        const principalMoved =
+            priorSukuk != null &&
+            (roundMoney(Number(priorSukuk.outstandingPrincipal) || 0) !==
+                roundMoney(Number(position.outstandingPrincipal) || 0) ||
+                roundMoney(Number(priorSukuk.faceValue) || 0) !== roundMoney(Number(position.faceValue) || 0));
+        if (!opts?.viaReconciliation && principalMoved) {
+            toast(
+                'Face value and outstanding principal can only change via Restate principal (audited). Edit metadata only here.',
+                'error',
+            );
+            return;
+        }
         const v = validateSukukPosition({
             name: position.name,
             investmentAccountId: position.investmentAccountId,
@@ -5380,7 +6385,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           row.month_start_day = d;
           merged = { ...merged, monthStartDay: d };
         }
-        const { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
+        if ('includeRewardsInNetWorth' in settingsUpdate) {
+          const v = settingsUpdate.includeRewardsInNetWorth !== false;
+          row.include_rewards_in_net_worth = v;
+          merged = { ...merged, includeRewardsInNetWorth: v };
+        }
+        if ('emergencyFundMonthsTarget' in settingsUpdate) {
+          const m = clampEmergencyFundMonthsTarget(settingsUpdate.emergencyFundMonthsTarget);
+          row.emergency_fund_months_target = m;
+          merged = { ...merged, emergencyFundMonthsTarget: m };
+        }
+        let { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
+        /** Columns added by a later migration: keep older DBs writable instead of dropping every settings edit. */
+        if (error && /include_rewards_in_net_worth|emergency_fund_months_target/.test(String(error.message))) {
+            const { include_rewards_in_net_worth: _ir, emergency_fund_months_target: _ef, ...legacyRow } = row;
+            const retry = await supabase.from('settings').upsert([legacyRow], { onConflict: 'user_id' });
+            error = retry.error;
+            if (!error) {
+                console.warn(
+                    'settings: include_rewards_in_net_worth / emergency_fund_months_target columns missing — apply 20260726210000_settings_rewards_and_emergency_fund.sql to persist them.',
+                );
+            }
+        }
         if (error) {
             console.error("Error updating settings:", error);
         } else {
@@ -5565,6 +6591,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             personalInvestments: getPersonalInvestments(deferredData),
             personalCommodityHoldings: getPersonalCommodityHoldings(deferredData),
             personalSukukPositions: getPersonalSukukPositions(deferredData),
+            personalRewardsAccounts: getPersonalRewardsAccounts(deferredData),
             personalTransactions: getPersonalTransactions(deferredData),
         };
     }, [deferredData]);
@@ -5698,6 +6725,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         deleteInvestmentTransaction,
         applyCorporateActionEvent,
         reverseCorporateActionEvent,
+        previewReconciliationAdjustment,
+        applyReconciliationAdjustment,
+        reverseReconciliationAdjustment,
+        refreshReconciliationAudit,
+        retryReconciliationRun,
         rebuildHoldingsFromLedgerForSymbols,
         addWatchlistItem,
         updateWatchlistItem,
@@ -5746,6 +6778,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             allBudgets: data?.budgets ?? [],
             getAvailableCashForAccount,
             totalDeployableCash,
+            getRewardsOrchestratorDeps: getRewardsOrchestratorDepsStable,
+            applyFinancialDataPatch: applyFinancialDataPatchStable,
             ...stableDataActions,
         }),
         [
@@ -5759,6 +6793,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             data?.budgets,
             getAvailableCashForAccount,
             totalDeployableCash,
+            getRewardsOrchestratorDepsStable,
+            applyFinancialDataPatchStable,
             stableDataActions,
         ],
     );

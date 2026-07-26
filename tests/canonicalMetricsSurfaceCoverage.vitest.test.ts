@@ -24,6 +24,9 @@ const PAGE_NO_HEADLINE_METRICS = new Set([
   'FinancialJournal.tsx',
   'SinkingFunds.tsx',
   'Notifications.tsx',
+  'Documents.tsx',
+  'Subscriptions.tsx',
+  'Estate.tsx',
 ]);
 
 /** Shared UI that shows wealth / FX — full metrics or spot-only hook (not raw resolveSarPerUsd). */

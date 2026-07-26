@@ -813,6 +813,47 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                             <label htmlFor="nisab-amount-settings" className="block text-sm font-medium text-slate-700 flex items-center">Nisab amount override (SAR) <InfoHint text="Optional. If your authority uses a different Nisab, enter it here. Otherwise leave empty and we'll use gold price × 85 grams." /></label>
                             <input id="nisab-amount-settings" type="number" min={0} max={10000000} step={1} placeholder="Auto (gold × 85)" value={((localSettings as any)?.nisabAmount ?? (localSettings as any)?.nisab_amount) ?? ''} onChange={(e) => setLocalSettings(prev => ({ ...prev, nisabAmount: e.target.value ? parseFloat(e.target.value) : undefined }))} onBlur={(e) => { if (e.target.value === '') { updateSettings({ nisabAmount: undefined }); } else { const v = parseFloat(e.target.value); if (Number.isFinite(v) && v >= 0) updateSettings({ nisabAmount: v }); else setLocalSettings(prev => ({ ...prev, nisabAmount: undefined })); } }} className="mt-2 w-full input-base" />
                         </div>
+                        <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3 cursor-pointer">
+                            <span className="text-sm text-slate-700">
+                                <span className="font-medium">Include rewards in net worth</span>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Unredeemed points/miles as a separate memo Rewards bucket (not cash, not Zakat, not emergency fund). Default on.
+                                </p>
+                            </span>
+                            <input
+                                type="checkbox"
+                                className="h-5 w-5 rounded border-slate-300 text-primary"
+                                checked={localSettings?.includeRewardsInNetWorth !== false}
+                                onChange={(e) => {
+                                    const v = e.target.checked;
+                                    setLocalSettings((prev) => ({ ...prev, includeRewardsInNetWorth: v }));
+                                    updateSettings({ includeRewardsInNetWorth: v });
+                                }}
+                            />
+                        </label>
+                        <div className="rounded-lg border border-slate-200 p-3">
+                            <label htmlFor="ef-months-target" className="block text-sm font-medium text-slate-700">
+                                Emergency fund target (months)
+                                <InfoHint text="Used for Available Liquidity (liquid cash − this floor − goal escrow) and the Emergency Fund KPI. Typical range 3–6; up to 24." />
+                            </label>
+                            <input
+                                id="ef-months-target"
+                                type="number"
+                                min={1}
+                                max={24}
+                                step={1}
+                                value={Number(localSettings?.emergencyFundMonthsTarget ?? 6)}
+                                onChange={(e) => {
+                                    const v = Math.max(1, Math.min(24, Number(e.target.value) || 6));
+                                    setLocalSettings((prev) => ({ ...prev, emergencyFundMonthsTarget: v }));
+                                }}
+                                onBlur={(e) => {
+                                    const v = Math.max(1, Math.min(24, Number(e.target.value) || 6));
+                                    updateSettings({ emergencyFundMonthsTarget: v });
+                                }}
+                                className="mt-2 w-full input-base"
+                            />
+                        </div>
                     </div>
                     <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3 cursor-pointer">
                         <span className="text-sm text-slate-700">
@@ -1076,7 +1117,21 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
             </SectionCard>
 
             <SectionCard id="activity-log" title="Activity log (this device)" collapsible collapsibleSummary="Recent changes">
-                <p className="text-sm text-slate-600 mb-3">Recent creates/updates/deletes logged in this browser. Filter, search, or export. Clear if you share the device.</p>
+                <p className="text-sm text-slate-600 mb-3">
+                  Recent creates/updates/deletes logged in this browser. Filter, search, or export. Clear if you share the device.
+                  For balance/quantity corrections, the authoritative trail is{' '}
+                  <button
+                    type="button"
+                    className="font-semibold text-primary hover:underline"
+                    onClick={() => {
+                      setActivePage?.('System & APIs Health');
+                      if (typeof window !== 'undefined') window.location.hash = 'reconciliation-audit-log';
+                    }}
+                  >
+                    System &amp; APIs Health → Reconciliation audit
+                  </button>
+                  .
+                </p>
                 <div className="flex flex-wrap gap-2 mb-3">
                     <input type="text" placeholder="Search..." value={auditFilter.search} onChange={(e) => setAuditFilter((f) => ({ ...f, search: e.target.value }))} onKeyDown={(e) => e.key === 'Enter' && refreshAudit()} className="input-base w-40 text-sm" aria-label="Search activity log"/>
                     <select value={auditFilter.entity ?? ''} onChange={(e) => setAuditFilter((f) => ({ ...f, entity: (e.target.value || undefined) as AuditEntity | undefined }))} className="input-base w-32 text-sm">

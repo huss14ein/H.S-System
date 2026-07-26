@@ -113,6 +113,17 @@ and RPCs. None drops a table, truncates, or removes a column.
 | `20260715122000_backfill_investment_transactions_portfolio_id.sql` | Stamps `portfolio_id` on legacy rows only where the account has exactly one portfolio. |
 | `20260722120000_holdings_unique_per_portfolio_symbol.sql` | Removes **duplicate** holdings rows for the same `(user, portfolio, symbol)`, then adds the unique index. Archives every removed row first (see below). |
 | `20260725120000_holdings_market_price_persistence.sql` | Adds `current_price` / `price_updated_at` and a batch RPC that writes market fields only. |
+| `20260726120000_reconciliation_adjustment_engine.sql` | **Adjustment & Reconciliation Engine:** append-only `reconciliation_adjustments` / `reconciliation_runs` / `reconciliation_audit_events` / `net_worth_snapshot_revisions`, plus `preview`/`apply`/`reverse` cash reconcile RPCs. Additive only. |
+| `20260726140000_corporate_action_stock_dividend.sql` | Widen `corporate_action_events.action_type` CHECK to include `stock_dividend` (bonus shares). Additive constraint widen only. |
+| `20260726180000_rewards_domain.sql` | **Rewards / points / cashback ledger:** `rewards_accounts` / `rewards_transactions` / `rewards_tx_links` / `rewards_lots` with idempotency + RLS. Manual balances only (no live loyalty APIs). Additive only. |
+| `20260726190000_household_members.sql` | **Household members:** `household_members` + `member_allocations` (per-member monthly allowance / education envelopes) with RLS. Additive only. |
+| `20260726200000_period_locks_and_foundations.sql` | **Foundations:** `period_locks` (durable closed-month SOT), `vault_documents`, `subscriptions`, `pension_accounts`, `estate_beneficiaries` with RLS. Debt amortization is computed in-service (no table). Additive only. |
+| `20260726210000_settings_rewards_and_emergency_fund.sql` | Adds `settings.include_rewards_in_net_worth` (default true) and `settings.emergency_fund_months_target` (default 6, 1–24) so the Rewards net-worth toggle and Available Liquidity floor survive a refresh. Additive only. |
+
+Deploy Edge Function (optional replay worker): `supabase functions deploy reconciliation-replay`.
+
+Deploy Edge Function (rewards expiry cron — schedule daily in dashboard after deploy): `supabase functions deploy rewards-expiry-scan`.
+Set secret `REWARDS_EXPIRY_SCAN_SECRET` and pass header `x-rewards-expiry-secret: <secret>` (or `Authorization: Bearer <secret>`) on the cron invoke — the function rejects unauthenticated calls.
 
 ### The one delete, and how to undo it
 

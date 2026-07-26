@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useCallback, useContext, useEffect, useRef, lazy, Suspense, startTransition } from 'react';
 import { DataContext } from '../context/DataContext';
+import { AuthContext } from '../context/AuthContext';
 import {
     getAIStockAnalysis,
     buildFallbackAnalystReport,
@@ -13,6 +14,11 @@ import type { Page } from '../types';
 import SukukInvestmentsSection from '../components/investments/SukukInvestmentsSection';
 import CorporateActionApplyPanel from '../components/investments/CorporateActionApplyPanel';
 import HoldingsQtyIntegrityPanel from '../components/investments/HoldingsQtyIntegrityPanel';
+import HoldingLotsPanel from '../components/investments/HoldingLotsPanel';
+import ReconcileQuantityModal from '../components/reconciliation/ReconcileQuantityModal';
+import ReconcileBalanceModal from '../components/reconciliation/ReconcileBalanceModal';
+import { portfolioIdsForAccount } from '../services/reconciliation';
+import { toast } from '../context/ToastContext';
 import CorporateActionWizard from '../components/investments/corporateActions/CorporateActionWizard';
 import {
   clearCorporateActionWizardPlan,
@@ -1726,7 +1732,8 @@ const HoldingDetailModal: React.FC<{
     portfolio: InvestmentPortfolio | null;
     onRecordSell?: () => void;
     onCorporateAction?: () => void;
-}> = ({ isOpen, onClose, holding, portfolio, onRecordSell, onCorporateAction }) => {
+    onReconcileQuantity?: () => void;
+}> = ({ isOpen, onClose, holding, portfolio, onRecordSell, onCorporateAction, onReconcileQuantity }) => {
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const sarPerUsd = useCanonicalSpotFx();
@@ -1963,6 +1970,10 @@ const HoldingDetailModal: React.FC<{
                     </div>
                 </div>
 
+                {portfolio?.id && holding.symbol ? (
+                    <HoldingLotsPanel symbol={holding.symbol} portfolioId={portfolio.id} />
+                ) : null}
+
                 {/* Converted value — SAR when portfolio is USD, USD when portfolio is SAR (hint/side) */}
                 {holdingCurrency === 'USD' ? (
                     <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 min-w-0 overflow-hidden">
@@ -2195,8 +2206,17 @@ const HoldingDetailModal: React.FC<{
                         </div>
                     )}
                 </div>
-                {(onRecordSell || onCorporateAction) && holding && portfolio && (
+                {(onRecordSell || onCorporateAction || onReconcileQuantity) && holding && portfolio && (
                     <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200">
+                        {onReconcileQuantity && (
+                            <button
+                                type="button"
+                                onClick={onReconcileQuantity}
+                                className="px-4 py-2 text-sm font-semibold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors"
+                            >
+                                Reconcile quantity…
+                            </button>
+                        )}
                         {onCorporateAction && (
                             <button
                                 type="button"
@@ -2222,7 +2242,13 @@ const HoldingDetailModal: React.FC<{
     );
 };
 
-const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave: (holding: Holding) => void, holding: Holding | null }> = ({ isOpen, onClose, onSave, holding }) => {
+const HoldingEditModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (holding: Holding) => void;
+    holding: Holding | null;
+    onReconcileQuantity?: () => void;
+}> = ({ isOpen, onClose, onSave, holding, onReconcileQuantity }) => {
     const { data } = useContext(DataContext)!;
     const { simulatedPrices } = useMarketPrices();
     const { formatCurrencyString } = useFormatCurrency();
@@ -2328,6 +2354,21 @@ const HoldingEditModal: React.FC<{ isOpen: boolean, onClose: () => void, onSave:
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Edit ${holding.symbol}`}>
              <form onSubmit={handleSubmit} className="space-y-4">
+                {onReconcileQuantity && (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-emerald-900">
+                            Quantity is derived from your trade ledger. To match a broker share count, post an audited
+                            adjustment instead of editing the number here.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={onReconcileQuantity}
+                            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                        >
+                            Reconcile quantity…
+                        </button>
+                    </div>
+                )}
                 {needsManualMarketValue && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-3 space-y-2">
                         <p className="text-sm font-medium text-amber-900">Manual market value</p>
@@ -2525,8 +2566,11 @@ const TransactionHistoryModal: React.FC<{
     transactions: InvestmentTransaction[];
     platformName: string;
     portfolios?: InvestmentPortfolio[];
-}> = ({ isOpen, onClose, transactions, platformName, portfolios = [] }) => {
+    canEditLedger?: boolean;
+    initialEditTxId?: string | null;
+}> = ({ isOpen, onClose, transactions, platformName, portfolios = [], canEditLedger = true, initialEditTxId = null }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const { updateInvestmentTransaction } = useContext(DataContext)!;
     const sortedTransactions = useMemo(
         () => sortByNewestFirst(transactions),
         [transactions],
@@ -2538,11 +2582,76 @@ const TransactionHistoryModal: React.FC<{
         }
         return map;
     }, [portfolios]);
+    const [editing, setEditing] = useState<InvestmentTransaction | null>(null);
+    const [editQty, setEditQty] = useState('');
+    const [editPrice, setEditPrice] = useState('');
+    const [editTotal, setEditTotal] = useState('');
+    const [editDate, setEditDate] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        if (!isOpen) {
+            setEditing(null);
+            return;
+        }
+        if (initialEditTxId) {
+            const tx = transactions.find((t) => t.id === initialEditTxId);
+            if (tx) {
+                setEditing(tx);
+                setEditQty(String(tx.quantity ?? ''));
+                setEditPrice(String(tx.price ?? ''));
+                setEditTotal(String(tx.total ?? ''));
+                setEditDate(String(tx.date ?? '').slice(0, 10));
+            }
+        }
+    }, [isOpen, initialEditTxId, transactions]);
+
+    const openEdit = (t: InvestmentTransaction) => {
+        setEditing(t);
+        setEditQty(String(t.quantity ?? ''));
+        setEditPrice(String(t.price ?? ''));
+        setEditTotal(String(t.total ?? ''));
+        setEditDate(String(t.date ?? '').slice(0, 10));
+    };
+
+    const isTrade = editing && (editing.type === 'buy' || editing.type === 'sell');
+    const canEditType = (type: string) =>
+        ['buy', 'sell', 'dividend', 'fee', 'vat', 'deposit', 'withdrawal'].includes(type);
+
+    const handleSaveEdit = async () => {
+        if (!editing) return;
+        setSaving(true);
+        try {
+            const qty = Number(editQty);
+            const price = Number(editPrice);
+            let total = Number(editTotal);
+            if (isTrade) {
+                if (!(qty > 0)) throw new Error('Quantity must be positive.');
+                if (!(price >= 0)) throw new Error('Price cannot be negative.');
+                if (!(total > 0)) total = qty * price;
+            }
+            await updateInvestmentTransaction({
+                ...editing,
+                quantity: isTrade ? qty : editing.quantity,
+                price: isTrade ? price : editing.price,
+                total,
+                date: editDate || editing.date,
+            });
+            toast(`${editing.type} updated.`, 'success');
+            setEditing(null);
+        } catch (e) {
+            toast(formatUnknownError(e), 'error');
+        } finally {
+            setSaving(false);
+        }
+    };
+
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Transaction History: ${platformName}`}>
             <p className="text-xs text-slate-600 mb-2">
                 Platform cash ledger. Holdings live under each <strong>portfolio</strong> — check the Portfolio column
-                if a symbol is missing from a holdings table.
+                if a symbol is missing from a holdings table. Edit a specific buy/sell to correct history (cascades
+                broker cash + rebuilds that symbol); use <strong>Reconcile quantity</strong> for the current share count.
             </p>
             <div className="max-h-[60vh] overflow-y-auto">
                 <table className="min-w-full divide-y divide-gray-200">
@@ -2554,6 +2663,9 @@ const TransactionHistoryModal: React.FC<{
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Portfolio</th>
                             <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Amount</th>
                             <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Currency</th>
+                            {canEditLedger && (
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Edit</th>
+                            )}
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
@@ -2571,12 +2683,62 @@ const TransactionHistoryModal: React.FC<{
                                     <td className={`px-4 py-2 whitespace-nowrap text-xs ${pfId ? 'text-slate-600' : 'text-amber-800 font-medium'}`}>{pfLabel}</td>
                                     <td className="px-4 py-2 whitespace-nowrap text-sm text-center font-bold text-dark">{formatCurrencyString(t.total ?? 0, { inCurrency: cur })}</td>
                                     <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
+                                    {canEditLedger && (
+                                        <td className="px-3 py-2 whitespace-nowrap text-center">
+                                            {canEditType(String(t.type)) ? (
+                                                <button
+                                                    type="button"
+                                                    className="text-xs font-medium text-emerald-700 hover:underline"
+                                                    onClick={() => openEdit(t)}
+                                                >
+                                                    Edit
+                                                </button>
+                                            ) : (
+                                                <span className="text-xs text-slate-300">—</span>
+                                            )}
+                                        </td>
+                                    )}
                                 </tr>
                             );
                         })}
                     </tbody>
                 </table>
             </div>
+            {editing && (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
+                    <p className="text-sm font-semibold text-slate-800">
+                        Edit {editing.type} — {editing.symbol === 'CASH' ? 'cash' : editing.symbol}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                        <label className="text-xs text-slate-600">
+                            Date
+                            <input type="date" className="input-base mt-0.5 w-full" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+                        </label>
+                        {isTrade ? (
+                            <>
+                                <label className="text-xs text-slate-600">
+                                    Quantity
+                                    <input type="number" step="any" className="input-base mt-0.5 w-full" value={editQty} onChange={(e) => setEditQty(e.target.value)} />
+                                </label>
+                                <label className="text-xs text-slate-600">
+                                    Price
+                                    <input type="number" step="any" className="input-base mt-0.5 w-full" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
+                                </label>
+                            </>
+                        ) : null}
+                        <label className="text-xs text-slate-600">
+                            Total
+                            <input type="number" step="any" className="input-base mt-0.5 w-full" value={editTotal} onChange={(e) => setEditTotal(e.target.value)} />
+                        </label>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                        <button type="button" className="btn-outline text-sm" onClick={() => setEditing(null)} disabled={saving}>Cancel</button>
+                        <button type="button" className="btn-primary text-sm" onClick={() => void handleSaveEdit()} disabled={saving}>
+                            {saving ? 'Saving…' : 'Save'}
+                        </button>
+                    </div>
+                </div>
+            )}
         </Modal>
     )
 }
@@ -2620,6 +2782,8 @@ const PlatformCardInner: React.FC<{
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
     const { data: dataCtx } = useContext(DataContext)!;
+    const auth = useContext(AuthContext);
+    const canReconcile = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { openPassport } = useMetricPassport();
     const [isTxnModalOpen, setIsTxnModalOpen] = useState(false);
     const [pnlBreakdown, setPnlBreakdown] = useState<{
@@ -3444,6 +3608,7 @@ const PlatformCardInner: React.FC<{
                 transactions={transactions}
                 platformName={platform.name}
                 portfolios={portfolios}
+                canEditLedger={canReconcile}
             />
             {pnlBreakdown && breakdownData ? (
                 <PortfolioPeriodPnLBreakdownDrawer
@@ -5334,7 +5499,9 @@ interface InvestmentsProps {
 }
 
 const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, applyCorporateActionEvent, reverseCorporateActionEvent } = useContext(DataContext)!;
+  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, applyCorporateActionEvent, reverseCorporateActionEvent, applyReconciliationAdjustment } = useContext(DataContext)!;
+  const auth = useContext(AuthContext);
+  const canReconcile = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
   const recordTradeConfirmed = useCallback(
     (trade: Parameters<typeof recordTrade>[0], executedPlanId?: string) =>
       recordTrade(trade, executedPlanId, { confirmed: true }),
@@ -5361,6 +5528,15 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   
   const [isHoldingEditModalOpen, setIsHoldingEditModalOpen] = useState(false);
   const [holdingToEdit, setHoldingToEdit] = useState<Holding | null>(null);
+  const [reconcileQtyHolding, setReconcileQtyHolding] = useState<Holding | null>(null);
+  const [reconcileBrokerCashAccount, setReconcileBrokerCashAccount] = useState<Account | null>(null);
+  const reconcileBrokerPortfolioIds = useMemo(
+    () =>
+      reconcileBrokerCashAccount
+        ? portfolioIdsForAccount(data ?? ({} as any), reconcileBrokerCashAccount.id)
+        : [],
+    [reconcileBrokerCashAccount, data?.investments],
+  );
   
   const [isPlatformModalOpen, setIsPlatformModalOpen] = useState(false);
   const [platformToEdit, setPlatformToEdit] = useState<Account | null>(null);
@@ -5566,7 +5742,49 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         }
         return scheduleClearPageAction(clearPageAction);
     }
-  }, [pageAction, clearPageAction, data, setActiveTab, triggerPageAction]);
+    if (pageAction.startsWith('open-reconcile-quantity')) {
+      if (!canReconcile) {
+        toast('Your role cannot post reconciliation adjustments.', 'error');
+        return scheduleClearPageAction(clearPageAction);
+      }
+      setActiveTab('Overview');
+      const holdingId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
+      if (!holdingId) {
+        toast('Open a holding and use Reconcile quantity, or deep-link with a holding id.', 'info');
+        return scheduleClearPageAction(clearPageAction);
+      }
+      const holding = getPersonalInvestments(data ?? null)
+        .flatMap((p) => p.holdings ?? [])
+        .find((h) => h.id === holdingId);
+      if (holding) setReconcileQtyHolding(holding);
+      else toast('Holding not found for quantity reconcile.', 'info');
+      return scheduleClearPageAction(clearPageAction);
+    }
+    if (pageAction.startsWith('open-reconcile-broker-cash')) {
+      if (!canReconcile) {
+        toast('Your role cannot post reconciliation adjustments.', 'error');
+        return scheduleClearPageAction(clearPageAction);
+      }
+      setActiveTab('Overview');
+      const accountId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
+      const platforms = getPersonalAccounts(data).filter((a) => a.type === 'Investment');
+      const target = accountId
+        ? platforms.find((a) => a.id === accountId) ?? null
+        : platforms[0] ?? null;
+      if (target) setReconcileBrokerCashAccount(target);
+      else toast('Add an investment platform first to reconcile broker cash.', 'info');
+      return scheduleClearPageAction(clearPageAction);
+    }
+    if (pageAction.startsWith('open-edit-investment-tx')) {
+      if (!canReconcile) {
+        toast('Your role cannot edit investment ledger rows.', 'error');
+        return scheduleClearPageAction(clearPageAction);
+      }
+      setActiveTab('Portfolios');
+      toast('Open a platform’s transaction history and use Edit on the buy/sell or cash row to correct.', 'info');
+      return scheduleClearPageAction(clearPageAction);
+    }
+  }, [pageAction, clearPageAction, data, setActiveTab, triggerPageAction, canReconcile]);
 
   const investmentAccounts = useMemo(
     () => getPersonalAccounts(data).filter((acc) => acc.type === 'Investment'),
@@ -5703,6 +5921,15 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
               investmentTransactions={data?.investmentTransactions ?? []}
               onApply={applyCorporateActionEvent}
               onUndo={reverseCorporateActionEvent}
+              onCorrect={async (ev) => {
+                await reverseCorporateActionEvent(ev.id);
+                openLaunchCorporateActionWizard({
+                  portfolioId: ev.portfolioId,
+                  symbol: ev.symbol,
+                  actionType: isCorporateActionWizardActionType(ev.actionType) ? ev.actionType : undefined,
+                });
+                toast('Original action undone. Re-apply the corrected terms in the wizard.', 'info');
+              }}
               onLaunchWizard={openLaunchCorporateActionWizard}
             />
           </div>
@@ -5930,7 +6157,38 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             </p>
         )}
 
-        <HoldingsQtyIntegrityPanel compact />
+        <HoldingsQtyIntegrityPanel
+          compact
+          onReconcileQuantity={
+            canReconcile
+              ? ({ holdingId }) => {
+                  const holding = getPersonalInvestments(data ?? ({} as any))
+                    .flatMap((p) => p.holdings ?? [])
+                    .find((h) => h.id === holdingId);
+                  if (holding) setReconcileQtyHolding(holding);
+                }
+              : undefined
+          }
+        />
+        {canReconcile && investmentAccounts.length > 0 && (
+          <p className="text-xs text-slate-500 mt-2">
+            Broker uninvested cash:{' '}
+            <button
+              type="button"
+              className="font-semibold text-emerald-700 hover:underline"
+              onClick={() => setReconcileBrokerCashAccount(investmentAccounts[0] ?? null)}
+            >
+              Reconcile broker cash…
+            </button>{' '}
+            (append-only delta on the Investment platform; same engine as Accounts).
+          </p>
+        )}
+        {canReconcile && (
+        <p className="text-xs text-slate-500 mt-2">
+          To match a broker share count, open that holding and use <span className="font-semibold text-emerald-700">Reconcile quantity…</span>{' '}
+          — it rebuilds that symbol only (never a bulk rewrite) and is recorded in the reconciliation audit log.
+        </p>
+        )}
 
         <details className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <summary className="cursor-pointer select-none text-sm font-semibold text-slate-800">
@@ -6017,6 +6275,15 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                   ? () => openRecordSellForHolding(selectedHolding, selectedPortfolio)
                   : undefined
           }
+          onReconcileQuantity={
+              canReconcile && selectedHolding
+                  ? () => {
+                        const target = selectedHolding;
+                        setIsHoldingModalOpen(false);
+                        setReconcileQtyHolding(target);
+                    }
+                  : undefined
+          }
           onCorporateAction={
               selectedHolding && selectedPortfolio
                   ? () => {
@@ -6040,7 +6307,64 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         initialState={corporateActionWizardInitial}
         onApply={applyCorporateActionEvent}
       />
-      <HoldingEditModal isOpen={isHoldingEditModalOpen} onClose={() => setIsHoldingEditModalOpen(false)} onSave={handleSaveHolding} holding={holdingToEdit} />
+      <HoldingEditModal
+        isOpen={isHoldingEditModalOpen}
+        onClose={() => setIsHoldingEditModalOpen(false)}
+        onSave={handleSaveHolding}
+        holding={holdingToEdit}
+        onReconcileQuantity={
+          canReconcile && holdingToEdit
+            ? () => {
+                  const target = holdingToEdit;
+                  setIsHoldingEditModalOpen(false);
+                  setReconcileQtyHolding(target);
+              }
+            : undefined
+        }
+      />
+      <ReconcileQuantityModal
+        isOpen={!!reconcileQtyHolding}
+        onClose={() => setReconcileQtyHolding(null)}
+        holdingId={reconcileQtyHolding?.id ?? ''}
+        symbol={reconcileQtyHolding?.symbol ?? ''}
+        beforeQty={Number(reconcileQtyHolding?.quantity ?? 0)}
+        onApply={async ({ holdingId, actualQty, costBasisTotal, reason }) => {
+          const result = await applyReconciliationAdjustment({
+            mechanism: 'reconcile_quantity',
+            entityType: 'holding',
+            entityId: holdingId,
+            actualValue: actualQty,
+            costBasisTotal,
+            reason,
+          });
+          if (!result.ok) throw new Error(result.error || 'Quantity reconcile failed');
+          toast('Holding quantity reconciled.', 'success');
+        }}
+      />
+      <ReconcileBalanceModal
+        isOpen={!!reconcileBrokerCashAccount}
+        onClose={() => setReconcileBrokerCashAccount(null)}
+        account={reconcileBrokerCashAccount}
+        transactions={data?.transactions}
+        investmentTransactions={data?.investmentTransactions}
+        portfolioIds={reconcileBrokerPortfolioIds}
+        onApply={async ({ accountId, actualValue, reason, effectiveDate, confirmBackdated, mechanism }) => {
+          const result = await applyReconciliationAdjustment({
+            mechanism,
+            entityType: 'account',
+            entityId: accountId,
+            actualValue,
+            reason,
+            effectiveDate,
+            confirmBackdated,
+          });
+          if (!result.ok) throw new Error(result.error || 'Broker cash reconcile failed');
+          toast(
+            mechanism === 'opening_balance' ? 'Opening broker cash posted.' : 'Broker cash reconciled.',
+            'success',
+          );
+        }}
+      />
       <PlatformModal isOpen={isPlatformModalOpen} onClose={() => setIsPlatformModalOpen(false)} onSave={handleSavePlatform} platformToEdit={platformToEdit} />
       <PortfolioModal 
         isOpen={isPortfolioModalOpen} 

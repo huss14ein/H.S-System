@@ -90,7 +90,13 @@ describe('recordTradeCompletion', () => {
     expect(ctx).toContain('const manualOnly = !hasPositionAffectingTransactions(replayTxs)');
     expect(ctx).toContain("holdingsBaselineMode: manualOnly ? 'as_stored' : 'replay_derived'");
     expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [ev] } : {})');
-    expect(ctx).toContain('...(manualOnly ? { holdingsReplayEvents: [reversalEv] } : {})');
+    /**
+     * Undo splits by book: a traded book marks the event reversed and rebuilds from the ledger
+     * (`replay_derived`, no inverse row), while a manual book replays the inverse delta on stored holdings.
+     */
+    expect(ctx).toContain("holdingsBaselineMode: 'replay_derived'");
+    expect(ctx).toContain('holdingsReplayEvents: [reversalEv]');
+    expect(ctx).toContain('// Manual-only books: scoped inverse / delta replay remains valid.');
   });
 
   it('ledger sync scopes orphans by account + held/scoped symbols', () => {
