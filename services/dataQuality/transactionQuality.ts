@@ -7,12 +7,27 @@ function normalizeDesc(s: string): string {
   return s.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+function merchantKey(s: string): string {
+  return normalizeDesc(s)
+    .replace(/[^a-z0-9\u0600-\u06FF ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48);
+}
+
 function descriptionsLikelySame(a: string, b: string): boolean {
   const A = normalizeDesc(a);
   const B = normalizeDesc(b);
   if (!A || !B) return false;
   if (A === B) return true;
-  const prefix = 12;
+  const ma = merchantKey(a);
+  const mb = merchantKey(b);
+  if (ma && mb && (ma === mb || ma.includes(mb) || mb.includes(ma))) {
+    /** Require meaningful merchant overlap — avoid shared POS boilerplate (12-char prefix). */
+    if (Math.min(ma.length, mb.length) >= 6) return true;
+  }
+  const prefix = 24;
+  if (A.length < prefix || B.length < prefix) return false;
   const shortA = A.slice(0, prefix);
   const shortB = B.slice(0, prefix);
   return A.includes(shortB) || B.includes(shortA);

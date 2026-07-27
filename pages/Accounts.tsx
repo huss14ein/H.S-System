@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useContext, useEffect, useCallback, useRef } from 'react';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { Account, AccountRole, Page } from '../types';
@@ -40,8 +40,8 @@ import { tradableCashBucketToSAR, toSAR, fromSAR } from '../utils/currencyMath';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { accountBookCurrency } from '../utils/cashAccountDisplay';
 import { isInternalTransferTransaction } from '../services/transactionFilters';
-import { findCreditCardLiabilityForAccount } from '../services/creditCardLinking';
-import { aggregateCreditCardStatementActivity, estimateMinimumCardPaymentDue } from '../services/creditCardLedger';
+import { findCreditCardLiabilityForAccount, creditCardMirrorMatches } from '../services/creditCardLinking';
+import { aggregateCreditCardStatementActivity, estimateMinimumCardPaymentDue, resolveCreditCardAmountDue } from '../services/creditCardLedger';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import AIAdvisor from '../components/AIAdvisor';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
@@ -50,6 +50,7 @@ import { useExtendedCanonicalMetrics, pickInvestmentsTotalSar, pickInvestableCas
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import ReconcileBalanceModal from '../components/reconciliation/ReconcileBalanceModal';
+import CashBalanceDriftBanner from '../components/accounts/CashBalanceDriftBanner';
 import { portfolioIdsForAccount } from '../services/reconciliation';
 import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { toast } from '../context/ToastContext';
@@ -391,11 +392,16 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
     const [transferAmount, setTransferAmount] = useState('');
     const [transferFeeAmount, setTransferFeeAmount] = useState('');
     const [transferDescription, setTransferDescription] = useState('');
+    const [transferUseFullCreditBalance, setTransferUseFullCreditBalance] = useState(false);
+    const [isTransferSubmitting, setIsTransferSubmitting] = useState(false);
+    const transferSubmitLockRef = useRef(false);
     const [isRecurringTransferModalOpen, setIsRecurringTransferModalOpen] = useState(false);
     const [recurringFromId, setRecurringFromId] = useState('');
     const [recurringToId, setRecurringToId] = useState('');
     const [recurringAmount, setRecurringAmount] = useState('');
     const [recurringDayOfMonth, setRecurringDayOfMonth] = useState('1');
+    const [isRecurringTransferSubmitting, setIsRecurringTransferSubmitting] = useState(false);
+    const recurringTransferLockRef = useRef(false);
     const [transferFilterFrom, setTransferFilterFrom] = useState<string>('all');
     const [transferFilterTo, setTransferFilterTo] = useState<string>('all');
     const [transferFilterStatus, setTransferFilterStatus] = useState<'all' | 'active' | 'paused'>('all');
@@ -731,106 +737,194 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
         setShareShowBalance(true);
     };
 
-    const handleTransfer = async () => {
-        if (!transferFromAccount || !transferToAccount || !transferAmount) {
-            alert('Please select both accounts and enter an amount.');
-            return;
-        }
-        const amount = parseFloat(transferAmount);
-        const feeAmount = transferFeeAmount ? parseFloat(transferFeeAmount) : 0;
-        if (!Number.isFinite(amount) || amount <= 0) {
-            alert('Please enter a valid positive amount.');
-            return;
-        }
-        if (!Number.isFinite(feeAmount) || feeAmount < 0) {
-            alert('Please enter a valid non-negative transfer fee.');
-            return;
-        }
+    const resetTransferModalFields = () => {
+        setTransferFromAccount('');
+        setTransferToAccount('');
+        setTransferAmount('');
+        setTransferFeeAmount('');
+        setTransferDescription('');
+        setTransferUseFullCreditBalance(false);
+    };
+
+    const closeTransferModal = () => {
+        if (transferSubmitLockRef.current || isTransferSubmitting) return;
+        setIsTransferModalOpen(false);
+        setTransferFeeAmount('');
+        setTransferUseFullCreditBalance(false);
+    };
+
+    /** Full card due converted into the transfer amount field (source-account currency). */
+    const computeFullCreditPayAmountInSourceCurrency = (fromId: string, toId: string): string => {
         const accounts = data?.accounts ?? [];
-        const fromAccount = accounts.find(a => a.id === transferFromAccount);
-        const toAccount = accounts.find(a => a.id === transferToAccount);
-        if (!fromAccount || !toAccount) {
-            alert('Selected accounts not found.');
-            return;
-        }
-        const fromCurrency = fromAccount.type === 'Investment'
-            ? ((toAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD')
+        const toAccount = accounts.find((a) => a.id === toId);
+        if (!toAccount || toAccount.type !== 'Credit') return '';
+        const liab = findCreditCardLiabilityForAccount(data?.liabilities ?? [], toAccount.id);
+        const dueInCardCur = resolveCreditCardAmountDue(toAccount, liab);
+        if (!(dueInCardCur > 0)) return '';
+        const cardCur = (toAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD';
+        const fromAccount = accounts.find((a) => a.id === fromId);
+        if (!fromAccount) return dueInCardCur.toFixed(2);
+        const fromCur = fromAccount.type === 'Investment'
+            ? cardCur
             : ((fromAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD');
-        const toCurrency = toAccount.type === 'Investment'
-            ? ((fromAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD')
-            : ((toAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD');
-        const availableFromInInputCurrency = fromAccount.type === 'Investment'
-            ? fromSAR(spendableBalanceSar(fromAccount), fromCurrency, sarPerUsd)
-            : Math.max(0, Number(fromAccount.balance) || 0);
-        const totalDebit = amount + feeAmount;
-        if (availableFromInInputCurrency < totalDebit) {
-            alert(`Insufficient balance. Available: ${formatCurrencyString(availableFromInInputCurrency, { inCurrency: fromCurrency })}. Total debit (amount + fee): ${formatCurrencyString(totalDebit, { inCurrency: fromCurrency })}`);
-            return;
+        const amountInSource = fromCur === cardCur
+            ? dueInCardCur
+            : fromSAR(toSAR(dueInCardCur, cardCur, sarPerUsd), fromCur, sarPerUsd);
+        return amountInSource > 0 ? amountInSource.toFixed(2) : '';
+    };
+
+    const applyFullCreditPayAmount = (fromId: string, toId: string) => {
+        const next = computeFullCreditPayAmountInSourceCurrency(fromId, toId);
+        setTransferAmount(next);
+        setTransferUseFullCreditBalance(true);
+    };
+
+    const openPayCardTransfer = (creditAccountId: string, payFull: boolean) => {
+        if (transferSubmitLockRef.current || isTransferSubmitting) return;
+        setTransferFromAccount('');
+        setTransferToAccount(creditAccountId);
+        setTransferFeeAmount('');
+        setTransferDescription('');
+        if (payFull) {
+            applyFullCreditPayAmount('', creditAccountId);
+        } else {
+            setTransferAmount('');
+            setTransferUseFullCreditBalance(false);
         }
-        const convertedForDestination = fromCurrency === toCurrency
-            ? amount
-            : fromSAR(toSAR(amount, fromCurrency, sarPerUsd), toCurrency, sarPerUsd);
-        const transferOk = await confirmAction(
-            summarizeTransferForConfirm({
-                amount,
-                fromName: fromAccount.name,
-                toName: toAccount.name,
-                fromCurrency,
-                feeAmount: feeAmount > 0 ? feeAmount : undefined,
-                convertedAmount: fromCurrency !== toCurrency ? convertedForDestination : undefined,
-                toCurrency: fromCurrency !== toCurrency ? toCurrency : undefined,
-                note: transferDescription.trim() || undefined,
-            }),
-        );
-        if (!transferOk) return;
+        setIsTransferModalOpen(true);
+    };
+
+    /** `open-pay-card[:accountId][:full]` from command palette / Liabilities. */
+    useEffect(() => {
+        if (!pageAction || !pageAction.startsWith('open-pay-card')) return;
+        const parts = pageAction.split(':');
+        const accountId = parts[1] ?? '';
+        const payFull = parts[2] === 'full';
+        const target = accountId
+            ? orderedCreditAccounts.find((a) => a.id === accountId)
+            : orderedCreditAccounts[0];
+        if (!target) {
+            toast('Add a credit card account first to pay a card.', 'info');
+            return scheduleClearPageAction(clearPageAction);
+        }
+        openPayCardTransfer(target.id, payFull);
+        return scheduleClearPageAction(clearPageAction);
+    }, [pageAction, clearPageAction, orderedCreditAccounts]);
+
+    const handleTransfer = async () => {
+        if (transferSubmitLockRef.current || isTransferSubmitting) return;
+        transferSubmitLockRef.current = true;
+        setIsTransferSubmitting(true);
         try {
+            if (!transferFromAccount || !transferToAccount || !transferAmount) {
+                alert('Please select both accounts and enter an amount.');
+                return;
+            }
+            const amount = parseFloat(transferAmount);
+            const feeAmount = transferFeeAmount ? parseFloat(transferFeeAmount) : 0;
+            if (!Number.isFinite(amount) || amount <= 0) {
+                alert('Please enter a valid positive amount.');
+                return;
+            }
+            if (!Number.isFinite(feeAmount) || feeAmount < 0) {
+                alert('Please enter a valid non-negative transfer fee.');
+                return;
+            }
+            const accounts = data?.accounts ?? [];
+            const fromAccount = accounts.find(a => a.id === transferFromAccount);
+            const toAccount = accounts.find(a => a.id === transferToAccount);
+            if (!fromAccount || !toAccount) {
+                alert('Selected accounts not found.');
+                return;
+            }
+            if (fromAccount.type === 'Investment' && toAccount.type === 'Credit') {
+                alert('Pay cards from Checking or Savings. Withdraw investment cash to a bank account first, then pay the card.');
+                return;
+            }
+            const fromCurrency = fromAccount.type === 'Investment'
+                ? ((toAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD')
+                : ((fromAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD');
+            const toCurrency = toAccount.type === 'Investment'
+                ? ((fromAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD')
+                : ((toAccount.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD');
+            const availableFromInInputCurrency = fromAccount.type === 'Investment'
+                ? fromSAR(spendableBalanceSar(fromAccount), fromCurrency, sarPerUsd)
+                : Math.max(0, Number(fromAccount.balance) || 0);
+            const totalDebit = amount + feeAmount;
+            if (availableFromInInputCurrency < totalDebit) {
+                alert(`Insufficient balance. Available: ${formatCurrencyString(availableFromInInputCurrency, { inCurrency: fromCurrency })}. Total debit (amount + fee): ${formatCurrencyString(totalDebit, { inCurrency: fromCurrency })}`);
+                return;
+            }
+            const convertedForDestination = fromCurrency === toCurrency
+                ? amount
+                : fromSAR(toSAR(amount, fromCurrency, sarPerUsd), toCurrency, sarPerUsd);
+
+            const transferOk = await confirmAction(
+                summarizeTransferForConfirm({
+                    amount,
+                    fromName: fromAccount.name,
+                    toName: toAccount.name,
+                    fromCurrency,
+                    feeAmount: feeAmount > 0 ? feeAmount : undefined,
+                    convertedAmount: fromCurrency !== toCurrency ? convertedForDestination : undefined,
+                    toCurrency: fromCurrency !== toCurrency ? toCurrency : undefined,
+                    note: transferDescription.trim() || undefined,
+                }),
+            );
+            if (!transferOk) return;
             const note = transferDescription.trim() || undefined;
             const today = new Date().toISOString().split('T')[0];
             await addTransfer(transferFromAccount, transferToAccount, amount, today, note, feeAmount, { confirmed: true });
 
             alert('Transfer completed successfully.');
             setIsTransferModalOpen(false);
-            setTransferFromAccount('');
-            setTransferToAccount('');
-            setTransferAmount('');
-            setTransferFeeAmount('');
-            setTransferDescription('');
+            resetTransferModalFields();
         } catch (error) {
             alert(`Failed to complete transfer: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            transferSubmitLockRef.current = false;
+            setIsTransferSubmitting(false);
         }
     };
 
     const handleAddRecurringTransfer = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!recurringFromId || !recurringToId || !recurringAmount) {
-            alert('Please select both accounts and enter an amount.');
-            return;
-        }
-        const amount = parseFloat(recurringAmount);
-        if (!Number.isFinite(amount) || amount <= 0) {
-            alert('Please enter a valid positive amount.');
-            return;
-        }
-        const day = Math.min(28, Math.max(1, parseInt(recurringDayOfMonth, 10) || 1));
-        const accounts = data?.accounts ?? [];
-        const fromAcc = accounts.find(a => a.id === recurringFromId);
-        const toAcc = accounts.find(a => a.id === recurringToId);
-        if (!fromAcc || !toAcc) {
-            alert('Selected accounts not found.');
-            return;
-        }
-        const description = `Auto transfer to ${toAcc.name}`;
-        const recurringOk = await confirmAction({
-            title: 'Schedule recurring transfer?',
-            message: `Create monthly auto transfer from ${fromAcc.name} to ${toAcc.name}?`,
-            confirmLabel: 'Create schedule',
-            details: [
-                `Amount: ${formatCurrencyString(amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}`,
-                `Day ${day} of each month`,
-            ],
-        });
-        if (!recurringOk) return;
+        if (recurringTransferLockRef.current || isRecurringTransferSubmitting) return;
+        recurringTransferLockRef.current = true;
+        setIsRecurringTransferSubmitting(true);
         try {
+            if (!recurringFromId || !recurringToId || !recurringAmount) {
+                alert('Please select both accounts and enter an amount.');
+                return;
+            }
+            const amount = parseFloat(recurringAmount);
+            if (!Number.isFinite(amount) || amount <= 0) {
+                alert('Please enter a valid positive amount.');
+                return;
+            }
+            const day = Math.min(28, Math.max(1, parseInt(recurringDayOfMonth, 10) || 1));
+            const accounts = data?.accounts ?? [];
+            const fromAcc = accounts.find(a => a.id === recurringFromId);
+            const toAcc = accounts.find(a => a.id === recurringToId);
+            if (!fromAcc || !toAcc) {
+                alert('Selected accounts not found.');
+                return;
+            }
+            if (fromAcc.type === 'Investment' && toAcc.type === 'Credit') {
+                alert('Schedule card payments from Checking or Savings. Withdraw investment cash first, then schedule the transfer.');
+                return;
+            }
+            const description = `Auto transfer to ${toAcc.name}`;
+            const recurringOk = await confirmAction({
+                title: 'Schedule recurring transfer?',
+                message: `Create monthly auto transfer from ${fromAcc.name} to ${toAcc.name}?`,
+                confirmLabel: 'Create schedule',
+                details: [
+                    `Amount: ${formatCurrencyString(amount, { inCurrency: accountBookCurrency(fromAcc), showSecondary: true })}`,
+                    `Day ${day} of each month`,
+                ],
+            });
+            if (!recurringOk) return;
             await addRecurringTransaction({
                 description: `${description} (from ${fromAcc.name})`,
                 amount,
@@ -859,6 +953,9 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
             setRecurringDayOfMonth('1');
         } catch (err) {
             alert(`Failed to create recurring transfer: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        } finally {
+            recurringTransferLockRef.current = false;
+            setIsRecurringTransferSubmitting(false);
         }
     };
 
@@ -1029,12 +1126,21 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                         <button type="button" onClick={() => setIsRecurringTransferModalOpen(true)} className="btn-outline text-sm">
                             Schedule auto transfer
                         </button>
-                        <button type="button" onClick={() => setIsTransferModalOpen(true)} className="btn-primary text-sm">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (transferSubmitLockRef.current || isTransferSubmitting) return;
+                                setTransferUseFullCreditBalance(false);
+                                setIsTransferModalOpen(true);
+                            }}
+                            disabled={isTransferSubmitting}
+                            className="btn-primary text-sm disabled:opacity-50"
+                        >
                             Transfer now
                         </button>
                     </div>
                 </div>
-                <p className="text-sm text-slate-600 mt-1 mb-2">One-time or recurring transfers between Checking, Savings, Investment, and Credit accounts. Paying a card = transfer <strong>to</strong> the Credit account (principal only). Use &quot;Transfer now&quot; or schedule monthly.</p>
+                <p className="text-sm text-slate-600 mt-1 mb-2">One-time or recurring transfers between Checking, Savings, Investment, and Credit accounts. Paying a card = transfer <strong>to</strong> the Credit account (principal only). Use &quot;Pay full balance&quot; on a card, &quot;Transfer now&quot;, or schedule monthly.</p>
 
                 {/* Tabs: Scheduled | History */}
                 <div className="flex gap-1 mb-4 border-b border-slate-200">
@@ -1286,6 +1392,12 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                 </div>
             )}
 
+            {canReconcileBalances && (
+              <CashBalanceDriftBanner
+                onReconcile={(acc) => setReconcileAccount(acc)}
+              />
+            )}
+
             <section>
                 <h2 className="section-title text-xl mb-4">Cash Accounts</h2>
                 <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
@@ -1305,7 +1417,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
             <section>
                 <h2 className="section-title text-xl mb-4">Credit Cards</h2>
                 <p className="text-sm text-slate-600 mb-3">
-                    Link each card to a <strong>Credit Card</strong> liability on the Liabilities page so debt is counted once on net worth. Use <strong>Pay card</strong> to record a checking/savings → credit transfer (not spending).
+                    Link each card to a <strong>Credit Card</strong> liability on the Liabilities page so debt is counted once on net worth. Use <strong>Pay full balance</strong> or <strong>Pay custom amount</strong> to record a checking/savings → credit transfer (not spending).
                     {setActivePage ? (
                         <>
                             {' '}
@@ -1346,6 +1458,11 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                                             <span className="font-medium text-slate-700">Card ledger balance</span>{' '}
                                             {maskBalance(formatCurrencyString(acc.balance, { inCurrency: cur }))}
                                         </p>
+                                        {!creditCardMirrorMatches(liab, acc) ? (
+                                            <p className="text-amber-800 bg-amber-50/80 border border-amber-100 rounded-md px-2 py-1.5">
+                                                Liability and card ledger differ. Pay full uses the card ledger. Restate the liability or reconcile the card so they match before paying.
+                                            </p>
+                                        ) : null}
                                     </>
                                 ) : (
                                     <p className="text-amber-800 bg-amber-50/80 border border-amber-100 rounded-md px-2 py-1.5">
@@ -1367,20 +1484,34 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                                         {formatCurrencyString(estimateMinimumCardPaymentDue(purchaseMag, cur), { inCurrency: cur })}
                                     </p>
                                 )}
-                                <button
-                                    type="button"
-                                    className="w-full btn-outline text-sm py-2"
-                                    onClick={() => {
-                                        setTransferFromAccount('');
-                                        setTransferToAccount(acc.id);
-                                        setIsTransferModalOpen(true);
-                                    }}
-                                >
-                                    Pay card (transfer from checking/savings)
-                                </button>
+                                {(() => {
+                                    const amountDue = resolveCreditCardAmountDue(acc, liab);
+                                    return (
+                                        <div className="flex flex-col gap-2">
+                                            <button
+                                                type="button"
+                                                className="w-full btn-primary text-sm py-2 disabled:opacity-50"
+                                                disabled={!(amountDue > 0) || isTransferSubmitting}
+                                                onClick={() => openPayCardTransfer(acc.id, true)}
+                                            >
+                                                Pay full balance
+                                                {amountDue > 0
+                                                    ? ` (${maskBalance(formatCurrencyString(amountDue, { inCurrency: cur }))})`
+                                                    : ''}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="w-full btn-outline text-sm py-2 disabled:opacity-50"
+                                                disabled={isTransferSubmitting}
+                                                onClick={() => openPayCardTransfer(acc.id, false)}
+                                            >
+                                                Pay custom amount…
+                                            </button>
+                                        </div>
+                                    );
+                                })()}
                             </div>
-                        );
-                        return (
+                        );                        return (
                             <AccountCardComponent
                                 key={acc.id}
                                 account={acc}
@@ -1452,16 +1583,35 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                     <p className="text-sm text-slate-600">Create a monthly auto transfer. Two recurring entries (out from source, in to destination) will be added; you can edit or disable them in Transactions → Recurring.</p>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">From account</label>
-                        <select value={recurringFromId} onChange={(e) => setRecurringFromId(e.target.value)} required className="select-base w-full">
+                        <select
+                            value={recurringFromId}
+                            onChange={(e) => setRecurringFromId(e.target.value)}
+                            required
+                            disabled={isRecurringTransferSubmitting}
+                            className="select-base w-full"
+                        >
                             <option value="">Select source</option>
-                            {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map(acc => (
+                            {(data?.accounts ?? [])
+                                .filter((a) => {
+                                    if (a.type === 'Credit') return false;
+                                    const toAcc = (data?.accounts ?? []).find((x) => x.id === recurringToId);
+                                    if (toAcc?.type === 'Credit' && a.type === 'Investment') return false;
+                                    return true;
+                                })
+                                .map(acc => (
                                 <option key={acc.id} value={acc.id}>{acc.name} ({acc.type})</option>
                             ))}
                         </select>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">To account</label>
-                        <select value={recurringToId} onChange={(e) => setRecurringToId(e.target.value)} required className="select-base w-full">
+                        <select
+                            value={recurringToId}
+                            onChange={(e) => setRecurringToId(e.target.value)}
+                            required
+                            disabled={isRecurringTransferSubmitting}
+                            className="select-base w-full"
+                        >
                             <option value="">Select destination</option>
                             {(data?.accounts ?? []).filter(a => a.id !== recurringFromId).map(acc => (
                                 <option key={acc.id} value={acc.id}>{acc.name} ({acc.type})</option>
@@ -1470,13 +1620,15 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Amount (each month)</label>
-                        <input type="number" min="0.01" step="0.01" value={recurringAmount} onChange={(e) => setRecurringAmount(e.target.value)} required className="input-base w-full" placeholder="0.00" />
+                        <input type="number" min="0.01" step="0.01" value={recurringAmount} onChange={(e) => setRecurringAmount(e.target.value)} required disabled={isRecurringTransferSubmitting} className="input-base w-full" placeholder="0.00" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Day of month (1–28)</label>
-                        <input type="number" min="1" max="28" value={recurringDayOfMonth} onChange={(e) => setRecurringDayOfMonth(e.target.value)} className="input-base w-full" />
+                        <input type="number" min="1" max="28" value={recurringDayOfMonth} onChange={(e) => setRecurringDayOfMonth(e.target.value)} disabled={isRecurringTransferSubmitting} className="input-base w-full" />
                     </div>
-                    <button type="submit" className="w-full btn-primary">Create recurring transfer</button>
+                    <button type="submit" disabled={isRecurringTransferSubmitting} className="w-full btn-primary disabled:opacity-50">
+                        {isRecurringTransferSubmitting ? 'Creating…' : 'Create recurring transfer'}
+                    </button>
                 </form>
             </Modal>
 
@@ -1500,8 +1652,8 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                 )}
             </Modal>
 
-            <Modal isOpen={isTransferModalOpen} onClose={() => { setIsTransferModalOpen(false); setTransferFeeAmount(''); }} title="Transfer Between Accounts">
-                <form onSubmit={(e) => { e.preventDefault(); handleTransfer(); }} className="space-y-4">
+            <Modal isOpen={isTransferModalOpen} onClose={closeTransferModal} title="Transfer Between Accounts">
+                <form onSubmit={(e) => { e.preventDefault(); void handleTransfer(); }} className="space-y-4">
                     {transferFromAccount && transferToAccount && (() => {
                         const fromAcc = (data?.accounts ?? []).find(a => a.id === transferFromAccount);
                         const toAcc = (data?.accounts ?? []).find(a => a.id === transferToAccount);
@@ -1527,12 +1679,26 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                         </label>
                         <select
                             value={transferFromAccount}
-                            onChange={(e) => setTransferFromAccount(e.target.value)}
+                            onChange={(e) => {
+                                const nextFrom = e.target.value;
+                                setTransferFromAccount(nextFrom);
+                                if (transferUseFullCreditBalance && transferToAccount) {
+                                    applyFullCreditPayAmount(nextFrom, transferToAccount);
+                                }
+                            }}
                             required
+                            disabled={isTransferSubmitting}
                             className="select-base"
                         >
                             <option value="">Select source account</option>
-                            {(data?.accounts ?? []).filter(a => a.type !== 'Credit').map(acc => (
+                            {(data?.accounts ?? [])
+                                .filter((a) => {
+                                    if (a.type === 'Credit') return false;
+                                    const toAcc = (data?.accounts ?? []).find((x) => x.id === transferToAccount);
+                                    if (toAcc?.type === 'Credit' && a.type === 'Investment') return false;
+                                    return true;
+                                })
+                                .map(acc => (
                                 <option key={acc.id} value={acc.id}>
                                     {acc.name} ({formatCurrencyString(
                                         acc.type === 'Investment'
@@ -1564,8 +1730,18 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                         </label>
                         <select
                             value={transferToAccount}
-                            onChange={(e) => setTransferToAccount(e.target.value)}
+                            onChange={(e) => {
+                                const nextTo = e.target.value;
+                                setTransferToAccount(nextTo);
+                                const toAcc = (data?.accounts ?? []).find((a) => a.id === nextTo);
+                                if (toAcc?.type === 'Credit' && transferUseFullCreditBalance) {
+                                    applyFullCreditPayAmount(transferFromAccount, nextTo);
+                                } else if (toAcc?.type !== 'Credit') {
+                                    setTransferUseFullCreditBalance(false);
+                                }
+                            }}
                             required
+                            disabled={isTransferSubmitting}
                             className="select-base"
                         >
                             <option value="">Select destination account</option>
@@ -1592,11 +1768,38 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                             min="0.01"
                             step="0.01"
                             value={transferAmount}
-                            onChange={(e) => setTransferAmount(e.target.value)}
+                            onChange={(e) => {
+                                setTransferUseFullCreditBalance(false);
+                                setTransferAmount(e.target.value);
+                            }}
                             required
+                            disabled={isTransferSubmitting}
                             className="input-base"
                             placeholder="0.00"
                         />
+                        {(() => {
+                            const toAcc = (data?.accounts ?? []).find((a) => a.id === transferToAccount);
+                            if (!toAcc || toAcc.type !== 'Credit') return null;
+                            const liab = findCreditCardLiabilityForAccount(data?.liabilities ?? [], toAcc.id);
+                            const amountDue = resolveCreditCardAmountDue(toAcc, liab);
+                            if (!(amountDue > 0)) return null;
+                            const cardCur = toAcc.currency === 'USD' ? 'USD' : 'SAR';
+                            return (
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <button
+                                        type="button"
+                                        className="btn-outline text-xs py-1.5 px-2 disabled:opacity-50"
+                                        disabled={isTransferSubmitting}
+                                        onClick={() => applyFullCreditPayAmount(transferFromAccount, transferToAccount)}
+                                    >
+                                        Pay full balance ({formatCurrencyString(amountDue, { inCurrency: cardCur })})
+                                    </button>
+                                    {transferUseFullCreditBalance ? (
+                                        <span className="text-xs text-emerald-700">Using full card balance due</span>
+                                    ) : null}
+                                </div>
+                            );
+                        })()}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
@@ -1608,6 +1811,7 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                             step="0.01"
                             value={transferFeeAmount}
                             onChange={(e) => setTransferFeeAmount(e.target.value)}
+                            disabled={isTransferSubmitting}
                             className="input-base"
                             placeholder="0.00"
                         />
@@ -1621,12 +1825,17 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                             type="text"
                             value={transferDescription}
                             onChange={(e) => setTransferDescription(e.target.value)}
+                            disabled={isTransferSubmitting}
                             className="input-base"
                             placeholder="e.g., Monthly savings transfer"
                         />
                     </div>
-                    <button type="submit" className="w-full btn-primary">
-                        Complete Transfer
+                    <button
+                        type="submit"
+                        disabled={isTransferSubmitting}
+                        className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isTransferSubmitting ? 'Transferring…' : 'Complete Transfer'}
                     </button>
                 </form>
             </Modal>

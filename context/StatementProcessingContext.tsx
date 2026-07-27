@@ -699,14 +699,13 @@ export const StatementProcessingProvider: React.FC<StatementProcessingProviderPr
         // Amount tolerance: ±0.01 (for rounding differences)
         const amountDiff = Math.abs(extractedAmount - existingAmount);
 
-        // Match criteria:
-        // 1. Same date (±3 days) AND same amount (±0.01) AND similar description
-        // 2. OR same date (±3 days) AND same amount (±0.01) (description might differ)
+        // Same date (±3 days) AND same amount (±0.01) AND similar description.
+        // Do NOT treat date+amount alone as a match — multi-SMS same-day same-amount different merchants must stay unmatched.
         const dateMatch = daysDiff <= 3;
         const amountMatch = amountDiff <= 0.01;
         const descSimilarity = calculateStringSimilarity(extractedDesc, existingDesc) > 0.6;
 
-        return dateMatch && amountMatch && (descSimilarity || amountMatch);
+        return dateMatch && amountMatch && descSimilarity;
       });
 
       if (potentialMatches.length === 0) {

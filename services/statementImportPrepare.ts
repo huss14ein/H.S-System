@@ -118,9 +118,7 @@ function validatePreparedBankRow(tx: Transaction): string[] {
   if (!Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) {
     reasons.push('amount must be non-zero');
   }
-  if (tx.type === 'expense' && !String(tx.budgetCategory || '').trim()) {
-    reasons.push('missing budget mapping');
-  }
+  /** Budget mapping is optional — category alone is enough to import; user can tag later. */
   return reasons;
 }
 

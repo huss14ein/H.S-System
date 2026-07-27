@@ -316,7 +316,17 @@ const LiabilityAmortizationPreview: React.FC<{ liability: Liability }> = ({ liab
     );
 };
 
-const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void; onRestate?: (l: Liability) => void; onMarkPaid: (l: Liability) => void; canMarkPaid: boolean; canEdit: boolean; onGoToAccounts?: () => void; goalName?: string | null }> = ({ liability, onEdit, onRestate, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts, goalName }) => {
+const DebtCard: React.FC<{
+  liability: Liability;
+  onEdit: (l: Liability) => void;
+  onRestate?: (l: Liability) => void;
+  onMarkPaid: (l: Liability) => void;
+  canMarkPaid: boolean;
+  canEdit: boolean;
+  onGoToAccounts?: () => void;
+  onPayCard?: () => void;
+  goalName?: string | null;
+}> = ({ liability, onEdit, onRestate, onMarkPaid, canMarkPaid, canEdit, onGoToAccounts, onPayCard, goalName }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const isPaid = (liability.status ?? 'Active') === 'Paid';
     const getIcon = (type: Liability['type']) => {
@@ -358,6 +368,11 @@ const DebtCard: React.FC<{ liability: Liability; onEdit: (l: Liability) => void;
                     )}
                     {!canEdit && onGoToAccounts && (
                         <button type="button" onClick={onGoToAccounts} className="text-xs text-primary hover:underline py-1">Manage in Accounts</button>
+                    )}
+                    {liability.type === 'Credit Card' && onPayCard && !isPaid && (
+                        <button type="button" onClick={onPayCard} className="text-xs font-medium text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-50">
+                            Pay full balance
+                        </button>
                     )}
                 </div>
             </div>
@@ -431,10 +446,11 @@ const ReceivableCard: React.FC<{
 
 interface LiabilitiesProps {
   setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
   pageAction?: string | null;
   clearPageAction?: () => void;
 }
-const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage, pageAction, clearPageAction }) => {
+const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
     const { data, addLiability, updateLiability, applyReconciliationAdjustment } = useContext(DataContext)!;
     const auth = useContext(AuthContext);
     const canRestate = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
@@ -828,7 +844,13 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage, pageAction, cl
                     <p className="text-center text-gray-500 py-8">No debts recorded. Add a liability or link a credit account with a negative balance.</p>
                 ) : (
                     <div className="cards-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                        {debts.map(liab => (
+                        {debts.map(liab => {
+                            const linkedAccountId =
+                                (liab as Liability & { accountId?: string }).accountId ??
+                                (liab as { account_id?: string }).account_id ??
+                                // Synthetic Credit Card rows from unlinked Credit accounts use account id as row id.
+                                (liab.type === 'Credit Card' && !liabilityIds.has(liab.id) ? liab.id : undefined);
+                            return (
                             <DebtCard
                                 key={liab.id}
                                 liability={liab}
@@ -838,9 +860,17 @@ const Liabilities: React.FC<LiabilitiesProps> = ({ setActivePage, pageAction, cl
                                 canMarkPaid={liabilityIds.has(liab.id)}
                                 canEdit={liabilityIds.has(liab.id)}
                                 onGoToAccounts={setActivePage ? () => setActivePage('Accounts') : undefined}
+                                onPayCard={
+                                    liab.type === 'Credit Card' && linkedAccountId && triggerPageAction
+                                        ? () => triggerPageAction('Accounts', `open-pay-card:${linkedAccountId}:full`)
+                                        : liab.type === 'Credit Card' && setActivePage
+                                          ? () => setActivePage('Accounts')
+                                          : undefined
+                                }
                                 goalName={liab.goalId ? goalNameById.get(liab.goalId) ?? null : null}
                             />
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </SectionCard>

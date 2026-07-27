@@ -1,6 +1,7 @@
 import { Transaction, InvestmentTransaction } from '../types';
 import { invokeAI } from './geminiService';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
+import { inferImportTransactionCategory } from './importTransactionCategorization';
 
 export interface ParseResult {
   transactions: Transaction[];
@@ -417,13 +418,14 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           const canonicalDescription = canonicalizeTransactionDescription(description);
           let date = parseDate(dateStr || formatLocalYmd(new Date()));
           if (Number.isNaN(date.getTime())) date = new Date();
-          const category = inferCategory(canonicalDescription);
+          const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
+          const category = inferCategoryForSignedAmount(canonicalDescription, signed);
           
           transactions.push({
             id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             date: formatLocalYmd(date),
             description: canonicalDescription,
-            amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
+            amount: signed,
             category,
             accountId,
             type: isDebit ? 'expense' : 'income',
@@ -465,7 +467,10 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
 
     const isDebit = /debited|withdrawn|purchase|payment|paid|شراء|سحب|خصم|دفع|نقاط البيع/i.test(block);
     const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
-    const category = inferCategory(description);
+    const category = inferCategory(description, {
+      amount: signed,
+      type: signed < 0 ? 'expense' : 'income',
+    });
 
     out.push({
       id: `sms-heur-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
@@ -506,7 +511,7 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
       date: dateIso,
       description,
       amount: signed,
-      category: inferCategory(description),
+      category: inferCategoryForSignedAmount(description, signed),
       accountId,
       type: signed < 0 ? 'expense' : 'income',
       status: 'Approved',
@@ -698,7 +703,7 @@ function extractTransactionsFromSmsDateAnchors(smsText: string, accountId: strin
       date: dateIso,
       description,
       amount: signed,
-      category: inferCategory(description),
+      category: inferCategoryForSignedAmount(description, signed),
       accountId,
       type: signed < 0 ? 'expense' : 'income',
       status: 'Approved',
@@ -777,7 +782,7 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
       date: dateIso,
       description,
       amount: signed,
-      category: inferCategory(description),
+      category: inferCategoryForSignedAmount(description, signed),
       accountId,
       type: signed < 0 ? 'expense' : 'income',
       status: 'Approved',
@@ -1667,67 +1672,18 @@ function parseDate(dateStr: string): Date {
   return new Date(NaN);
 }
 
-function inferCategory(description: string): string {
-  const desc = description
-    .toLowerCase()
-    .replace(/[^a-z0-9\u0600-\u06FF ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!desc) return 'Uncategorized';
+function inferCategory(
+  description: string,
+  opts?: { amount?: number; type?: Transaction['type'] },
+): string {
+  return inferImportTransactionCategory(description, opts);
+}
 
-  // Saudi bank SMS — POS / e-commerce (before generic keyword scoring)
-  if (
-    /(شراء عبر نقاط البيع|نقاط البيع|لدى:|payment at|pos purchase|pos debit|purchase at)/i.test(description) &&
-    !/(atm|سحب نقدي|cash withdrawal)/i.test(description)
-  ) {
-    return 'Shopping';
-  }
-  if (/(شراء إنترنت|شراء من الانترنت|online purchase|e-?commerce|موقع|نون|امازون)/i.test(description)) {
-    return 'Shopping';
-  }
-  if (/(atm|سحب نقدي|cash withdrawal|withdrawal at atm)/i.test(description)) {
-    return 'Uncategorized';
-  }
-
-  const merchantOverrides: Record<string, string> = {
-    'starbucks': 'Food',
-    'carrefour': 'Food',
-    'tamimi': 'Food',
-    'panda': 'Food',
-    'careem': 'Transportation',
-    'uber': 'Transportation',
-    'netflix': 'Entertainment',
-    'shahid': 'Entertainment',
-    'stc': 'Telecommunications',
-    'mobily': 'Telecommunications',
-    'zain': 'Telecommunications',
-    'jarir': 'Shopping',
-    'amazon': 'Shopping',
-  };
-  for (const [merchant, category] of Object.entries(merchantOverrides)) {
-    if (desc.includes(merchant)) return category;
-  }
-
-  const categoryKeywords: Record<string, string[]> = {
-    Income: ['salary', 'payroll', 'deposit', 'راتب', 'ايداع', 'تحويل وارد'],
-    Food: ['food', 'restaurant', 'cafe', 'coffee', 'grocery', 'supermarket', 'مطعم', 'مقهى', 'قهوة', 'بقالة', 'سوبرماركت'],
-    Transportation: ['uber', 'taxi', 'fuel', 'petrol', 'gas', 'transport', 'metro', 'وقود', 'بنزين', 'نقل', 'تكسي'],
-    Housing: ['rent', 'lease', 'apartment', 'housing', 'إيجار', 'سكن', 'شقة'],
-    Utilities: ['electricity', 'water', 'internet', 'utility', 'كهرباء', 'مياه', 'انترنت', 'إنترنت', 'فاتورة'],
-    Telecommunications: ['mobile', 'phone', 'sim', 'telecom', 'اتصالات', 'جوال', 'شريحة'],
-    Entertainment: ['cinema', 'movie', 'game', 'subscription', 'ترفيه', 'سينما', 'اشتراك'],
-    Shopping: ['shopping', 'store', 'retail', 'mall', 'متجر', 'تسوق', 'مول'],
-    Health: ['pharmacy', 'clinic', 'hospital', 'medical', 'صيدلية', 'عيادة', 'مستشفى'],
-    Education: ['school', 'tuition', 'course', 'education', 'جامعة', 'مدرسة', 'تعليم'],
-    Travel: ['hotel', 'airline', 'flight', 'travel', 'ferry', 'فندق', 'طيران', 'سفر'],
-  };
-
-  let best: { category: string; score: number } = { category: 'Uncategorized', score: 0 };
-  for (const [category, words] of Object.entries(categoryKeywords)) {
-    const score = words.reduce((sum, w) => sum + (desc.includes(w) ? (w.length > 4 ? 2 : 1) : 0), 0);
-    if (score > best.score) best = { category, score };
-  }
-  return best.score > 0 ? best.category : 'Uncategorized';
+function inferCategoryForSignedAmount(description: string, signed: number): string {
+  return inferCategory(description, {
+    amount: signed,
+    type: signed < 0 ? 'expense' : 'income',
+  });
 }
 
 function canonicalizeTransactionDescription(raw: string): string {
@@ -1983,6 +1939,19 @@ function smsTransactionPreferenceScore(tx: Transaction): number {
   return s;
 }
 
+function smsDedupeDescriptionKey(description: string | undefined): string {
+  const norm = String(description ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06FF ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!norm || /^sms transaction\s+\d+$/i.test(norm) || norm === 'transaction') {
+    return '';
+  }
+  return norm.slice(0, 80);
+}
+
 function mergeSmsDedupedTransactions(transactions: Transaction[]): Transaction[] {
   const groups = new Map<string, Transaction[]>();
   for (const tx of transactions) {
@@ -1990,7 +1959,9 @@ function mergeSmsDedupedTransactions(transactions: Transaction[]): Transaction[]
     const amt = Number(tx.amount);
     if (!Number.isFinite(amt) || amt === 0) continue;
     const mag = Math.abs(amt).toFixed(4);
-    const key = `${date}|${mag}`;
+    const descKey = smsDedupeDescriptionKey(tx.description);
+    /** Same date+amount but different merchants stay separate (critical for multi-SMS paste). */
+    const key = descKey ? `${date}|${mag}|${descKey}` : `${date}|${mag}|__nodesc__|${tx.id}`;
     const arr = groups.get(key) ?? [];
     arr.push(tx);
     groups.set(key, arr);

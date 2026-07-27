@@ -64,6 +64,15 @@ describe('investmentTradeE2ECompletion', () => {
     const stmt = read('pages/StatementUpload.tsx');
     expect(stmt).toContain('recordTrade');
     expect(stmt).toContain('portfolioId');
+    expect(stmt).toContain('categorizeImportedTransaction');
+
+    expect(read('context/DataContext.tsx')).toContain('backfillRealizedPnLForAllPortfolios');
+    expect(read('services/applyPositionDeltaForTrade.ts')).toContain("action: 'close'");
+    expect(read('pages/StatementUpload.tsx')).toContain('categorizeImportedTransaction');
+    expect(read('utils/pageActions.ts')).toContain('sync-realized-pnl');
+    expect(read('utils/pageActions.ts')).toContain('focus-sms-tab');
+    expect(read('services/holdingsDedupe.ts')).toContain('mergeRealizedOntoKeep');
+    expect(read('services/corporateActionApply.ts')).toContain('Keep closed row');
 
     const div = read('pages/DividendTrackerView.tsx');
     expect(div).toContain('recordTrade');

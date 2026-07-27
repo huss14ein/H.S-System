@@ -8,11 +8,18 @@ import { useMarketDebouncedPrices } from '../hooks/useDebouncedMarketPrices';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
   reconcileCashAccountBalance,
+  reconcileCreditAccountBalance,
   detectStaleMarketData,
   detectStaleFxRate,
   collectTrackedSymbols,
   getStaleQuoteSymbols,
 } from '../services/dataQuality';
+import {
+  filterUnackedCashDriftWarnings,
+  resolveCashBalanceDriftAcks,
+  resolveHoldingsIntegrityAcks,
+} from '../services/uiAcks';
+import { filterUnackedDriftRows } from '../services/holdingsIntegrityAck';
 import { normalizedMonthlyExpenseSar, cashRunwayMonths } from '../services/financeMetrics';
 import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
@@ -387,22 +394,43 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
+    const cashDriftAcks = resolveCashBalanceDriftAcks(auth?.user?.id, data.settings);
+    const holdingsAcks = resolveHoldingsIntegrityAcks(auth?.user?.id, data.settings);
+
     const driftCashAccounts: { id: string; name: string }[] = [];
-    accountsForRunway
-      .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings')
-      .forEach((acc: { id: string; type: string; balance?: number; name?: string }) => {
-        const r = reconcileCashAccountBalance(
-          { id: acc.id, type: acc.type as 'Checking' | 'Savings', balance: acc.balance ?? 0 },
-          transactionsForRunway as Transaction[]
-        );
-        if (r?.showWarning && acc.name) driftCashAccounts.push({ id: acc.id, name: String(acc.name) });
-      });
+    const cashDriftRows = accountsForRunway
+      .filter((a: { type?: string }) => a.type === 'Checking' || a.type === 'Savings' || a.type === 'Credit')
+      .map((acc: { id: string; type: string; balance?: number; name?: string }) => {
+        const r =
+          acc.type === 'Credit'
+            ? reconcileCreditAccountBalance(
+                { id: acc.id, type: 'Credit', balance: acc.balance ?? 0 },
+                transactionsForRunway as Transaction[],
+              )
+            : reconcileCashAccountBalance(
+                { id: acc.id, type: acc.type as 'Checking' | 'Savings', balance: acc.balance ?? 0 },
+                transactionsForRunway as Transaction[],
+              );
+        if (!r) return null;
+        return {
+          ...r,
+          name: acc.name,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> & { name?: string } => x != null);
+
+    for (const r of filterUnackedCashDriftWarnings(cashDriftRows, cashDriftAcks)) {
+      if (r.name) driftCashAccounts.push({ id: r.accountId, name: String(r.name) });
+    }
     if (driftCashAccounts.length > 0) {
       const primary = driftCashAccounts[0];
       push({
         id: 'balance-reconciliation-drift',
         category: 'System',
-        message: `Cash account balance may not match recorded transactions: ${driftCashAccounts.map((a) => a.name).slice(0, 3).join(', ')}${driftCashAccounts.length > 3 ? '…' : ''}.`,
+        message: `Account balance may not match recorded transactions: ${driftCashAccounts
+          .map((a) => String(a.name).slice(0, 40))
+          .slice(0, 3)
+          .join(', ')}${driftCashAccounts.length > 3 ? '…' : ''}.`,
         date: now.toISOString(),
         isRead: false,
         pageLink: 'Accounts',
@@ -412,7 +440,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       });
     }
 
-    const qtyDrift = holdingsQtyDriftNeedsAttention(buildHoldingsQtyDriftReport(data));
+    const qtyDrift = filterUnackedDriftRows(
+      holdingsQtyDriftNeedsAttention(buildHoldingsQtyDriftReport(data)),
+      holdingsAcks,
+    );
     if (qtyDrift.length > 0) {
       const primary = qtyDrift[0];
       const holdingId = getPersonalInvestments(data)
@@ -744,6 +775,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     pendingTransactionApprovalCount,
     isAdmin,
     auth?.user?.id,
+    data?.settings?.uiAcks,
     todosOpt?.todos,
     enhancementSignals.goalConflicts.length,
     enhancementSignals.budgetDrift.length,

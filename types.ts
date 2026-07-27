@@ -675,6 +675,36 @@ export interface Settings {
     includeRewardsInNetWorth?: boolean;
     /** Months of essential expenses to treat as emergency-fund floor when computing Available Liquidity. */
     emergencyFundMonthsTarget?: number;
+    /**
+     * Durable dismissals for reconcile/integrity prompts (synced via settings.ui_acks).
+     * Fingerprinted so a real new drift resurfaces.
+     */
+    uiAcks?: {
+      holdingsQtyIntegrity?: Record<
+        string,
+        {
+          portfolioId: string;
+          symbol: string;
+          kind: 'keep_stored' | 'keep_closed';
+          storedQtyFingerprint: number;
+          at: string;
+        }
+      >;
+      cashBalanceDrift?: Record<
+        string,
+        {
+          accountId: string;
+          balanceFp: number;
+          netFp: number;
+          at: string;
+        }
+      >;
+      /** System Health investment KPI cash-ledger drift dismissal. */
+      investmentCashLedgerDrift?: {
+        driftSarFp: number;
+        at: string;
+      };
+    };
 }
 
 export interface ZakatPayment {

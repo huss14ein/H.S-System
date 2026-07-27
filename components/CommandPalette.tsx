@@ -90,7 +90,26 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                 },
                 icon: INVESTMENT_SUB_NAV_ITEMS.find((i) => i.name === 'Dividend Tracker')!.icon,
             });
+            subPages.push({
+                name: 'Sync realized P/L from ledger',
+                action: () => {
+                    trackAction('sync-realized-pnl', 'Investments');
+                    triggerPageAction('Investments', 'sync-realized-pnl');
+                    setIsOpen(false);
+                },
+                icon: INVESTMENT_SUB_NAV_ITEMS.find((i) => i.name === 'Watchlist')!.icon,
+            });
         }
+        subPages.push({
+            name: 'Paste bank SMS transactions',
+            action: () => {
+                trackAction('focus-sms-tab', 'Statement Upload');
+                if (triggerPageAction) triggerPageAction('Statement Upload', 'focus-sms-tab');
+                else setActivePage('Statement Upload');
+                setIsOpen(false);
+            },
+            icon: ArrowDownTrayIcon,
+        });
         const quick: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
         if (onOpenLiveAdvisor) {
             quick.push({ name: 'Open AI Advisor', action: () => { trackAction('open-advisor', 'Dashboard'); onOpenLiveAdvisor(); setIsOpen(false); }, icon: HeadsetIcon });
@@ -163,6 +182,15 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                 action: () => {
                     trackAction('open-reconcile-balance', 'Accounts');
                     triggerPageAction('Accounts', 'open-reconcile-balance');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Accounts')!.icon,
+            });
+            quick.push({
+                name: 'Pay credit card (full balance)',
+                action: () => {
+                    trackAction('open-pay-card', 'Accounts');
+                    triggerPageAction('Accounts', 'open-pay-card');
                     setIsOpen(false);
                 },
                 icon: NAVIGATION_ITEMS.find((i) => i.name === 'Accounts')!.icon,

@@ -422,9 +422,15 @@ export async function redeemRewards(
       if (liabilityId && deps.updateLiability) {
         const liab = (deps.getData()?.liabilities ?? []).find((l) => l.id === liabilityId);
         if (liab) {
+          /**
+           * Debt liabilities are stored as negative amounts. Statement credit reduces debt magnitude
+           * (e.g. −400 + 50 → −350). Math.max(0, amount − fiat) zeroed negative balances.
+           * When the credit account already received the income leg, updatePlatform also mirrors —
+           * keep this write signed-correct as a belt-and-suspenders for linked liabilities.
+           */
           await deps.updateLiability({
             ...liab,
-            amount: roundMoney(Math.max(0, (Number(liab.amount) || 0) - fiatRounded)),
+            amount: roundMoney((Number(liab.amount) || 0) + fiatRounded),
           });
         }
       }

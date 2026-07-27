@@ -31,6 +31,10 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Investments', 'open-trade-modal:from-plan')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-symbol:AAPL')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-dividend-sms')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'sync-realized-pnl')).toBe(true);
+    expect(isSupportedPageAction('Statement Upload', 'focus-sms-tab')).toBe(true);
+    expect(isSupportedPageAction('Statement Upload', 'focus-bank-tab')).toBe(true);
+    expect(isSupportedPageAction('Statement Upload', 'focus-trading-tab')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-corporate-action-wizard')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-corporate-action-wizard:from-plan')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-reconcile-quantity')).toBe(true);
@@ -38,6 +42,9 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Investments', 'open-reconcile-broker-cash:a-1')).toBe(true);
     expect(isSupportedPageAction('Accounts', 'open-reconcile-balance')).toBe(true);
     expect(isSupportedPageAction('Accounts', 'open-reconcile-balance:acc-1')).toBe(true);
+    expect(isSupportedPageAction('Accounts', 'open-pay-card')).toBe(true);
+    expect(isSupportedPageAction('Accounts', 'open-pay-card:acc-1')).toBe(true);
+    expect(isSupportedPageAction('Accounts', 'open-pay-card:acc-1:full')).toBe(true);
     expect(isSupportedPageAction('Liabilities', 'open-restate:l-1')).toBe(true);
     expect(isSupportedPageAction('Commodities', 'open-revalue:c-1')).toBe(true);
     expect(isSupportedPageAction('Assets', 'open-revalue')).toBe(true);

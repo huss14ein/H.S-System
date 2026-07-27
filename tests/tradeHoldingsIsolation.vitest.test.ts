@@ -311,6 +311,9 @@ describe('tradeHoldingsIsolation', () => {
       price: 7,
       total: 280,
     };
+    const updateHolding = vi.fn(async (h: Holding) => {
+      Object.assign(holding, h);
+    });
     const deleteHolding = vi.fn(async () => {});
 
     await rebuildHoldingsFromLedger({
@@ -318,12 +321,14 @@ describe('tradeHoldingsIsolation', () => {
       investmentTransactions: [sell],
       corporateActionEvents: [],
       symbols: ['LCID'],
-      updateHolding: async () => {},
+      updateHolding,
       addHolding: async () => {},
       deleteHolding,
     });
 
-    expect(deleteHolding).toHaveBeenCalledWith('h1');
+    expect(updateHolding).toHaveBeenCalled();
+    expect(holding.quantity).toBe(0);
+    expect(deleteHolding).not.toHaveBeenCalled();
   });
 
   it('DataContext trade path uses applyPositionDeltaForTrade + syncLotsAfterTrade (not full-book persist)', () => {
@@ -623,7 +628,7 @@ describe('tradeHoldingsIsolation', () => {
     expect(read('supabase/README_DB_MIGRATIONS.md')).toContain('20260722120000_holdings_unique_per_portfolio_symbol.sql');
   });
 
-  it('full sell deletes holding; later trade on another symbol cannot resurrect via lots sync', async () => {
+  it('full sell closes at qty 0 (row kept for realized P/L); later trade on another symbol cannot resurrect via lots sync', async () => {
     const holdings: Holding[] = [
       {
         id: 'h-nvda',
@@ -667,8 +672,8 @@ describe('tradeHoldingsIsolation', () => {
       addHolding,
       deleteHolding,
     });
-    expect(holdings.find((h) => h.symbol === 'NVDA')).toBeUndefined();
-    expect(deleteHolding).toHaveBeenCalledWith('h-nvda');
+    expect(holdings.find((h) => h.symbol === 'NVDA')?.quantity).toBe(0);
+    expect(deleteHolding).not.toHaveBeenCalled();
 
     await applyPositionDeltaForTrade({
       portfolioId: 'pf1',
@@ -681,7 +686,7 @@ describe('tradeHoldingsIsolation', () => {
       addHolding,
       deleteHolding,
     });
-    expect(holdings.find((h) => h.symbol === 'NVDA')).toBeUndefined();
+    expect(holdings.find((h) => h.symbol === 'NVDA')?.quantity).toBe(0);
     expect(holdings.find((h) => h.symbol === 'MSFT')?.quantity).toBe(6);
     expect(addHolding).not.toHaveBeenCalled();
   });
@@ -743,7 +748,7 @@ describe('tradeHoldingsIsolation', () => {
     const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
     expect(panel).toContain('Rebuild this symbol');
     expect(panel).toContain('Keep stored');
-    expect(panel).toContain('acknowledgeHoldingsIntegrity');
+    expect(panel).toContain('acknowledgeHoldingsIntegrityDurable');
     expect(panel).toContain('listMissingLedgerHoldingsAcrossPortfolios');
     expect(panel).toContain('Restore holding');
     expect(panel).toContain('rebuildHoldingsFromLedgerForSymbols');

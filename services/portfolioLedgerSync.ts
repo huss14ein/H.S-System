@@ -14,6 +14,7 @@ import {
 } from './corporateActionApply';
 import { investmentCostLotToRow } from './investmentCostLotDb';
 import { rebuildCostLotsFromEvents } from './portfolioLotReplayEngine';
+import { alignPortfolioOpenLotsToHoldings } from './alignOpenLotsToHolding';
 import type { CorporateActionReplayEvent } from './portfolioReplayEngine';
 import { filterTransactionsForPortfolio } from './portfolioTransactionScope';
 import type {
@@ -24,7 +25,7 @@ import type {
   InvestmentTransaction,
 } from '../types';
 import { formatUnknownError } from '../utils/formatUnknownError';
-import { roundAvgCostPerUnit, roundQuantity } from '../utils/money';
+import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 
 export type SyncPortfolioLedgerArgs = {
   portfolio: InvestmentPortfolio;
@@ -102,22 +103,44 @@ export async function syncLotsAfterTrade(args: {
     accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
   });
 
+  /**
+   * FIFO open lots must respect sold / reconciled-down quantity on the holdings book.
+   * Rebuild alone only sees ledger sells; qty-down reconcile and partial scoping gaps leave
+   * excess open lots — consume that excess FIFO so "Qty remaining" matches the position.
+   */
+  const holdingsForAlign =
+    touched.size > 0
+      ? (args.portfolio.holdings ?? []).filter((h) => touched.has(String(h.symbol ?? '').toUpperCase()))
+      : (args.portfolio.holdings ?? []);
+  /** Prefer live resolveHolding qty/avgCost after position delta. */
+  const holdingsSnap = holdingsForAlign.map((h) => {
+    const upper = String(h.symbol ?? '').toUpperCase();
+    const live = args.resolveHolding(upper);
+    return live ?? h;
+  });
+  const aligned = alignPortfolioOpenLotsToHoldings({
+    lots: lotResult.lots,
+    holdings: holdingsSnap,
+    matchBookCost: false,
+  });
+  const lotsToPersist = aligned.lots;
+
   for (const [sym, pnl] of lotResult.realizedPnLBySymbol) {
     const upper = String(sym).toUpperCase();
     if (touched.size > 0 && !touched.has(upper)) continue;
     const h = args.resolveHolding(upper);
     if (!h?.id) continue;
     if (Math.abs(pnl - (h.realizedPnL ?? 0)) <= 0.01) continue;
-    /** Realized PnL only — never rewrite quantity / avgCost from lots. */
+    /** Realized PnL only — never rewrite quantity / avgCost from lots (incl. qty-0 closed rows). */
     await args.updateHolding({
       ...h,
-      realizedPnL: pnl,
+      realizedPnL: roundMoney(pnl),
     });
   }
 
   if (args.supabase && args.userId) {
     try {
-      await persistInvestmentCostLotsForPortfolio(args.supabase, args.userId, portfolioId, lotResult.lots);
+      await persistInvestmentCostLotsForPortfolio(args.supabase, args.userId, portfolioId, lotsToPersist);
     } catch (lotErr) {
       console.warn(
         'Cost lot persist failed after trade (position kept):',
@@ -126,8 +149,8 @@ export async function syncLotsAfterTrade(args: {
     }
   }
 
-  args.onLotsUpdated?.(lotResult.lots);
-  return { lots: lotResult.lots, realizedPnLBySymbol: lotResult.realizedPnLBySymbol };
+  args.onLotsUpdated?.(lotsToPersist);
+  return { lots: lotsToPersist, realizedPnLBySymbol: lotResult.realizedPnLBySymbol };
 }
 
 /**
@@ -238,15 +261,24 @@ export async function syncPortfolioLedgerAfterChange(
     const upper = String(sym).toUpperCase();
     if (!scopedSymbols.includes(upper)) continue;
     const pos = replayed.get(upper);
-    if (!pos || pos.quantity < 1e-9) continue;
     const h = args.portfolio.holdings.find((x) => String(x.symbol ?? '').toUpperCase() === upper);
     if (!h?.id) continue;
-    if (Math.abs(pnl - (h.realizedPnL ?? 0)) <= 0.01) continue;
+    if (Math.abs(pnl - (h.realizedPnL ?? 0)) <= 0.01 && (!pos || Math.abs((h.quantity ?? 0) - pos.quantity) <= 1e-9)) {
+      continue;
+    }
+    const openQty = pos && pos.quantity >= 1e-9;
     await args.updateHolding({
       ...h,
-      quantity: roundQuantity(pos.quantity),
-      avgCost: roundAvgCostPerUnit(pos.avgCost),
-      realizedPnL: pnl,
+      ...(openQty
+        ? {
+            quantity: roundQuantity(pos!.quantity),
+            avgCost: roundAvgCostPerUnit(pos!.avgCost),
+          }
+        : {
+            quantity: 0,
+            currentValue: 0,
+          }),
+      realizedPnL: roundMoney(pnl),
     });
   }
 
@@ -263,6 +295,79 @@ export async function syncPortfolioLedgerAfterChange(
 
   args.onLotsUpdated?.(lotResult.lots);
   return { lots: lotResult.lots, realizedPnLBySymbol: lotResult.realizedPnLBySymbol };
+}
+
+/**
+ * Repair persisted realized P/L on holdings from portfolio-scoped ledger + FIFO lots.
+ * Creates qty-0 stub rows for fully exited symbols that still have sell P/L in the ledger.
+ */
+export async function backfillRealizedPnLForPortfolio(args: {
+  portfolio: InvestmentPortfolio;
+  investmentTransactions: InvestmentTransaction[];
+  corporateActionEvents: CorporateActionEvent[];
+  updateHolding: (h: Holding) => Promise<void>;
+  addHolding?: (h: Holding & { portfolio_id?: string }) => Promise<void>;
+  resolveHolding?: (symbolUpper: string) => Holding | undefined;
+  supabase?: SupabaseClient | null;
+  userId?: string;
+  onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
+}): Promise<{ patchedSymbols: number; lots: InvestmentCostLot[] }> {
+  const portfolioId = args.portfolio.id;
+  const scopedTxs = filterTransactionsForPortfolio(portfolioId, args.investmentTransactions);
+  const caReplay = corporateEventsToReplay(args.corporateActionEvents, portfolioId);
+  const bookCurrency: 'SAR' | 'USD' = args.portfolio.currency === 'USD' ? 'USD' : 'SAR';
+  const lotResult = await rebuildCostLotsFromEvents({
+    portfolioId,
+    transactions: scopedTxs,
+    corporateActions: caReplay,
+    bookCurrency,
+    holdingSymbols: args.portfolio.holdings?.map((h) => String(h.symbol ?? '')),
+    accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+  });
+
+  const resolve =
+    args.resolveHolding ??
+    ((sym: string) => args.portfolio.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym));
+
+  let patchedSymbols = 0;
+  for (const [sym, pnl] of lotResult.realizedPnLBySymbol) {
+    const upper = String(sym).toUpperCase();
+    if (!Number.isFinite(pnl) || Math.abs(pnl) < 0.01) continue;
+    const rounded = roundMoney(pnl);
+    let h = resolve(upper);
+    if (!h?.id && args.addHolding) {
+      await args.addHolding({
+        symbol: upper,
+        name: upper,
+        quantity: 0,
+        avgCost: 0,
+        currentValue: 0,
+        realizedPnL: rounded,
+        zakahClass: 'Zakatable',
+        assetClass: 'Stock',
+        portfolio_id: portfolioId,
+      } as Holding & { portfolio_id?: string });
+      patchedSymbols += 1;
+      continue;
+    }
+    if (!h?.id) continue;
+    if (Math.abs(rounded - (h.realizedPnL ?? 0)) <= 0.01) continue;
+    await args.updateHolding({ ...h, realizedPnL: rounded });
+    patchedSymbols += 1;
+  }
+
+  if (args.supabase && args.userId) {
+    try {
+      await persistInvestmentCostLotsForPortfolio(args.supabase, args.userId, portfolioId, lotResult.lots);
+    } catch (lotErr) {
+      console.warn(
+        'Cost lot persist failed during realized P/L backfill:',
+        formatUnknownError(lotErr, 'Unknown lot persist error.'),
+      );
+    }
+  }
+  args.onLotsUpdated?.(lotResult.lots);
+  return { patchedSymbols, lots: lotResult.lots };
 }
 
 export async function persistInvestmentCostLotsForPortfolio(

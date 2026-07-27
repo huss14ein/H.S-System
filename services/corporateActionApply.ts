@@ -473,8 +473,18 @@ export async function persistHoldingsFromReplayMap(args: {
     const qty = r ? Math.max(0, Number(r.quantity) || 0) : 0;
 
     if (qty < 1e-9) {
-      for (const h of rows) {
-        if (h.id) await args.deleteHolding(h.id);
+      const keep = [...rows].sort((a, b) => String(b.id ?? '').localeCompare(String(a.id ?? '')))[0];
+      for (const extra of rows) {
+        if (extra.id && extra.id !== keep?.id) await args.deleteHolding(extra.id);
+      }
+      if (keep?.id) {
+        /** Keep closed row (qty 0) so realized P/L on the holdings book is not wiped by ledger repair. */
+        await args.updateHolding({
+          ...keep,
+          quantity: 0,
+          currentValue: 0,
+          avgCost: roundAvgCostPerUnit(Number(keep.avgCost) || 0),
+        });
       }
       continue;
     }

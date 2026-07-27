@@ -29,7 +29,8 @@ export type ApplyPositionDeltaForTradeArgs = {
 };
 
 export type ApplyPositionDeltaForTradeResult = {
-  action: 'create' | 'update' | 'delete';
+  /** Full exit keeps the holdings row at qty 0 so realized P/L can persist. */
+  action: 'create' | 'update' | 'close';
   positionDelta: number;
 };
 
@@ -82,8 +83,14 @@ export async function applyPositionDeltaForTrade(
 
   if (computed.action === 'delete') {
     if (!args.existingHolding?.id) throw new Error('Cannot close holding without an id.');
-    await args.deleteHolding(args.existingHolding.id);
-    return { action: 'delete', positionDelta };
+    /** Keep row at qty 0 — syncLotsAfterTrade patches realizedPnL on this row. */
+    await args.updateHolding({
+      ...args.existingHolding,
+      quantity: 0,
+      avgCost: computed.avgCost,
+      currentValue: 0,
+    });
+    return { action: 'close', positionDelta };
   }
 
   if (!args.existingHolding?.id) throw new Error('Cannot update holding without an id.');

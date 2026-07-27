@@ -1733,7 +1733,8 @@ const HoldingDetailModal: React.FC<{
     onRecordSell?: () => void;
     onCorporateAction?: () => void;
     onReconcileQuantity?: () => void;
-}> = ({ isOpen, onClose, holding, portfolio, onRecordSell, onCorporateAction, onReconcileQuantity }) => {
+    onAlignLotsToBook?: () => void | Promise<void>;
+}> = ({ isOpen, onClose, holding, portfolio, onRecordSell, onCorporateAction, onReconcileQuantity, onAlignLotsToBook }) => {
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const sarPerUsd = useCanonicalSpotFx();
@@ -1891,6 +1892,8 @@ const HoldingDetailModal: React.FC<{
     const totalCost = (holding.avgCost ?? 0) * holding.quantity;
     const totalCostDisplay = convertFromPortfolioToHolding(totalCost);
     const gainLossDisplay = convertFromPortfolioToHolding(holding.gainLoss);
+    const realizedPnLStored = Number((holding as Holding).realizedPnL ?? 0);
+    const realizedPnLDisplay = convertFromPortfolioToHolding(realizedPnLStored);
     const toCurrency = (value: number, to: TradeCurrency) => convertBetweenTradeCurrencies(value, holdingCurrency, to, sarPerUsd);
     const formatSAR = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'SAR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     const formatUSD = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
@@ -1968,10 +1971,25 @@ const HoldingDetailModal: React.FC<{
                         <p className={`share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(gainLossDisplay)}>{fmtColor(gainLossDisplay)}</p>
                         <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(totalCostDisplay)}>on cost {fmt(totalCostDisplay)}</p>
                     </div>
+                    {Math.abs(realizedPnLStored) > 0.01 ? (
+                        <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
+                            <p className="share-detail-metric-label w-full text-xs font-semibold text-violet-700 uppercase tracking-wide">Realized G/L</p>
+                            <p className={`share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight ${realizedPnLStored >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(realizedPnLDisplay)}>
+                                {fmtColor(realizedPnLDisplay)}
+                            </p>
+                            <p className="share-detail-metric-value w-full text-xs text-violet-700/80 mt-0.5">From sells (FIFO, stored on holding)</p>
+                        </div>
+                    ) : null}
                 </div>
 
                 {portfolio?.id && holding.symbol ? (
-                    <HoldingLotsPanel symbol={holding.symbol} portfolioId={portfolio.id} />
+                    <HoldingLotsPanel
+                        symbol={holding.symbol}
+                        portfolioId={portfolio.id}
+                        holdingQty={holding.quantity}
+                        holdingAvgCost={holding.avgCost}
+                        onAlignLotsToBook={onAlignLotsToBook}
+                    />
                 ) : null}
 
                 {/* Converted value — SAR when portfolio is USD, USD when portfolio is SAR (hint/side) */}
@@ -2214,7 +2232,7 @@ const HoldingDetailModal: React.FC<{
                                 onClick={onReconcileQuantity}
                                 className="px-4 py-2 text-sm font-semibold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors"
                             >
-                                Reconcile quantity…
+                                Reconcile quantity / avg cost…
                             </button>
                         )}
                         {onCorporateAction && (
@@ -2357,15 +2375,15 @@ const HoldingEditModal: React.FC<{
                 {onReconcileQuantity && (
                     <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-xs text-emerald-900">
-                            Quantity is derived from your trade ledger. To match a broker share count, post an audited
-                            adjustment instead of editing the number here.
+                            Quantity and average cost come from your trade ledger / WAC book. To match a broker
+                            statement, post an audited holding reconcile (qty and/or avg cost).
                         </p>
                         <button
                             type="button"
                             onClick={onReconcileQuantity}
                             className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 text-emerald-800 hover:bg-emerald-100"
                         >
-                            Reconcile quantity…
+                            Reconcile quantity / avg cost…
                         </button>
                     </div>
                 )}
@@ -2831,6 +2849,7 @@ const PlatformCardInner: React.FC<{
     /** Position values from {@link effectiveHoldingValueInBookCurrency} — matches `computePlatformCardMetrics` / portfolio KPIs. */
     const holdingsWithGains = (holdings: Holding[], bookCurrency: TradeCurrency) =>
         holdings
+            .filter((h) => Number(h.quantity ?? 0) > 1e-9)
             .map((h) => {
                 const qty = Number(h.quantity ?? 0);
                 const totalCost = (h.avgCost ?? 0) * qty;
@@ -3178,6 +3197,13 @@ const PlatformCardInner: React.FC<{
                     const portfolioOpen = portfolioExpanded[portfolio.id] === true;
                     const portfolioCurrency = resolveInvestmentPortfolioCurrency(portfolio);
                     const portfolioHoldings = holdingsWithGains(portfolio.holdings || [], portfolioCurrency);
+                    const closedHoldingsRealized = (portfolio.holdings || [])
+                        .filter(
+                            (h) =>
+                                Number(h.quantity ?? 0) <= 1e-9 &&
+                                Math.abs(Number(h.realizedPnL ?? 0)) > 0.01,
+                        )
+                        .sort((a, b) => String(a.symbol ?? '').localeCompare(String(b.symbol ?? '')));
                     const portfolioValue = portfolioHoldings.reduce((sum, h) => sum + h.currentValue, 0);
                     const pk = portfolioKpiBundle?.metricsByPortfolioId.get(portfolio.id);
                     const periodPnL = portfolioPeriodPnLById.get(portfolio.id);
@@ -3593,6 +3619,31 @@ const PlatformCardInner: React.FC<{
                                                 })}
                                             </tbody>
                                         </table>
+                                        {closedHoldingsRealized.length > 0 ? (
+                                            <div className="px-4 sm:px-5 py-3 border-t border-slate-100 bg-slate-50/50">
+                                                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                                                    Closed positions — realized P/L (FIFO)
+                                                </p>
+                                                <ul className="space-y-1.5">
+                                                    {closedHoldingsRealized.map((h) => (
+                                                        <li
+                                                            key={h.id}
+                                                            className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                                                        >
+                                                            <span className="font-medium text-slate-700">{h.symbol}</span>
+                                                            <CurrencyDualDisplay
+                                                                value={Number(h.realizedPnL ?? 0)}
+                                                                inCurrency={portfolioCurrency}
+                                                                digits={0}
+                                                                size="base"
+                                                                weight="bold"
+                                                                colorize
+                                                            />
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        ) : null}
                                     </>
                                 )}
                             </div>
@@ -5499,7 +5550,7 @@ interface InvestmentsProps {
 }
 
 const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPageAction, setActivePage, triggerPageAction }) => {
-  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, applyCorporateActionEvent, reverseCorporateActionEvent, applyReconciliationAdjustment } = useContext(DataContext)!;
+  const { data, addPlatform, updatePlatform, deletePlatform, recordTrade, addPortfolio, updatePortfolio, deletePortfolio, updateHolding, applyCorporateActionEvent, reverseCorporateActionEvent, applyReconciliationAdjustment, backfillRealizedPnLForAllPortfolios } = useContext(DataContext)!;
   const auth = useContext(AuthContext);
   const canReconcile = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
   const recordTradeConfirmed = useCallback(
@@ -5688,6 +5739,10 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         // DividendTrackerView scrolls to the SMS panel and clears the action.
         return;
     }
+    if (pageAction === 'sync-realized-pnl') {
+        void backfillRealizedPnLForAllPortfolios();
+        return scheduleClearPageAction(clearPageAction);
+    }
     if (pageAction.startsWith('open-corporate-action-wizard')) {
         setActiveTab('Overview');
         let plan = pageAction === 'open-corporate-action-wizard:from-plan' ? readCorporateActionWizardPlan() : null;
@@ -5784,7 +5839,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       toast('Open a platform’s transaction history and use Edit on the buy/sell or cash row to correct.', 'info');
       return scheduleClearPageAction(clearPageAction);
     }
-  }, [pageAction, clearPageAction, data, setActiveTab, triggerPageAction, canReconcile]);
+  }, [pageAction, clearPageAction, data, setActiveTab, triggerPageAction, canReconcile, backfillRealizedPnLForAllPortfolios]);
 
   const investmentAccounts = useMemo(
     () => getPersonalAccounts(data).filter((acc) => acc.type === 'Investment'),
@@ -6157,6 +6212,16 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             </p>
         )}
 
+        <div className="flex flex-wrap items-center justify-end gap-2 mb-3">
+          <button
+            type="button"
+            className="text-xs font-semibold text-emerald-800 underline underline-offset-2 hover:text-emerald-900"
+            onClick={() => void backfillRealizedPnLForAllPortfolios()}
+          >
+            Sync realized P/L from ledger
+          </button>
+        </div>
+
         <HoldingsQtyIntegrityPanel
           compact
           onReconcileQuantity={
@@ -6166,6 +6231,38 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                     .flatMap((p) => p.holdings ?? [])
                     .find((h) => h.id === holdingId);
                   if (holding) setReconcileQtyHolding(holding);
+                }
+              : undefined
+          }
+          onAlignLotsToBook={
+            canReconcile
+              ? async ({ holdingId }) => {
+                  const holding = getPersonalInvestments(data ?? ({} as any))
+                    .flatMap((p) => p.holdings ?? [])
+                    .find((h) => h.id === holdingId);
+                  if (!holding) {
+                    toast('Holding not found for align.', 'error');
+                    return;
+                  }
+                  const qty = Number(holding.quantity) || 0;
+                  const avg = Number(holding.avgCost) || 0;
+                  const result = await applyReconciliationAdjustment({
+                    mechanism: 'reconcile_quantity',
+                    entityType: 'holding',
+                    entityId: holding.id,
+                    actualValue: qty,
+                    targetBookCost: qty * avg,
+                    alignLotCostsToBook: true,
+                    reason: 'Align open lots to holding book (trim sold qty + match WAC cost)',
+                  });
+                  if (!result.ok) {
+                    toast(result.error || 'Align lots failed', 'error');
+                    return;
+                  }
+                  toast(
+                    result.noop ? 'Open lots already match the book.' : 'Open lots aligned to book.',
+                    result.noop ? 'info' : 'success',
+                  );
                 }
               : undefined
           }
@@ -6284,6 +6381,26 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                     }
                   : undefined
           }
+          onAlignLotsToBook={
+              canReconcile && selectedHolding
+                  ? async () => {
+                        const h = selectedHolding;
+                        const qty = Number(h.quantity) || 0;
+                        const avg = Number(h.avgCost) || 0;
+                        const result = await applyReconciliationAdjustment({
+                            mechanism: 'reconcile_quantity',
+                            entityType: 'holding',
+                            entityId: h.id,
+                            actualValue: qty,
+                            targetBookCost: qty * avg,
+                            alignLotCostsToBook: true,
+                            reason: 'Align open lots to holding book (trim sold qty + match WAC cost)',
+                        });
+                        if (!result.ok) throw new Error(result.error || 'Align lots failed');
+                        toast(result.noop ? 'Open lots already match the book.' : 'Open lots aligned to book.', result.noop ? 'info' : 'success');
+                    }
+                  : undefined
+          }
           onCorporateAction={
               selectedHolding && selectedPortfolio
                   ? () => {
@@ -6328,17 +6445,37 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         holdingId={reconcileQtyHolding?.id ?? ''}
         symbol={reconcileQtyHolding?.symbol ?? ''}
         beforeQty={Number(reconcileQtyHolding?.quantity ?? 0)}
-        onApply={async ({ holdingId, actualQty, costBasisTotal, reason }) => {
+        beforeAvgCost={Number(reconcileQtyHolding?.avgCost ?? 0)}
+        bookCurrency={
+          (() => {
+            const pf = (data?.investments ?? []).find((p) =>
+              (p.holdings ?? []).some((h) => h.id === reconcileQtyHolding?.id),
+            );
+            return pf?.currency === 'SAR' ? 'SAR' : 'USD';
+          })()
+        }
+        onApply={async ({
+          holdingId,
+          actualQty,
+          costBasisTotal,
+          targetAvgCost,
+          targetBookCost,
+          alignLotCostsToBook,
+          reason,
+        }) => {
           const result = await applyReconciliationAdjustment({
             mechanism: 'reconcile_quantity',
             entityType: 'holding',
             entityId: holdingId,
             actualValue: actualQty,
             costBasisTotal,
+            targetAvgCost,
+            targetBookCost,
+            alignLotCostsToBook,
             reason,
           });
-          if (!result.ok) throw new Error(result.error || 'Quantity reconcile failed');
-          toast('Holding quantity reconciled.', 'success');
+          if (!result.ok) throw new Error(result.error || 'Holding reconcile failed');
+          toast(result.noop ? 'Holding already matches.' : 'Holding reconciled.', result.noop ? 'info' : 'success');
         }}
       />
       <ReconcileBalanceModal

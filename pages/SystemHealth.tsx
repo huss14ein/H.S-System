@@ -7,8 +7,10 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import AIAdvisor from '../components/AIAdvisor';
 import { getMarketStatus, getMarketHolidays, finnhubFetch, resolveQuotePrice, type MarketStatusItem, type MarketHoliday } from '../services/finnhubService';
+import { AuthContext } from '../context/AuthContext';
 import { DataContext } from '../context/DataContext';
 import { MarketDataContext } from '../context/MarketDataContext';
+import { toast } from '../context/ToastContext';
 import {
   computeHeadlinePersonalInvestmentRoiDecimal,
   computePersonalInvestmentKpiBreakdown,
@@ -24,6 +26,16 @@ import { XCircleIcon } from '../components/icons/XCircleIcon';
 import { CloudIcon } from '../components/icons/CloudIcon';
 import { LightBulbIcon } from '../components/icons/LightBulbIcon';
 import { reconcileCashAccountBalance, reconcileCreditAccountBalance, buildFinancialIntegrityReport } from '../services/dataQuality';
+import {
+  filterUnackedCashDriftWarnings,
+  isInvestmentCashLedgerDriftAcked,
+  resolveCashBalanceDriftAcks,
+  resolveHoldingsIntegrityAcks,
+  acknowledgeCashBalanceDriftDurable,
+  acknowledgeInvestmentCashLedgerDriftDurable,
+  mergeUiAcks,
+} from '../services/uiAcks';
+import { filterUnackedDriftRows } from '../services/holdingsIntegrityAck';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldingsWithCorporateActionsSync, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import { buildHoldingsDividendReconciliationReport } from '../services/holdingsDividendReconciliation';
@@ -226,6 +238,7 @@ const SystemHealth: React.FC<{
   const [nextRefreshIn, setNextRefreshIn] = useState(AUTO_REFRESH_SECONDS);
   const [incidents, setIncidents] = useState<HealthIncident[]>([]);
   const appDataCtx = useContext(DataContext);
+  const auth = useContext(AuthContext);
   const marketDataCtx = useContext(MarketDataContext);
   const { exchangeRate } = useCurrency();
   const [quoteCooldownSec, setQuoteCooldownSec] = useState<number>(0);
@@ -499,7 +512,8 @@ const SystemHealth: React.FC<{
       transactions: transactions.map((t) => ({ accountId: t.accountId, goalId: (t as any).goalId })),
     });
 
-    const cashExceptions = accounts
+    const cashDriftAcks = resolveCashBalanceDriftAcks(auth?.user?.id ?? null, financialData.settings);
+    const cashExceptionsRaw = accounts
       .filter((a) => a.type === 'Checking' || a.type === 'Savings')
       .map((a) => {
         const r = reconcileCashAccountBalance(a as Account, transactions);
@@ -509,13 +523,16 @@ const SystemHealth: React.FC<{
           accountId: r.accountId,
           drift: r.drift,
           showWarning: r.showWarning,
+          storedBalance: r.storedBalance,
+          transactionNet: r.transactionNet,
           bookCurrency,
           accountLabel: a.name?.trim() || r.accountId,
         };
       })
       .filter((x): x is NonNullable<typeof x> => x != null);
+    const cashExceptions = filterUnackedCashDriftWarnings(cashExceptionsRaw, cashDriftAcks);
 
-    const creditExceptions = accounts
+    const creditExceptionsRaw = accounts
       .filter((a) => a.type === 'Credit')
       .map((a) => {
         const r = reconcileCreditAccountBalance(a as Account, transactions);
@@ -525,11 +542,14 @@ const SystemHealth: React.FC<{
           accountId: r.accountId,
           drift: r.drift,
           showWarning: r.showWarning,
+          storedBalance: r.storedBalance,
+          transactionNet: r.transactionNet,
           bookCurrency,
           accountLabel: a.name?.trim() || r.accountId,
         };
       })
       .filter((x): x is NonNullable<typeof x> => x != null);
+    const creditExceptions = filterUnackedCashDriftWarnings(creditExceptionsRaw, cashDriftAcks);
 
     /** Same attribution as `computePersonalInvestmentKpiBreakdown` (includes portfolio-linked rows). */
     const investmentTxs = getPersonalInvestmentTransactionsForKpis(financialData);
@@ -633,13 +653,21 @@ const SystemHealth: React.FC<{
       };
     })();
 
+    const holdingsAcks = resolveHoldingsIntegrityAcks(auth?.user?.id ?? null, financialData.settings);
     const portfolios = getPersonalInvestments(financialData);
     const corporateActionEvents = financialData.corporateActionEvents ?? [];
-    const holdingExceptions: { symbol: string; drift: number }[] = [];
+    const holdingExceptionsRaw: {
+      portfolioId: string;
+      symbol: string;
+      storedQuantity: number;
+      drift: number;
+      label: string;
+    }[] = [];
     for (const portfolio of portfolios) {
       for (const h of portfolio.holdings ?? []) {
         const sym = String(h.symbol ?? '').toUpperCase();
         if (!sym) continue;
+        const storedQuantity = Number(h.quantity) || 0;
         const rec = reconcileHoldingsWithCorporateActionsSync({
           portfolio,
           symbol: sym,
@@ -647,13 +675,21 @@ const SystemHealth: React.FC<{
           corporateActionEvents,
         });
         if (!rec.ok) {
-          holdingExceptions.push({
-            symbol: portfolios.length > 1 ? `${sym} (${portfolio.name ?? portfolio.id})` : sym,
+          holdingExceptionsRaw.push({
+            portfolioId: portfolio.id,
+            symbol: sym,
+            storedQuantity,
             drift: rec.drift,
+            label: portfolios.length > 1 ? `${sym} (${portfolio.name ?? portfolio.id})` : sym,
           });
         }
       }
     }
+    const holdingExceptionsUnacked = filterUnackedDriftRows(holdingExceptionsRaw, holdingsAcks);
+    const holdingExceptions = holdingExceptionsUnacked.map((r) => ({
+      symbol: r.label,
+      drift: r.drift,
+    }));
 
     const reconciliation = reconciliationExceptionReport({
       cashExceptions: [...cashExceptions, ...creditExceptions],
@@ -674,6 +710,7 @@ const SystemHealth: React.FC<{
 
     // Populate the in-memory exception queue so other UI can consume it later.
     clearExceptionQueue();
+    const invCashAck = financialData.settings?.uiAcks?.investmentCashLedgerDrift;
     const combined = [
       ...(integrity.exceptions ?? []),
       ...(brokenRefs ?? []),
@@ -686,13 +723,17 @@ const SystemHealth: React.FC<{
       })),
     ];
     if (investmentKpiReconciliation) {
-      if (Math.abs(investmentKpiReconciliation.cashLedgerDriftSar) > 50) {
+      const kpiDrift = investmentKpiReconciliation.cashLedgerDriftSar;
+      if (
+        Math.abs(kpiDrift) > 50 &&
+        !isInvestmentCashLedgerDriftAcked(invCashAck, kpiDrift)
+      ) {
         combined.push({
           code: 'RECONCILE_INVESTMENT_CASH_LEDGER',
-          message: `Investment cash drift: ${investmentKpiReconciliation.cashLedgerDriftSar.toFixed(2)} SAR (broker cash vs ledger flows)`,
+          message: `Investment cash drift: ${kpiDrift.toFixed(2)} SAR (broker cash vs ledger flows)`,
           entity: 'investment',
           entityId: 'cash-ledger',
-          severity: Math.abs(investmentKpiReconciliation.cashLedgerDriftSar) > 500 ? 'error' : 'warning',
+          severity: Math.abs(kpiDrift) > 500 ? 'error' : 'warning',
         } as any);
       }
       if (investmentKpiReconciliation.totalGainLossSar < 0) {
@@ -717,8 +758,45 @@ const SystemHealth: React.FC<{
     combined.forEach((ex: any) => pushException(ex));
     const queue = getExceptionQueue();
 
-    const holdingsDividendReport = buildHoldingsDividendReconciliationReport(financialData);
+    const holdingsDividendReportRaw = buildHoldingsDividendReconciliationReport(financialData);
+    const holdingsDividendRows = holdingsDividendReportRaw.rows.filter((r) => {
+      if (r.category !== 'holdings_qty' || !r.portfolioId) return true;
+      return filterUnackedDriftRows(
+        [{ portfolioId: r.portfolioId, symbol: r.symbol, storedQuantity: Number(r.actual) || 0 }],
+        holdingsAcks,
+      ).length > 0;
+    });
+    const holdingsMismatchCount = holdingsDividendRows.filter((r) => r.category === 'holdings_qty').length;
+    const dividendMismatchCount = holdingsDividendRows.filter((r) => r.category === 'dividend_cash').length;
+    const holdingsDividendReport = {
+      ...holdingsDividendReportRaw,
+      rows: holdingsDividendRows,
+      holdingsMismatchCount,
+      dividendMismatchCount,
+      isClean: holdingsMismatchCount === 0 && dividendMismatchCount === 0,
+    };
     const holdingsValueOutliers = findHoldingsValueOutliers(financialData);
+
+    const ackedAccountIds = new Set([
+      ...cashExceptionsRaw.filter((r) => !cashExceptions.some((u) => u.accountId === r.accountId)).map((r) => r.accountId),
+      ...creditExceptionsRaw.filter((r) => !creditExceptions.some((u) => u.accountId === r.accountId)).map((r) => r.accountId),
+    ]);
+    const filteredIssues = ledgerReport.issues.filter(
+      (iss) =>
+        !(
+          (iss.code === 'ACCOUNT_BALANCE_DRIFT' || iss.code === 'CREDIT_CARD_MIRROR_DRIFT') &&
+          iss.accountId &&
+          ackedAccountIds.has(iss.accountId)
+        ),
+    );
+    const ledgerReportForUi =
+      ackedAccountIds.size === 0
+        ? ledgerReport
+        : {
+            ...ledgerReport,
+            issues: filteredIssues,
+            isAccurate: !filteredIssues.some((iss) => iss.severity === 'warning' || iss.severity === 'critical'),
+          };
 
     return {
       integrityOk: integrity.ok,
@@ -733,9 +811,9 @@ const SystemHealth: React.FC<{
       holdingsValueOutliers,
       repairSuggestions,
       queue,
-      ledgerReport,
+      ledgerReport: ledgerReportForUi,
     };
-  }, [appDataCtx?.data, appDataCtx?.getAvailableCashForAccount, exchangeRate, liveQuoteMap]);
+  }, [appDataCtx?.data, appDataCtx?.getAvailableCashForAccount, exchangeRate, liveQuoteMap, auth?.user?.id]);
 
   const sarPerUsdHealth = useMemo(
     () => resolveSarPerUsd(appDataCtx?.data ?? null, exchangeRate),
@@ -1119,6 +1197,90 @@ const SystemHealth: React.FC<{
                   Credit-account drift warnings: {integritySummary.creditExceptions.length}.
                 </p>
               )}
+              {((integritySummary.cashExceptions?.length ?? 0) > 0 ||
+                (integritySummary.creditExceptions?.length ?? 0) > 0) &&
+                appDataCtx?.updateSettings && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs font-semibold text-slate-600">Dismiss balance drift (Keep stored)</p>
+                    {[...(integritySummary.cashExceptions ?? []), ...(integritySummary.creditExceptions ?? [])].map(
+                      (row) => (
+                        <div
+                          key={row.accountId}
+                          className="flex flex-wrap items-center justify-between gap-2 text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                        >
+                          <span>
+                            {row.accountLabel}: drift {row.drift.toFixed(2)} {row.bookCurrency}
+                          </span>
+                          <button
+                            type="button"
+                            className="text-xs px-2 py-1 rounded border border-slate-400 hover:bg-slate-50"
+                            onClick={() => {
+                              void (async () => {
+                                try {
+                                  await acknowledgeCashBalanceDriftDurable({
+                                    userId: auth?.user?.id,
+                                    accountId: row.accountId,
+                                    storedBalance: row.storedBalance,
+                                    transactionNet: row.transactionNet,
+                                    currentUiAcks: appDataCtx.data?.settings?.uiAcks,
+                                    persistUiAcks: async (partial) => {
+                                      await appDataCtx.updateSettings({
+                                        uiAcks: mergeUiAcks(appDataCtx.data?.settings?.uiAcks, partial),
+                                      });
+                                    },
+                                  });
+                                  toast(`Kept stored balance for ${row.accountLabel}.`, 'success');
+                                } catch (err) {
+                                  toast(err instanceof Error ? err.message : 'Dismiss failed.', 'error');
+                                }
+                              })();
+                            }}
+                          >
+                            Keep stored balance
+                          </button>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
+              {integritySummary.investmentKpiReconciliation &&
+                Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) > 50 &&
+                !isInvestmentCashLedgerDriftAcked(
+                  appDataCtx?.data?.settings?.uiAcks?.investmentCashLedgerDrift,
+                  integritySummary.investmentKpiReconciliation.cashLedgerDriftSar,
+                ) &&
+                appDataCtx?.updateSettings && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm border border-amber-200 rounded-lg px-2 py-1.5 bg-amber-50/60">
+                    <span>
+                      Investment KPI cash ledger drift:{' '}
+                      {integritySummary.investmentKpiReconciliation.cashLedgerDriftSar.toFixed(2)} SAR
+                    </span>
+                    <button
+                      type="button"
+                      className="text-xs px-2 py-1 rounded border border-slate-400 bg-white hover:bg-slate-50"
+                      onClick={() => {
+                        void (async () => {
+                          try {
+                            await acknowledgeInvestmentCashLedgerDriftDurable({
+                              driftSar: integritySummary.investmentKpiReconciliation!.cashLedgerDriftSar,
+                              currentUiAcks: appDataCtx.data?.settings?.uiAcks,
+                              persistUiAcks: async (partial) => {
+                                await appDataCtx.updateSettings({
+                                  uiAcks: mergeUiAcks(appDataCtx.data?.settings?.uiAcks, partial),
+                                });
+                              },
+                            });
+                            toast('Investment cash ledger warning dismissed until drift changes.', 'success');
+                          } catch (err) {
+                            toast(err instanceof Error ? err.message : 'Dismiss failed.', 'error');
+                          }
+                        })();
+                      }}
+                    >
+                      Dismiss KPI cash drift
+                    </button>
+                  </div>
+                )}
             </div>
           </div>
 
@@ -1380,14 +1542,24 @@ const SystemHealth: React.FC<{
                     </p>
                   </div>
                   <div className={`rounded-lg border p-2 ${
-                    Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50
+                    Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50 ||
+                    isInvestmentCashLedgerDriftAcked(
+                      appDataCtx?.data?.settings?.uiAcks?.investmentCashLedgerDrift,
+                      integritySummary.investmentKpiReconciliation.cashLedgerDriftSar,
+                    )
                       ? 'border-emerald-200 bg-emerald-50/60'
                       : 'border-amber-200 bg-amber-50/60'
                   }`}>
                     <p className="font-semibold text-slate-700">Cash drift (signed broker − expected)</p>
                     <p
                       className={`tabular-nums mt-1 font-semibold ${
-                        Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50 ? 'text-emerald-800' : 'text-amber-900'
+                        Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50 ||
+                        isInvestmentCashLedgerDriftAcked(
+                          appDataCtx?.data?.settings?.uiAcks?.investmentCashLedgerDrift,
+                          integritySummary.investmentKpiReconciliation.cashLedgerDriftSar,
+                        )
+                          ? 'text-emerald-800'
+                          : 'text-amber-900'
                       }`}
                     >
                       {integritySummary.investmentKpiReconciliation.cashLedgerDriftSar.toFixed(2)} SAR
@@ -1398,7 +1570,12 @@ const SystemHealth: React.FC<{
                     <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
                       {Math.abs(integritySummary.investmentKpiReconciliation.cashLedgerDriftSar) <= 50
                         ? 'Looks consistent.'
-                        : 'Likely missing entries or wrong currency tags on investment transactions.'}
+                        : isInvestmentCashLedgerDriftAcked(
+                              appDataCtx?.data?.settings?.uiAcks?.investmentCashLedgerDrift,
+                              integritySummary.investmentKpiReconciliation.cashLedgerDriftSar,
+                            )
+                          ? 'Dismissed for this drift fingerprint — will resurface if drift changes.'
+                          : 'Likely missing entries or wrong currency tags on investment transactions.'}
                     </p>
                   </div>
                 </div>

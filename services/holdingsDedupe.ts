@@ -36,13 +36,33 @@ function qtyOf(h: Holding): number {
   return Math.max(0, Number(h.quantity) || 0);
 }
 
-function pickNewest(holdings: Holding[]): Holding {
-  return [...holdings].sort((a, b) => String(b.id).localeCompare(String(a.id)))[0]!;
+function realizedOf(h: Holding): number {
+  const n = Number(h.realizedPnL ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Prefer the row that already carries the largest |realized P/L| so closed-row PnL is not wiped. */
+function preferRealizedCarrier(candidates: Holding[]): Holding {
+  return [...candidates].sort((a, b) => {
+    const ra = Math.abs(realizedOf(a));
+    const rb = Math.abs(realizedOf(b));
+    if (Math.abs(rb - ra) > 0.01) return rb - ra;
+    return String(b.id).localeCompare(String(a.id));
+  })[0]!;
+}
+
+function mergeRealizedOntoKeep(keep: Holding, group: Holding[]): Holding {
+  const bestAbs = group.reduce((m, h) => Math.max(m, Math.abs(realizedOf(h))), 0);
+  if (bestAbs <= 0.01) return keep;
+  const donor = group.find((h) => Math.abs(realizedOf(h)) >= bestAbs - 0.01);
+  if (!donor || Math.abs(realizedOf(keep) - realizedOf(donor)) <= 0.01) return keep;
+  return { ...keep, realizedPnL: realizedOf(donor) };
 }
 
 /**
  * Resolve duplicate (portfolio, symbol) rows into one canonical holding.
  * Never sums disagreeing quantities — that inflated LCID from 500 → 1890.
+ * Transfers the best realizedPnL onto the kept row so qty-0 carriers are not lost.
  */
 export function resolveDuplicateHoldingsGroup(args: {
   holdings: Holding[];
@@ -61,7 +81,7 @@ export function resolveDuplicateHoldingsGroup(args: {
   const qtys = group.map(qtyOf);
   const allSame = qtys.every((q) => Math.abs(q - qtys[0]!) <= QTY_EPS);
   if (allSame) {
-    const keep = pickNewest(group);
+    const keep = mergeRealizedOntoKeep(preferRealizedCarrier(group), group);
     return {
       keep,
       deleteIds: group.filter((h) => h.id !== keep.id).map((h) => h.id),
@@ -74,7 +94,7 @@ export function resolveDuplicateHoldingsGroup(args: {
     String(args.symbol ?? group[0]?.symbol ?? '')
       .trim()
       .toUpperCase() || '';
-  let keep: Holding = pickNewest(group);
+  let keep: Holding = preferRealizedCarrier(group);
   if (symbol && args.transactions && args.portfolioId) {
     const ledgerNet = ledgerNetQtyForSymbol({
       portfolioId: args.portfolioId,
@@ -84,11 +104,12 @@ export function resolveDuplicateHoldingsGroup(args: {
     const exactMatches = group.filter((h) => Math.abs(qtyOf(h) - ledgerNet) <= QTY_EPS);
     if (exactMatches.length > 0) {
       // Exact ledger match only — never "nearest" (that preferred 1390 over 500 when ledger was 1890).
-      keep = pickNewest(exactMatches);
+      keep = preferRealizedCarrier(exactMatches);
     }
-    // No exact match: keep newest id; never sum disagreeing qtys.
+    // No exact match: keep realized carrier / newest; never sum disagreeing qtys.
   }
 
+  keep = mergeRealizedOntoKeep(keep, group);
   const deleteIds = group.filter((h) => h.id !== keep.id).map((h) => h.id);
   const discardedQuantities = group.filter((h) => h.id !== keep.id).map(qtyOf);
   return {

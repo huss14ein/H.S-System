@@ -320,6 +320,21 @@ describe('reconciliation wiring + live-data migration', () => {
     expect(sql).not.toContain('rebuild_investments_tables_from_scratch');
   });
 
+  it('follow-up migration makes apply/reverse RPCs schema-compatible with transactions accountId', () => {
+    const sql = read('supabase/migrations/20260727140000_fix_reconciliation_rpc_transactions_accountId.sql');
+    expect(sql).toContain('apply_reconciliation_adjustment');
+    expect(sql).toContain('reverse_reconciliation_adjustment');
+    expect(sql).toContain('information_schema.columns');
+    expect(sql).toContain('"accountId"');
+    expect(sql).toContain('account_id');
+  });
+
+  it('client falls through when RPC hits account_id column-compat error', () => {
+    const orch = read('services/reconciliation/orchestrator.ts');
+    expect(orch).toContain('account_id does not exist');
+    expect(orch).toContain(".eq('accountId', account.id)");
+  });
+
   it('DataContext exposes preview/apply/reverse and wipes reconciliation tables on reset', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('applyReconciliationAdjustment');
@@ -687,10 +702,10 @@ describe('audit surfaces + role gates + entry points', () => {
     expect(accounts).toContain('mechanism,');
   });
 
-  it('Credit-linked liability Restate mirrors absolute credit balance', () => {
+  it('Credit-linked liability Restate mirrors signed credit balance', () => {
     const orch = read('services/reconciliation/orchestrator.ts');
-    expect(orch).toContain('Math.abs(preview.actualValue)');
-    expect(orch).toContain('Math.abs(targets.actualValue)');
+    expect(orch).toContain('balance: roundMoney(preview.actualValue)');
+    expect(orch).toContain("l.type === 'Credit Card' && creditAccountId");
   });
 
   it('managed owner entities are blocked from personal reconcile', () => {
