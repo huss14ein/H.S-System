@@ -1240,7 +1240,6 @@ const RecordTradeModal: React.FC<{
             }
         }
         try {
-            setIsSubmitting(true);
             let manualCvPayload: number | undefined;
             if (type === 'buy' && showManualCurrentValueField) {
                 if (isNewHolding && manualValuation) {
@@ -1287,9 +1286,9 @@ const RecordTradeModal: React.FC<{
             });
             const confirmed = await confirmAction(confirmPayload);
             if (!confirmed) {
-                setIsSubmitting(false);
                 return;
             }
+            setIsSubmitting(true);
             await onSave({
                 ...tradePayload,
                 ...((type === 'buy' || type === 'sell') && feeAmount > 0 ? { fees: feeAmount } : {}),
@@ -1298,6 +1297,12 @@ const RecordTradeModal: React.FC<{
                 ...(useManualFund ? { holdingType: 'manual_fund' } : {}),
                 ...(manualCvPayload != null ? { manualCurrentValue: manualCvPayload } : {}),
             }, executedPlanId);
+            toast(
+                type === 'dividend'
+                    ? `Dividend recorded for ${tradePayload.symbol}.`
+                    : `${type === 'buy' ? 'Buy' : 'Sell'} recorded for ${tradePayload.symbol}.`,
+                'success',
+            );
             trackFormDefault('record-trade', 'accountId', accountId);
             trackFormDefault('record-trade', 'portfolioId', portfolioId);
             trackFormDefault('record-trade', 'type', type);

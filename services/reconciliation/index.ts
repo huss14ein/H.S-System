@@ -28,6 +28,8 @@ import {
   pendingApprovalsBlockAccount,
   isCashReconcileEligibleAccount,
   mechanismForEntity,
+  isInvestmentReconciliationCashAdjustment,
+  INVESTMENT_RECONCILIATION_NOTE_PREFIX,
 } from './cashDelta';
 import {
   insertNetWorthSnapshotRevision,
@@ -99,6 +101,8 @@ export {
   reasonHash,
   buildCashReconcileLedgerTransaction,
   buildBrokerCashReconcileInvestmentRow,
+  isInvestmentReconciliationCashAdjustment,
+  INVESTMENT_RECONCILIATION_NOTE_PREFIX,
   pendingApprovalsBlockAccount,
   isCashReconcileEligibleAccount,
   mechanismForEntity,

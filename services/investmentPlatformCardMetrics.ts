@@ -16,6 +16,7 @@ import {
 } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import { isInvestmentReconciliationCashAdjustment } from './reconciliation/cashDelta';
 import {
   getPersonalAccounts,
   getPersonalCommodityHoldings,
@@ -158,8 +159,12 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   let sellUSD = 0;
   let divSAR = 0;
   let divUSD = 0;
+  /** Economic capital only — broker-cash Reconcile Balance rows stay out of invested/withdrawn. */
   transactions
-    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
+    .filter(
+      (t) =>
+        isInvestmentTransactionType(t.type, 'deposit') && !isInvestmentReconciliationCashAdjustment(t),
+    )
     .forEach((t) => {
       const c = inferInvestmentTransactionCurrency(t, accList, invList);
       const amt = getInvestmentTransactionCashAmount(t as any);
@@ -167,7 +172,10 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       else invUSD += amt;
     });
   transactions
-    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
+    .filter(
+      (t) =>
+        isInvestmentTransactionType(t.type, 'withdrawal') && !isInvestmentReconciliationCashAdjustment(t),
+    )
     .forEach((t) => {
       const c = inferInvestmentTransactionCurrency(t, accList, invList);
       const amt = getInvestmentTransactionCashAmount(t as any);

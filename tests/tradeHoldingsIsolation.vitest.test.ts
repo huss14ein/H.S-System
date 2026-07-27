@@ -345,23 +345,27 @@ describe('tradeHoldingsIsolation', () => {
     expect(ctx).not.toContain('consolidateHoldingsBySymbol(symbolHoldingsForTrade)');
     expect(ctx).toContain('duplicateHoldingIdsForTrade');
     expect(ctx).toContain('resolveDuplicateHoldingsGroup');
-    // syncLotsAfterTrade is nested inside the buy/sell block (not after dividend).
-    const buySellBlock = ctx.slice(
-      ctx.indexOf("if (tradeData.type === 'buy' || tradeData.type === 'sell')"),
-      ctx.indexOf("if (tradeData.type === 'buy') {"),
-    );
+    const buySellStart = ctx.indexOf("if (tradeData.type === 'buy' || tradeData.type === 'sell')");
+    const buySellEnd = ctx.indexOf('Error updating holdings after trade:', buySellStart);
+    const buySellBlock = ctx.slice(buySellStart, buySellEnd);
     expect(buySellBlock).toContain('applyPositionDeltaForTrade');
     expect(buySellBlock).toContain('syncLotsAfterTrade');
+    expect(buySellBlock).toContain('Promise.all([cashWrite, positionWrite])');
+    expect(buySellBlock).toContain('Background lot sync after trade');
+    expect(buySellBlock).toContain('lotSyncChainRef');
+    expect(ctx).toContain('existingLots: (snapshot?.investmentCostLots');
+    expect(buySellBlock).not.toContain('await yieldToMain()');
     expect(buySellBlock).not.toContain('persistHoldingsFromReplayMap');
   });
 
   it('sealHoldingsBookAfterTrade bumps generation and writes hydrate cache', () => {
     const ctx = read('context/DataContext.tsx');
-    const sealStart = ctx.indexOf('const sealHoldingsBookAfterTrade = () =>');
+    const sealStart = ctx.indexOf('const sealHoldingsBookAfterTrade = ');
     expect(sealStart).toBeGreaterThan(-1);
-    const sealBody = ctx.slice(sealStart, sealStart + 350);
+    const sealBody = ctx.slice(sealStart, sealStart + 550);
     expect(sealBody).toContain('bumpHoldingsBookGeneration');
     expect(sealBody).toContain('writeWorkspaceHydrateCache');
+    expect(sealBody).toContain('defer');
     expect(ctx).toContain('Skipping stale investments hydrate');
     expect(ctx).toContain('investmentsStale ? prev.investments');
   });

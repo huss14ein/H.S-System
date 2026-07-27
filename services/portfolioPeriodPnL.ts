@@ -333,7 +333,11 @@ export function computePortfolioSnapshotValueSar(args: {
   return holdingsSar + (args.includeCash ? args.state.cashSar : 0);
 }
 
-/** Net external cash added to the portfolio in [startMs, endMs]: deposits − withdrawals (SAR). */
+/**
+ * Net external cash added to the portfolio in [startMs, endMs]: deposits − withdrawals (SAR).
+ * Includes broker-cash reconcile deposit/withdrawal rows so MTM period P/L stays coherent when
+ * end cash reflects the same balance correction (capital Invested/Withdrawn KPIs exclude those rows).
+ */
 export function computeNetExternalInvestmentFlowSarInRange(args: {
   transactions: InvestmentTransaction[];
   startMs: number;

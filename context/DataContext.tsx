@@ -956,6 +956,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const getRewardsOrchestratorDepsRef = useRef<() => RewardsOrchestratorDeps | null>(() => null);
     /** Serialize ui_acks upserts so concurrent Keep stored / Apply dismissals cannot drop sibling maps. */
     const uiAcksPersistChainRef = useRef(Promise.resolve());
+    /** Serialize background cost-lot sync so overlapping trades cannot persist stale FIFO snapshots. */
+    const lotSyncChainRef = useRef(Promise.resolve());
     /** Eagerly patch dataRef before setState so sequential awaits (recordTrade → holdings patch) see fresh state. */
     const applyFinancialDataPatch = (recipe: (prev: FinancialData) => FinancialData) => {
         const next = recipe(dataRef.current);
@@ -1005,11 +1007,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         holdingsBookGenerationRef.current += 1;
     };
     /** After buy/sell/dividend/DRIP — advance generation and persist hydrate cache so ghosts cannot return from stale cache. */
-    const sealHoldingsBookAfterTrade = () => {
+    const sealHoldingsBookAfterTrade = (opts?: { defer?: boolean }) => {
         bumpHoldingsBookGeneration();
-        if (auth?.user?.id && financialDataHasHydrated(dataRef.current)) {
-            writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
+        const write = () => {
+            if (auth?.user?.id && financialDataHasHydrated(dataRef.current)) {
+                writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
+            }
+        };
+        if (opts?.defer) {
+            void yieldToMain(0).then(write);
+            return;
         }
+        write();
     };
     /** Keep dataRef aligned after React commits — useLayoutEffect so cash reads see accounts before paint. */
     useLayoutEffect(() => {
@@ -4039,6 +4048,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ),
             corporateActionEvents: snapshot?.corporateActionEvents ?? [],
             symbols,
+            existingLots: (snapshot?.investmentCostLots ?? []).filter((l) => l.portfolioId === args.portfolioId),
             updateHolding,
             addHolding,
             deleteHolding,
@@ -4565,6 +4575,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     investmentTransactions: snap?.investmentTransactions ?? [],
                     corporateActionEvents: snap?.corporateActionEvents ?? [],
                     touchedSymbols: symbols,
+                    existingLots: (snap?.investmentCostLots ?? []).filter((l) => l.portfolioId === portfolioId),
                     resolveHolding: (sym) => {
                         const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
                         return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
@@ -4913,6 +4924,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         investmentTransactions: snap.investmentTransactions ?? [],
                         corporateActionEvents: snap.corporateActionEvents ?? [],
                         touchedSymbols: symbols,
+                        existingLots: (snap.investmentCostLots ?? []).filter((l) => l.portfolioId === portfolioId),
                         resolveHolding: (sym) => {
                             const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
                             return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
@@ -5579,9 +5591,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 ...prev,
                 investmentTransactions: [normalizedInserted, ...prev.investmentTransactions],
             }));
-            await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
-                includeTransaction: normalizedInserted,
-            });
+            /**
+             * Cash updates for buy/sell run in parallel with the position write below.
+             * Cash-only / dividend paths still update cash here before early return.
+             */
+            if (isCashFlow || tradeData.type === 'dividend') {
+                await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
+                    includeTransaction: normalizedInserted,
+                });
+            }
             recomputed = true;
             insertedInvestmentTransactionId = String(normalizedInserted.id || '');
             insertedTradeTransactions = 1;
@@ -5596,7 +5614,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         // 3. Process trade logic (skip for deposit/withdrawal / dividend — dividend only updates ledger cash)
         if (isCashFlow) {
-            sealHoldingsBookAfterTrade();
+            sealHoldingsBookAfterTrade({ defer: true });
             tradeSubmissionInFlightRef.current = false;
             return {
                 insertedInvestmentTransactionId,
@@ -5615,7 +5633,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
              */
             const dripHolding = existingHolding;
             const divId = insertedInvestmentTransactionId;
-            sealHoldingsBookAfterTrade();
+            sealHoldingsBookAfterTrade({ defer: true });
             tradeSubmissionInFlightRef.current = false;
             if (
                 dripHolding?.dividendDistribution === 'Reinvest' &&
@@ -5666,25 +5684,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     'For manual valuation, enter the current position value (e.g. Mashora balance, retirement account value).',
                 );
             }
-            const mergedTxs = newTransaction
-                ? [
-                      stampInvestmentTradeIdentity(
-                          normalizeInvestmentTransaction(newTransaction),
-                          {
-                              portfolioId: portfolio.id,
-                              currency: tradePayload.currency ?? portfolioLedgerCurrency ?? txCurrency,
-                          },
-                      ),
-                      ...(dataRef.current?.investmentTransactions ?? []).filter((t) => t.id !== newTransaction.id),
-                  ]
-                : [...(dataRef.current?.investmentTransactions ?? [])];
 
             /**
              * Position book: incremental mutation of the traded symbol only.
+             * Cash + holding writes run in parallel after the ledger insert.
              * Never run portfolio-wide persistHoldingsFromReplayMap after buy/sell.
              */
             if (tradeData.type === 'buy' || tradeData.type === 'sell') {
-                const deltaResult = await applyPositionDeltaForTrade({
+                const cashWrite = applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
+                    includeTransaction: newTransaction ?? undefined,
+                });
+                const positionWrite = applyPositionDeltaForTrade({
                     portfolioId: portfolio.id,
                     symbol: normalizedSymbol,
                     side: tradeData.type,
@@ -5701,78 +5711,94 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     addHolding,
                     deleteHolding,
                 });
+                const [, deltaResult] = await Promise.all([cashWrite, positionWrite]);
                 positionDeltaOut = deltaResult.positionDelta;
 
-                await yieldToMain();
-                const portfolioAfter = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id) ?? portfolio;
-                await syncLotsAfterTrade({
-                    portfolio: portfolioAfter,
-                    investmentTransactions: mergedTxs,
-                    corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
-                    touchedSymbols: [normalizedSymbol],
-                    resolveHolding: (sym) => {
-                        const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
-                        return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
-                    },
-                    updateHolding,
-                    supabase,
-                    userId: auth.user.id,
-                    onLotsUpdated: (updatedLots) => {
-                        applyFinancialDataPatch((prev) => ({
-                            ...prev,
-                            investmentCostLots: [
-                                ...updatedLots,
-                                ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolio.id),
-                            ],
-                        }));
-                    },
-                });
-            }
-            if (tradeData.type === 'buy') {
-                const snap = dataRef.current;
-                const pf = (snap?.investments ?? []).find((p) => p.id === portfolio.id);
-                let holdingAfter = pf?.holdings.find(
-                    (h) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol,
-                );
-                if (!holdingAfter && supabase && auth?.user) {
-                    const { data: holdingRow, error: holdingReadError } = await supabase
-                        .from('holdings')
-                        .select('*')
-                        .eq('user_id', auth.user.id)
-                        .eq('portfolio_id', portfolio.id)
-                        .ilike('symbol', normalizedSymbol)
-                        .maybeSingle();
-                    if (holdingReadError) throw new Error(formatDbError(holdingReadError));
-                    if (holdingRow) holdingAfter = normalizeHoldingFromRow(holdingRow);
-                }
-                /**
-                 * Critical: a buy must leave an open holding. Otherwise the trade appears in the
-                 * transaction log with no portfolio position (and KPIs miss the exposure).
-                 */
-                if (!holdingAfter || !(Number(holdingAfter.quantity) > 0)) {
-                    throw new Error(
-                        `Buy for ${normalizedSymbol} did not create an open holding. Rolling back the trade so the ledger and positions stay aligned.`,
+                if (tradeData.type === 'buy') {
+                    const snap = dataRef.current;
+                    const pf = (snap?.investments ?? []).find((p) => p.id === portfolio.id);
+                    let holdingAfter = pf?.holdings.find(
+                        (h) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol,
                     );
+                    if (!holdingAfter && supabase && auth?.user) {
+                        const { data: holdingRow, error: holdingReadError } = await supabase
+                            .from('holdings')
+                            .select('*')
+                            .eq('user_id', auth.user.id)
+                            .eq('portfolio_id', portfolio.id)
+                            .ilike('symbol', normalizedSymbol)
+                            .maybeSingle();
+                        if (holdingReadError) throw new Error(formatDbError(holdingReadError));
+                        if (holdingRow) holdingAfter = normalizeHoldingFromRow(holdingRow);
+                    }
+                    /**
+                     * Critical: a buy must leave an open holding. Otherwise the trade appears in the
+                     * transaction log with no portfolio position (and KPIs miss the exposure).
+                     * Metadata (name/asset class/etc.) is already applied in applyPositionDeltaForTrade.
+                     */
+                    if (!holdingAfter || !(Number(holdingAfter.quantity) > 0)) {
+                        throw new Error(
+                            `Buy for ${normalizedSymbol} did not create an open holding. Rolling back the trade so the ledger and positions stay aligned.`,
+                        );
+                    }
                 }
-                if (holdingAfter) {
-                    const patched: Holding = {
-                        ...holdingAfter,
-                        ...(name ? { name } : {}),
-                        ...(tradeAssetClass ? { assetClass: tradeAssetClass as Holding['assetClass'] } : {}),
-                        ...(incomingHoldingType ? { holdingType: incomingHoldingType as Holding['holdingType'] } : {}),
-                        ...(manualCv != null ? { currentValue: manualCv } : {}),
-                        ...(tradeGoalId ? { goalId: tradeGoalId } : {}),
-                    };
-                    const needsPatch =
-                        (name && holdingAfter.name !== name) ||
-                        (tradeAssetClass && holdingAfter.assetClass !== tradeAssetClass) ||
-                        (incomingHoldingType && holdingAfter.holdingType !== incomingHoldingType) ||
-                        (manualCv != null && Math.abs((holdingAfter.currentValue ?? 0) - manualCv) > 0.01) ||
-                        (tradeGoalId && holdingAfter.goalId !== tradeGoalId);
-                    if (needsPatch) await updateHolding(patched);
-                }
+
+                /**
+                 * Lot FIFO + realized P/L: run after the modal can close.
+                 * Serialized via lotSyncChainRef so overlapping trades cannot persist stale snapshots.
+                 * Position + cash are already committed; lots are derived and may retry via repair.
+                 */
+                const portfolioIdForLots = portfolio.id;
+                const symbolForLots = normalizedSymbol;
+                const userIdForLots = auth.user.id;
+                const runLotSync = async () => {
+                    try {
+                        const snap = dataRef.current;
+                        const portfolioAfter =
+                            (snap?.investments ?? []).find((p) => p.id === portfolioIdForLots) ?? portfolio;
+                        await syncLotsAfterTrade({
+                            portfolio: portfolioAfter,
+                            investmentTransactions: snap?.investmentTransactions ?? [],
+                            corporateActionEvents: snap?.corporateActionEvents ?? [],
+                            touchedSymbols: [symbolForLots],
+                            existingLots: (snap?.investmentCostLots ?? []).filter(
+                                (l) => l.portfolioId === portfolioIdForLots,
+                            ),
+                            resolveHolding: (sym) => {
+                                const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioIdForLots);
+                                return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                            },
+                            updateHolding,
+                            supabase,
+                            userId: userIdForLots,
+                            onLotsUpdated: (updatedLots) => {
+                                applyFinancialDataPatch((prev) => ({
+                                    ...prev,
+                                    investmentCostLots: [
+                                        ...updatedLots,
+                                        ...(prev.investmentCostLots ?? []).filter(
+                                            (l) => l.portfolioId !== portfolioIdForLots,
+                                        ),
+                                    ],
+                                }));
+                            },
+                        });
+                    } catch (lotErr) {
+                        console.warn('Background lot sync after trade failed:', lotErr);
+                        try {
+                            toast(
+                                `Trade saved, but cost lots need a refresh (${formatUnknownError(lotErr, 'lot sync failed')}).`,
+                                'warning',
+                            );
+                        } catch {
+                            /* toast optional */
+                        }
+                    }
+                };
+                lotSyncChainRef.current = lotSyncChainRef.current.then(runLotSync, runLotSync);
+                void lotSyncChainRef.current;
             }
-            sealHoldingsBookAfterTrade();
+            sealHoldingsBookAfterTrade({ defer: true });
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
             let rollbackSucceeded = false;
@@ -5814,6 +5840,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         investmentTransactions: dataRef.current?.investmentTransactions ?? [],
                         corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
                         touchedSymbols: [normalizedSymbol],
+                        existingLots: (dataRef.current?.investmentCostLots ?? []).filter(
+                            (lot) => lot.portfolioId === portfolio.id,
+                        ),
                         resolveHolding: (sym) => {
                             const currentPortfolio = (dataRef.current?.investments ?? []).find(
                                 (candidate) => candidate.id === portfolio.id,
@@ -5890,20 +5919,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             t.id !== plan.id &&
                             t.status === 'Planned',
                     );
-                    for (const t of siblingsToPersist) {
-                        const { error: te } = await supabase
-                            .from('planned_trades')
-                            .update(plannedTradeToDbUpdate(t))
-                            .match({ id: t.id, user_id: auth.user.id });
-                        if (te) {
-                            console.error('Error updating tranche planned trade:', te, {
-                                id: t.id,
-                                symbol: t.symbol,
-                                trancheIndex: t.trancheIndex,
-                            });
-                            trancheUpdateErrors.push(t.symbol || t.id);
-                        }
-                    }
+                    await Promise.all(
+                        siblingsToPersist.map(async (t) => {
+                            const { error: te } = await supabase
+                                .from('planned_trades')
+                                .update(plannedTradeToDbUpdate(t))
+                                .match({ id: t.id, user_id: auth.user.id });
+                            if (te) {
+                                console.error('Error updating tranche planned trade:', te, {
+                                    id: t.id,
+                                    symbol: t.symbol,
+                                    trancheIndex: t.trancheIndex,
+                                });
+                                trancheUpdateErrors.push(t.symbol || t.id);
+                            }
+                        }),
+                    );
                     if (trancheUpdateErrors.length > 0) {
                         toast(
                             `Trade recorded, but ${trancheUpdateErrors.length} tranche row(s) failed to save (${trancheUpdateErrors.slice(0, 3).join(', ')}). Refresh and update remaining tranches in Execution History.`,

@@ -13,6 +13,7 @@ import {
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
+import { isInvestmentReconciliationCashAdjustment } from './reconciliation/cashDelta';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
   computePersonalPlatformsRollupSAR,
@@ -150,12 +151,14 @@ export function computePersonalInvestmentKpiBreakdown(
     return toSAR(amount, inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
   };
 
-  const depositsRecordedSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
-    .reduce((sum, t) => sum + invTxSar(t), 0);
-  const totalWithdrawnSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
-    .reduce((sum, t) => sum + invTxSar(t), 0);
+  const isCapitalDeposit = (t: InvestmentTransaction) =>
+    isInvestmentTransactionType(t.type, 'deposit') && !isInvestmentReconciliationCashAdjustment(t);
+  const isCapitalWithdrawal = (t: InvestmentTransaction) =>
+    isInvestmentTransactionType(t.type, 'withdrawal') && !isInvestmentReconciliationCashAdjustment(t);
+
+  /** Economic capital in/out — excludes broker-cash Reconcile Balance adjustments. */
+  const depositsRecordedSar = invTx.filter(isCapitalDeposit).reduce((sum, t) => sum + invTxSar(t), 0);
+  const totalWithdrawnSar = invTx.filter(isCapitalWithdrawal).reduce((sum, t) => sum + invTxSar(t), 0);
   const buysSar = invTx
     .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
     .reduce((sum, t) => sum + invTxSar(t), 0);
@@ -168,6 +171,7 @@ export function computePersonalInvestmentKpiBreakdown(
   const feesSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((sum, t) => sum + invTxSar(t), 0);
   const vatSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSar(t), 0);
 
+  /** Spot cash identity still includes reconcile deposit/withdrawal so broker vs ledger drift stays coherent. */
   const depositsSpotSar = invTx
     .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
     .reduce((sum, t) => sum + invTxSarSpot(t), 0);
@@ -184,8 +188,14 @@ export function computePersonalInvestmentKpiBreakdown(
   const expectedCashFromLedgerSpotSar =
     depositsSpotSar - buysSpotSar + sellsSpotSar + dividendsSpotSar - withdrawalsSpotSar - feesSpotSar - vatSpotSar;
 
+  const depositsDatedAllSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
+    .reduce((sum, t) => sum + invTxSar(t), 0);
+  const withdrawalsDatedAllSar = invTx
+    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
+    .reduce((sum, t) => sum + invTxSar(t), 0);
   const expectedCashFromLedgerDatedSar =
-    depositsRecordedSar - buysSar + sellsSar + dividendsSar - totalWithdrawnSar - feesSar - vatSar;
+    depositsDatedAllSar - buysSar + sellsSar + dividendsSar - withdrawalsDatedAllSar - feesSar - vatSar;
 
   /**
    * Heuristic when deposit history is empty: approximates “funds committed” from net purchases and

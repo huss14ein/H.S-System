@@ -70,6 +70,49 @@ function normalizeTouchedSymbols(symbols: Iterable<string>): Set<string> {
 }
 
 /**
+ * Expand touched symbols with corporate-action linked symbols (merger / spin-off chains),
+ * then restrict txs + CA replay to that closure so trade-path FIFO is O(symbol history).
+ */
+export function narrowLotReplayToTouchedSymbols(args: {
+  touched: Set<string>;
+  transactions: InvestmentTransaction[];
+  corporateActions: CorporateActionReplayEvent[];
+}): { transactions: InvestmentTransaction[]; corporateActions: CorporateActionReplayEvent[] } {
+  if (args.touched.size === 0) {
+    return { transactions: args.transactions, corporateActions: args.corporateActions };
+  }
+  const relevant = new Set(args.touched);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const ev of args.corporateActions) {
+      const sym = String(ev.symbol ?? '').trim().toUpperCase();
+      const linked = String(ev.action?.linkedSymbol ?? '').trim().toUpperCase();
+      const hits = relevant.has(sym) || (linked ? relevant.has(linked) : false);
+      if (!hits) continue;
+      if (sym && !relevant.has(sym)) {
+        relevant.add(sym);
+        grew = true;
+      }
+      if (linked && !relevant.has(linked)) {
+        relevant.add(linked);
+        grew = true;
+      }
+    }
+  }
+  return {
+    transactions: args.transactions.filter((t) =>
+      relevant.has(String(t.symbol ?? '').trim().toUpperCase()),
+    ),
+    corporateActions: args.corporateActions.filter((ev) => {
+      const sym = String(ev.symbol ?? '').trim().toUpperCase();
+      const linked = String(ev.action?.linkedSymbol ?? '').trim().toUpperCase();
+      return relevant.has(sym) || (linked ? relevant.has(linked) : false);
+    }),
+  };
+}
+
+/**
  * After buy/sell: rebuild cost lots from portfolio_id–scoped txs and patch realizedPnL only.
  * Never calls persistHoldingsFromReplayMap — position book is owned by applyPositionDeltaForTrade.
  */
@@ -85,22 +128,34 @@ export async function syncLotsAfterTrade(args: {
   supabase?: SupabaseClient | null;
   userId?: string;
   onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
+  /**
+   * Prior open lots for this portfolio (other symbols). Required when persisting
+   * only touched symbols so rebuilt UUIDs do not orphan stored rows for untouched names.
+   */
+  existingLots?: InvestmentCostLot[];
 }): Promise<{ lots: InvestmentCostLot[]; realizedPnLBySymbol: Map<string, number> }> {
   const portfolioId = args.portfolio.id;
   const touched = normalizeTouchedSymbols(args.touchedSymbols);
-  const caReplay = corporateEventsToReplay(args.corporateActionEvents, portfolioId);
+  const caReplayAll = corporateEventsToReplay(args.corporateActionEvents, portfolioId);
   /** Strict portfolio_id — orphans must not drive automatic lots/PnL. */
-  const scopedTxs = filterTransactionsForPortfolio(portfolioId, args.investmentTransactions);
+  const scopedTxsAll = filterTransactionsForPortfolio(portfolioId, args.investmentTransactions);
+  const narrowed = narrowLotReplayToTouchedSymbols({
+    touched,
+    transactions: scopedTxsAll,
+    corporateActions: caReplayAll,
+  });
 
   const bookCurrency: 'SAR' | 'USD' = args.portfolio.currency === 'USD' ? 'USD' : 'SAR';
   const lotResult = await rebuildCostLotsFromEvents({
     portfolioId,
-    transactions: scopedTxs,
-    corporateActions: caReplay,
+    transactions: narrowed.transactions,
+    corporateActions: narrowed.corporateActions,
     bookCurrency,
     /** Empty allow-list + pre-filtered txs → no orphan absorption inside lot engine. */
     holdingSymbols: [],
     accountId: args.portfolio.accountId ?? (args.portfolio as { account_id?: string }).account_id,
+    /** Trade path must not pay setTimeout yields every 100 events. */
+    yieldDuringReplay: false,
   });
 
   /**
@@ -123,7 +178,21 @@ export async function syncLotsAfterTrade(args: {
     holdings: holdingsSnap,
     matchBookCost: false,
   });
-  const lotsToPersist = aligned.lots;
+
+  const rebuiltTouchedLots =
+    touched.size > 0
+      ? aligned.lots.filter((l) => touched.has(String(l.symbol ?? '').toUpperCase()))
+      : aligned.lots;
+  const preservedOtherLots =
+    touched.size > 0
+      ? (args.existingLots ?? []).filter(
+          (l) =>
+            String(l.portfolioId) === String(portfolioId) &&
+            !touched.has(String(l.symbol ?? '').toUpperCase()),
+        )
+      : [];
+  const lotsToPersist =
+    touched.size > 0 ? [...preservedOtherLots, ...rebuiltTouchedLots] : aligned.lots;
 
   for (const [sym, pnl] of lotResult.realizedPnLBySymbol) {
     const upper = String(sym).toUpperCase();
@@ -140,7 +209,18 @@ export async function syncLotsAfterTrade(args: {
 
   if (args.supabase && args.userId) {
     try {
-      await persistInvestmentCostLotsForPortfolio(args.supabase, args.userId, portfolioId, lotsToPersist);
+      if (touched.size > 0) {
+        /** Only rewrite lots for the traded symbol(s) — avoids wipe+insert of the whole book. */
+        await persistInvestmentCostLotsForSymbols(
+          args.supabase,
+          args.userId,
+          portfolioId,
+          [...touched],
+          rebuiltTouchedLots,
+        );
+      } else {
+        await persistInvestmentCostLotsForPortfolio(args.supabase, args.userId, portfolioId, lotsToPersist);
+      }
     } catch (lotErr) {
       console.warn(
         'Cost lot persist failed after trade (position kept):',
@@ -170,6 +250,8 @@ export async function rebuildHoldingsFromLedger(args: {
   supabase?: SupabaseClient | null;
   userId?: string;
   onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
+  /** Prior open lots for this portfolio — preserves untouched symbols during symbol-scoped lot sync. */
+  existingLots?: InvestmentCostLot[];
 }): Promise<{ lots: InvestmentCostLot[]; realizedPnLBySymbol: Map<string, number> }> {
   const symbols = [...normalizeTouchedSymbols(args.symbols)];
   if (symbols.length === 0) {
@@ -200,6 +282,7 @@ export async function rebuildHoldingsFromLedger(args: {
     investmentTransactions: scopedTxs,
     corporateActionEvents: args.corporateActionEvents,
     touchedSymbols: symbols,
+    existingLots: args.existingLots ?? [],
     resolveHolding:
       args.resolveHolding ??
       ((sym) => args.portfolio.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym)),
@@ -394,5 +477,46 @@ export async function persistInvestmentCostLotsForPortfolio(
   const { error: insErr } = await supabase.from('investment_cost_lots').insert(rows);
   if (insErr && insErr.code !== 'PGRST205') {
     throw new Error(formatUnknownError(insErr, 'Failed to save cost lots.'));
+  }
+}
+
+/**
+ * Replace open lots for specific symbols only (Record Trade hot path).
+ * Deletes matching symbol rows then inserts the rebuilt open lots for those symbols.
+ */
+export async function persistInvestmentCostLotsForSymbols(
+  supabase: SupabaseClient,
+  userId: string,
+  portfolioId: string,
+  symbols: string[],
+  lots: InvestmentCostLot[],
+): Promise<void> {
+  const syms = [...new Set(symbols.map((s) => String(s ?? '').trim().toUpperCase()).filter(Boolean))];
+  if (syms.length === 0) {
+    await persistInvestmentCostLotsForPortfolio(supabase, userId, portfolioId, lots);
+    return;
+  }
+
+  const { error: delErr } = await supabase
+    .from('investment_cost_lots')
+    .delete()
+    .eq('user_id', userId)
+    .eq('portfolio_id', portfolioId)
+    .in('symbol', syms);
+  if (delErr && delErr.code !== 'PGRST205') {
+    throw new Error(formatUnknownError(delErr, 'Failed to clear cost lots for symbols.'));
+  }
+
+  const rows = lots
+    .filter((lot) => syms.includes(String(lot.symbol ?? '').toUpperCase()))
+    .map((lot) => ({
+      ...investmentCostLotToRow(lot),
+      user_id: userId,
+    }));
+  if (rows.length === 0) return;
+
+  const { error: insErr } = await supabase.from('investment_cost_lots').insert(rows);
+  if (insErr && insErr.code !== 'PGRST205') {
+    throw new Error(formatUnknownError(insErr, 'Failed to save cost lots for symbols.'));
   }
 }

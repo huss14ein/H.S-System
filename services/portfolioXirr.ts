@@ -3,6 +3,7 @@ import { toSAR, resolveSarPerUsd } from '../utils/currencyMath';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
+import { isInvestmentReconciliationCashAdjustment } from './reconciliation/cashDelta';
 
 /**
  * Simple money-weighted return (IRR) via bisection on periodic cashflows.
@@ -38,28 +39,38 @@ export function approximatePortfolioMWRR(
 }
 
 export function flowsFromInvestmentTransactions(
-  txs: { date: string; type: string; total?: number }[]
+  txs: { date: string; type: string; total?: number; note?: string | null; description?: string | null; category?: string | null }[]
 ): { date: string; amount: number }[] {
   const out: { date: string; amount: number }[] = [];
   txs.forEach((t) => {
     const x = Math.abs(getInvestmentTransactionCashAmount(t as any));
-    if (isInvestmentTransactionType(t.type, 'buy') || isInvestmentTransactionType(t.type, 'deposit')) out.push({ date: t.date, amount: -x });
-    if (isInvestmentTransactionType(t.type, 'sell') || isInvestmentTransactionType(t.type, 'withdrawal')) out.push({ date: t.date, amount: x });
+    const capitalAdj = isInvestmentReconciliationCashAdjustment(t);
+    if (isInvestmentTransactionType(t.type, 'buy') || (isInvestmentTransactionType(t.type, 'deposit') && !capitalAdj)) {
+      out.push({ date: t.date, amount: -x });
+    }
+    if (isInvestmentTransactionType(t.type, 'sell') || (isInvestmentTransactionType(t.type, 'withdrawal') && !capitalAdj)) {
+      out.push({ date: t.date, amount: x });
+    }
   });
   return out;
 }
 
 /** Same as `flowsFromInvestmentTransactions` but converts each flow to SAR using `currency` (defaults USD), matching `getAllInvestmentsValueInSAR` for MWRR. */
 export function flowsFromInvestmentTransactionsInSAR(
-  txs: { date: string; type: string; total?: number; currency?: string }[],
+  txs: { date: string; type: string; total?: number; currency?: string; note?: string | null; description?: string | null; category?: string | null }[],
   exchangeRate: number
 ): { date: string; amount: number }[] {
   const out: { date: string; amount: number }[] = [];
   txs.forEach((t) => {
     const x = Math.abs(getInvestmentTransactionCashAmount(t as any));
     const sar = toSAR(x, (t.currency ?? 'USD') as 'USD' | 'SAR', exchangeRate);
-    if (isInvestmentTransactionType(t.type, 'buy') || isInvestmentTransactionType(t.type, 'deposit')) out.push({ date: t.date, amount: -sar });
-    if (isInvestmentTransactionType(t.type, 'sell') || isInvestmentTransactionType(t.type, 'withdrawal')) out.push({ date: t.date, amount: sar });
+    const capitalAdj = isInvestmentReconciliationCashAdjustment(t);
+    if (isInvestmentTransactionType(t.type, 'buy') || (isInvestmentTransactionType(t.type, 'deposit') && !capitalAdj)) {
+      out.push({ date: t.date, amount: -sar });
+    }
+    if (isInvestmentTransactionType(t.type, 'sell') || (isInvestmentTransactionType(t.type, 'withdrawal') && !capitalAdj)) {
+      out.push({ date: t.date, amount: sar });
+    }
     /** Cash dividends are investor inflows (same sign as sell for MWRR math). */
     if (isInvestmentTransactionType(t.type, 'dividend')) out.push({ date: t.date, amount: sar });
   });
@@ -71,7 +82,7 @@ export function flowsFromInvestmentTransactionsInSAR(
  * (after `hydrateSarPerUsdDailySeries`, so Wealth Ultra / snapshot series align with KPIs).
  */
 export function flowsFromInvestmentTransactionsInSARWithDatedFx(
-  txs: { date: string; type: string; total?: number; currency?: string }[],
+  txs: { date: string; type: string; total?: number; currency?: string; note?: string | null; description?: string | null; category?: string | null }[],
   data: FinancialData | null | undefined,
   uiExchangeRate: number,
 ): { date: string; amount: number }[] {
@@ -82,8 +93,13 @@ export function flowsFromInvestmentTransactionsInSARWithDatedFx(
     const day = (t.date ?? '').slice(0, 10);
     const r = day.length === 10 ? getSarPerUsdForCalendarDay(day, data, uiExchangeRate) : spot;
     const sar = toSAR(x, (t.currency ?? 'USD') as 'USD' | 'SAR', r);
-    if (isInvestmentTransactionType(t.type, 'buy') || isInvestmentTransactionType(t.type, 'deposit')) out.push({ date: t.date, amount: -sar });
-    if (isInvestmentTransactionType(t.type, 'sell') || isInvestmentTransactionType(t.type, 'withdrawal')) out.push({ date: t.date, amount: sar });
+    const capitalAdj = isInvestmentReconciliationCashAdjustment(t);
+    if (isInvestmentTransactionType(t.type, 'buy') || (isInvestmentTransactionType(t.type, 'deposit') && !capitalAdj)) {
+      out.push({ date: t.date, amount: -sar });
+    }
+    if (isInvestmentTransactionType(t.type, 'sell') || (isInvestmentTransactionType(t.type, 'withdrawal') && !capitalAdj)) {
+      out.push({ date: t.date, amount: sar });
+    }
     if (isInvestmentTransactionType(t.type, 'dividend')) out.push({ date: t.date, amount: sar });
   });
   return out;

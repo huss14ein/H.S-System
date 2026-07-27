@@ -137,6 +137,9 @@ describe('holding reconcile UI wiring', () => {
   it('syncLotsAfterTrade aligns open lots to holding qty after rebuild', () => {
     const sync = read('services/portfolioLedgerSync.ts');
     expect(sync).toContain('alignPortfolioOpenLotsToHoldings');
+    expect(sync).toContain('persistInvestmentCostLotsForSymbols');
+    expect(sync).toContain('yieldDuringReplay: false');
+    expect(sync).toContain('narrowLotReplayToTouchedSymbols');
   });
 
   it('orchestrator cost-aligns open lots whenever align is requested (not only when cost restated)', () => {
