@@ -5189,6 +5189,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 positionDelta: 0,
             };
         }
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const db = supabase;
+        const userId = auth.user.id;
         if (tradeSubmissionInFlightRef.current) {
             throw new Error('A trade submission is already in progress. Please wait.');
         }
@@ -5462,7 +5465,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 p_fee_description: null as string | null,
                 p_transfer_group_id: (trade as { transferGroupId?: string }).transferGroupId ?? null,
             };
-            const invRpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', cashRpcPayload as Record<string, unknown>);
+            const invRpcRes = await db.rpc('create_investment_cash_transfer_with_fee', cashRpcPayload as Record<string, unknown>);
             const invRpcErr = invRpcRes.error as { code?: string; message?: string } | null;
             const invRpcRowRaw = invRpcRes.data as
                 | { investment_transaction_id?: string; cash_transaction_ids?: string[] }
@@ -5478,7 +5481,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const invId = invRpcRow.investment_transaction_id;
                 const cashIds = Array.isArray(invRpcRow.cash_transaction_ids) ? invRpcRow.cash_transaction_ids : [];
 
-                const { data: invFetched, error: invFetchErr } = await supabase
+                const { data: invFetched, error: invFetchErr } = await db
                     .from('investment_transactions')
                     .select('*')
                     .eq('id', invId)
@@ -5511,7 +5514,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
                 for (const cid of cashIds) {
                     if (!cid) continue;
-                    const { data: cashRow, error: cashFetchErr } = await supabase.from('transactions').select('*').eq('id', cid).maybeSingle();
+                    const { data: cashRow, error: cashFetchErr } = await db.from('transactions').select('*').eq('id', cid).maybeSingle();
                     if (cashFetchErr) console.warn(cashFetchErr);
                     if (!cashRow) continue;
                     const nt = normalizeTransaction(cashRow);
@@ -5522,7 +5525,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         entity: 'transaction',
                         entityId: nt.id,
                         summary: `${nt.type}: ${String(nt.description ?? '').slice(0, 120)} · ${nt.amount}`,
-                        userId: auth.user.id,
+                        userId: userId,
                     });
                     await applyLedgerAccountDeltaForTransaction(nt.accountId, Number(nt.amount) || 0);
                 }
@@ -5553,7 +5556,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         for (const payload of tradePayloadVariants(tradePayload)) {
-            const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
+            const result = await db.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;
             txError = result.error;
             if (!txError) break;
@@ -5563,10 +5566,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     (trade as { idempotency_key?: string }).idempotency_key ??
                     (tradePayload as { idempotency_key?: string }).idempotency_key;
                 if (idem) {
-                    const { data: existing } = await supabase
+                    const { data: existing } = await db
                         .from('investment_transactions')
                         .select('*')
-                        .eq('user_id', auth.user.id)
+                        .eq('user_id', userId)
                         .eq('idempotency_key', idem)
                         .maybeSingle();
                     if (existing) {
@@ -5720,11 +5723,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     let holdingAfter = pf?.holdings.find(
                         (h) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol,
                     );
-                    if (!holdingAfter && supabase && auth?.user) {
-                        const { data: holdingRow, error: holdingReadError } = await supabase
+                    if (!holdingAfter) {
+                        const { data: holdingRow, error: holdingReadError } = await db
                             .from('holdings')
                             .select('*')
-                            .eq('user_id', auth.user.id)
+                            .eq('user_id', userId)
                             .eq('portfolio_id', portfolio.id)
                             .ilike('symbol', normalizedSymbol)
                             .maybeSingle();
@@ -5750,7 +5753,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                  */
                 const portfolioIdForLots = portfolio.id;
                 const symbolForLots = normalizedSymbol;
-                const userIdForLots = auth.user.id;
+                const userIdForLots = userId;
                 const runLotSync = async () => {
                     try {
                         const snap = dataRef.current;
@@ -5769,7 +5772,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                 return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
                             },
                             updateHolding,
-                            supabase,
+                            db,
                             userId: userIdForLots,
                             onLotsUpdated: (updatedLots) => {
                                 applyFinancialDataPatch((prev) => ({
@@ -5804,10 +5807,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             let rollbackSucceeded = false;
             let holdingsRollbackSucceeded = false;
             if (newTransaction?.id) {
-                const rollback = await supabase
+                const rollback = await db
                     .from('investment_transactions')
                     .delete()
-                    .match({ id: newTransaction.id, user_id: auth.user.id });
+                    .match({ id: newTransaction.id, user_id: userId });
                 if (rollback.error) {
                     console.error("Failed to rollback recorded transaction after holding update failure:", rollback.error);
                 } else {
@@ -5852,8 +5855,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             );
                         },
                         updateHolding,
-                        supabase,
-                        userId: auth.user.id,
+                        db,
+                        userId: userId,
                         onLotsUpdated: (updatedLots) => {
                             applyFinancialDataPatch((prev) => ({
                                 ...prev,
@@ -5892,10 +5895,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     status: 'Executed',
                     filledQty: Math.max(plan.filledQty ?? 0, filledQty),
                 };
-                const { error: pe } = await supabase
+                const { error: pe } = await db
                     .from('planned_trades')
                     .update(plannedTradeToDbUpdate(executedPatch))
-                    .match({ id: plan.id, user_id: auth.user.id });
+                    .match({ id: plan.id, user_id: userId });
                 if (pe) console.error('Error updating executed plan:', pe);
                 const applyTrancheRecompute = (plannedTrades: PlannedTrade[]) => {
                     let trades = plannedTrades.map((p) => (p.id === plan.id ? executedPatch : p));
@@ -5921,10 +5924,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     );
                     await Promise.all(
                         siblingsToPersist.map(async (t) => {
-                            const { error: te } = await supabase
+                            const { error: te } = await db
                                 .from('planned_trades')
                                 .update(plannedTradeToDbUpdate(t))
-                                .match({ id: t.id, user_id: auth.user.id });
+                                .match({ id: t.id, user_id: userId });
                             if (te) {
                                 console.error('Error updating tranche planned trade:', te, {
                                     id: t.id,
