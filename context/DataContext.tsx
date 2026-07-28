@@ -5772,7 +5772,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                 return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
                             },
                             updateHolding,
-                            db,
+                            supabase: db,
                             userId: userIdForLots,
                             onLotsUpdated: (updatedLots) => {
                                 applyFinancialDataPatch((prev) => ({
@@ -5855,7 +5855,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             );
                         },
                         updateHolding,
-                        db,
+                        supabase: db,
                         userId: userId,
                         onLotsUpdated: (updatedLots) => {
                             applyFinancialDataPatch((prev) => ({
