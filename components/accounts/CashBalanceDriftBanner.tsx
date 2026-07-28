@@ -13,7 +13,6 @@ import {
 import {
   acknowledgeCashBalanceDriftDurable,
   filterUnackedCashDriftWarnings,
-  mergeUiAcks,
   resolveCashBalanceDriftAcks,
 } from '../../services/uiAcks';
 import { getPersonalAccounts, getPersonalTransactions } from '../../utils/wealthScope';
@@ -75,9 +74,8 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
           transactionNet: row.transactionNet,
           currentUiAcks: data.settings?.uiAcks,
           persistUiAcks: async (partial) => {
-            await ctx.updateSettings({
-              uiAcks: mergeUiAcks(data.settings?.uiAcks, partial),
-            });
+            // Pass only the partial map — updateSettings merges against dataRef so sibling acks stay fresh.
+            await ctx.updateSettings({ uiAcks: partial });
           },
         });
         toast(`Kept stored balance for ${row.label} — warning dismissed until drift changes.`, 'success');

@@ -278,10 +278,14 @@ describe('uiAcks durable reconcile dismissals', () => {
     const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
     expect(panel).toContain('acknowledgeHoldingsIntegrityDurable');
     expect(panel).toContain('resolveHoldingsIntegrityAcks');
+    expect(panel).toContain('await updateSettings({ uiAcks: partial ?? {} })');
+    expect(panel).not.toContain('mergeUiAcks(data?.settings?.uiAcks');
 
     const banner = read('components/accounts/CashBalanceDriftBanner.tsx');
     expect(banner).toContain('acknowledgeCashBalanceDriftDurable');
     expect(banner).toContain('Keep stored balance');
+    expect(banner).toContain('await ctx.updateSettings({ uiAcks: partial })');
+    expect(banner).not.toContain('mergeUiAcks(data.settings?.uiAcks');
     expect(read('pages/Accounts.tsx')).toContain('CashBalanceDriftBanner');
 
     const notif = read('context/NotificationsContext.tsx');

@@ -80,6 +80,7 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
           ? targetAvgCost
           : undefined,
       beforeAvgCost,
+      alignLotCostsToBook: alignLotCosts,
       reason,
     });
   }, [
@@ -92,6 +93,7 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
     targetAvgCost,
     beforeAvgCost,
     beforeBook,
+    alignLotCosts,
     reason,
   ]);
 

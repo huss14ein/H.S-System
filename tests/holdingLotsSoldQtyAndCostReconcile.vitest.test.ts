@@ -114,6 +114,7 @@ describe('holding reconcile UI wiring', () => {
     expect(modal).toContain('targetAvgCost');
     expect(modal).toContain('targetBookCost');
     expect(modal).toContain('alignLotCostsToBook');
+    expect(modal).toContain('alignLotCostsToBook: alignLotCosts');
     expect(modal).toContain('Reconcile holding');
   });
 

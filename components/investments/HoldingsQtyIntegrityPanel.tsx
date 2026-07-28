@@ -18,7 +18,6 @@ import {
 import {
   acknowledgeHoldingsIntegrityDurable,
   clearHoldingsIntegrityAckDurable,
-  mergeUiAcks,
   resolveHoldingsIntegrityAcks,
 } from '../../services/uiAcks';
 import {
@@ -61,7 +60,8 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
 
   const persistUiAcks = async (partial: import('../../types').Settings['uiAcks']) => {
     if (!updateSettings) return;
-    await updateSettings({ uiAcks: mergeUiAcks(data?.settings?.uiAcks, partial ?? {}) });
+    // Pass only the partial map — updateSettings merges against dataRef so sibling acks stay fresh.
+    await updateSettings({ uiAcks: partial ?? {} });
   };
 
   const driftAttention = useMemo(() => {
