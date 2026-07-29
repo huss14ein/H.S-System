@@ -2,7 +2,7 @@ import React, { createContext, useState, ReactNode, useEffect, useLayoutEffect, 
 import { flushSync } from 'react-dom';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
-import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent, type SukukPosition, type CorporateActionEvent, type RewardsTxLink, type RewardsLot } from '../types';
+import { FinancialData, Asset, Goal, Liability, Budget, Holding, InvestmentTransaction, WatchlistItem, Account, Transaction, ZakatPayment, InvestmentPortfolio, PriceAlert, PlannedTrade, CommodityHolding, Settings, InvestmentPlanSettings, UniverseTicker, TickerStatus, InvestmentPlanExecutionLog, SleeveDefinition, RecurringTransaction, HOLDING_ASSET_CLASS_OPTIONS, type HoldingAssetClass, type TradeCurrency, type SukukPayoutSchedule, type SukukPayoutEvent, type SukukPosition, type CorporateActionEvent, type RewardsTxLink, type RewardsLot, type InvestmentCostLot } from '../types';
 import { getDefaultWealthUltraSystemConfig, mergeWealthUltraSystemConfigFromRow } from '../wealth-ultra/config';
 import {
   getPersonalAccounts,
@@ -15,7 +15,7 @@ import {
   getPersonalTransactions,
 } from '../utils/wealthScope';
 import { isRestrictedRole } from '../utils/role';
-import { resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD } from '../utils/currencyMath';
+import { resolveSarPerUsd, toSAR, fromSAR, availableTradableCashInLedgerCurrency, DEFAULT_SAR_PER_USD, tradableCashBucketToSARSigned } from '../utils/currencyMath';
 import {
     inferInvestmentTransactionCurrency,
     ledgerCurrencyCashToInvestment,
@@ -86,6 +86,8 @@ import {
     rebuildHoldingsFromLedger,
     syncLotsAfterTrade,
     syncPortfolioLedgerAfterChange,
+    persistInvestmentCostLotsForPortfolio,
+    backfillRealizedPnLForPortfolio,
 } from '../services/portfolioLedgerSync';
 import {
     filterTransactionsForPortfolio,
@@ -120,8 +122,23 @@ import {
 } from '../services/workspaceHydrateTiers';
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { yieldToMain } from '../utils/yieldToMain';
+import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { isMonthLocked, mergeNetWorthSnapshotsFromServer, setServerPeriodLocks } from '../services/netWorthSnapshot';
 import { hydrateFoundationsTables } from '../services/foundationsHydrate';
+import {
+  acknowledgeCashBalanceDriftAfterReconcile,
+  acknowledgeHoldingsIntegrityDurable,
+  acknowledgeInvestmentCashLedgerDriftDurable,
+  mergeUiAcks,
+  normalizeUiAcks,
+} from '../services/uiAcks';
+import {
+  normalizeSalaryInvestmentTargets,
+  salaryInvestmentTargetsEqual,
+  salaryInvestmentTargetsToRow,
+} from '../services/salaryInvestmentSettings';
+import { computePersonalInvestmentKpiBreakdown } from '../services/investmentKpiCore';
+import { transactionNetForAccount } from '../services/dataQuality/accountReconciliation';
 import { deltaForInvestmentTrade } from '../services/investmentBalanceDelta';
 import { buildTransactionPayloadVariants } from '../services/transactionPayloadVariants';
 import { decodeInstallmentPaymentNote } from '../services/installments/installmentLinkNote';
@@ -166,7 +183,16 @@ const initialData: FinancialData = {
     sukukPositions: [], sukukPayoutSchedules: [], sukukPayoutEvents: [], corporateActionEvents: [], investmentCostLots: [],
     reconciliationAdjustments: [], reconciliationAuditEvents: [], reconciliationRuns: [],
     rewardsAccounts: [], rewardsTransactions: [], rewardsTxLinks: [], rewardsLots: [], personalRewardsAccounts: [],
-    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 28 },
+    settings: {
+      riskProfile: 'Moderate',
+      budgetThreshold: 90,
+      driftThreshold: 5,
+      enableEmails: true,
+      goldPrice: 275,
+      monthStartDay: 28,
+      uiAcks: {},
+      salaryInvestmentTargets: undefined,
+    },
     zakatPayments: [], priceAlerts: [], plannedTrades: [], notifications: [],
     investmentPlan: {
         monthlyBudget: 0, budgetCurrency: 'SAR', executionCurrency: 'USD', fxRateSource: 'GoogleFinance:CURRENCY:SARUSD',
@@ -291,6 +317,8 @@ interface DataContextType {
   applyFinancialDataPatch: (recipe: (prev: FinancialData) => FinancialData) => void;
   /** Explicit repair — rebuild named symbols from portfolio_id ledger (never runs on trade). */
   rebuildHoldingsFromLedgerForSymbols: (args: { portfolioId: string; symbols: string[] }) => Promise<void>;
+  /** Recompute FIFO realized P/L on holdings from portfolio-scoped ledger (all portfolios). */
+  backfillRealizedPnLForAllPortfolios: () => Promise<{ patchedSymbols: number }>;
   addWatchlistItem: (item: WatchlistItem, opts?: RecordWriteOptions) => Promise<void>;
   updateWatchlistItem: (item: WatchlistItem) => Promise<void>;
   deleteWatchlistItem: (symbol: string) => Promise<void>;
@@ -399,6 +427,7 @@ const DATA_CONTEXT_ACTION_KEYS = [
   'refreshReconciliationAudit',
   'retryReconciliationRun',
   'rebuildHoldingsFromLedgerForSymbols',
+  'backfillRealizedPnLForAllPortfolios',
   'addWatchlistItem',
   'updateWatchlistItem',
   'deleteWatchlistItem',
@@ -448,6 +477,10 @@ function normalizeSettings(raw: any): Settings {
         emergencyFundMonthsTarget: clampEmergencyFundMonthsTarget(
             raw.emergencyFundMonthsTarget ?? raw.emergency_fund_months_target,
         ),
+        uiAcks: normalizeUiAcks(raw.uiAcks ?? raw.ui_acks),
+        salaryInvestmentTargets: normalizeSalaryInvestmentTargets(
+            raw.salaryInvestmentTargets ?? raw.salary_investing_targets,
+        ),
     };
 }
 
@@ -471,6 +504,12 @@ function settingsToRow(settings: Partial<Settings>): Record<string, unknown> {
     if (settings.emergencyFundMonthsTarget != null) {
         row.emergency_fund_months_target = clampEmergencyFundMonthsTarget(settings.emergencyFundMonthsTarget);
     }
+    if (settings.uiAcks != null) {
+        row.ui_acks = settings.uiAcks;
+    }
+    if ('salaryInvestmentTargets' in settings) {
+        row.salary_investing_targets = salaryInvestmentTargetsToRow(settings.salaryInvestmentTargets);
+    }
     return row;
 }
 
@@ -483,6 +522,18 @@ function settingsOverridesToRow(merged: Settings, explicitClears?: Partial<Setti
         if (mergedRow[k] !== defaultRow[k]) row[k] = mergedRow[k];
     }
     if (explicitClears && 'nisabAmount' in explicitClears && explicitClears.nisabAmount === undefined) row.nisab_amount = null;
+    if (
+        merged.salaryInvestmentTargets &&
+        !salaryInvestmentTargetsEqual(merged.salaryInvestmentTargets, initialData.settings.salaryInvestmentTargets)
+    ) {
+        row.salary_investing_targets = salaryInvestmentTargetsToRow(merged.salaryInvestmentTargets);
+    } else if (
+        explicitClears &&
+        'salaryInvestmentTargets' in explicitClears &&
+        explicitClears.salaryInvestmentTargets === undefined
+    ) {
+        row.salary_investing_targets = null;
+    }
     return row;
 }
 
@@ -633,6 +684,7 @@ function buildAccountInsertPayload(platform: Omit<Account, 'id' | 'user_id' | 'b
         payload.currency = platform.currency;
     }
     if (platform.accountRole) payload.account_role = platform.accountRole;
+    else if ('accountRole' in platform) payload.account_role = null;
     if (platform.bucketType) payload.bucket_type = platform.bucketType;
     return payload;
 }
@@ -920,17 +972,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [awaitingInitialHydrate, setAwaitingInitialHydrate] = useState(true);
     const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
     const backgroundSyncInFlightRef = useRef(false);
+    const realizedPnLBackfillDoneRef = useRef(false);
+    const backfillRealizedPnLForAllPortfoliosRef = useRef<(() => Promise<{ patchedSymbols: number }>) | null>(null);
     const [transactionsLoadWarning, setTransactionsLoadWarning] = useState<string | null>(null);
     const recurringAutoApplyInFlightRef = useRef(false);
     const transactionsRef = useRef<FinancialData['transactions']>(data?.transactions ?? []);
     transactionsRef.current = data?.transactions ?? [];
     const dataRef = useRef(data);
     const getRewardsOrchestratorDepsRef = useRef<() => RewardsOrchestratorDeps | null>(() => null);
+    /** Serialize ui_acks upserts so concurrent Keep stored / Apply dismissals cannot drop sibling maps. */
+    const uiAcksPersistChainRef = useRef(Promise.resolve());
+    /** Serialize background cost-lot sync so overlapping trades cannot persist stale FIFO snapshots. */
+    const lotSyncChainRef = useRef(Promise.resolve());
     /** Eagerly patch dataRef before setState so sequential awaits (recordTrade → holdings patch) see fresh state. */
     const applyFinancialDataPatch = (recipe: (prev: FinancialData) => FinancialData) => {
         const next = recipe(dataRef.current);
         dataRef.current = next;
-        setData(next);
+        startTransition(() => {
+            setData(next);
+        });
     };
     /** Stable identity for context consumers (behavior only touches refs + setData). */
     const applyFinancialDataPatchStable = useCallback(
@@ -975,11 +1035,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         holdingsBookGenerationRef.current += 1;
     };
     /** After buy/sell/dividend/DRIP — advance generation and persist hydrate cache so ghosts cannot return from stale cache. */
-    const sealHoldingsBookAfterTrade = () => {
+    const sealHoldingsBookAfterTrade = (opts?: { defer?: boolean }) => {
         bumpHoldingsBookGeneration();
-        if (auth?.user?.id && financialDataHasHydrated(dataRef.current)) {
-            writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
+        const write = () => {
+            if (auth?.user?.id && financialDataHasHydrated(dataRef.current)) {
+                writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
+            }
+        };
+        if (opts?.defer) {
+            scheduleIdleWork(write, 4000);
+            return;
         }
+        write();
     };
     /** Keep dataRef aligned after React commits — useLayoutEffect so cash reads see accounts before paint. */
     useLayoutEffect(() => {
@@ -988,6 +1055,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updatePlatformRef = useRef<((platform: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>) | null>(null);
     /** Accumulator for cash account deltas during recurring-apply loops; avoids stale balance when multiple txs hit the same account. */
     const cashBalanceAccumulatorRef = useRef<Record<string, number>>({});
+    /** Prevents duplicate transfer posts from overlapping callers (UI double-submit / concurrent system paths). */
+    const transferInFlightKeysRef = useRef<Set<string>>(new Set());
 
     const normalizeHolding = (holding: any): Holding => {
         const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
@@ -1952,6 +2021,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         })();
                     }
                     if (auth.user?.id && financialDataHasHydrated(dataRef.current)) {
+                        if (!realizedPnLBackfillDoneRef.current && supabase && auth.user) {
+                            realizedPnLBackfillDoneRef.current = true;
+                            void backfillRealizedPnLForAllPortfoliosRef.current?.().catch((e) => {
+                                if (import.meta.env.DEV) console.warn('Realized P/L backfill on hydrate failed:', e);
+                            });
+                        }
                         writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
                     }
                 } catch (e) {
@@ -2922,6 +2997,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return;
         const absAmount = Math.abs(Number(amount));
         const fee = Math.max(0, Number(feeAmount) || 0);
+        const dateStr = date ?? new Date().toISOString().split('T')[0];
+        const flightKey = `${fromAccountId}|${toAccountId}|${absAmount.toFixed(2)}|${fee.toFixed(2)}|${dateStr}`;
+        if (transferInFlightKeysRef.current.has(flightKey)) {
+            toast('Transfer already in progress — wait for it to finish.', 'info');
+            return;
+        }
+        transferInFlightKeysRef.current.add(flightKey);
+        try {
         const transferGroupId = (() => {
             try {
                 return crypto?.randomUUID?.();
@@ -2939,6 +3022,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const fromAcc = (data?.accounts ?? []).find((a) => a.id === fromAccountId);
         const toAcc = (data?.accounts ?? []).find((a) => a.id === toAccountId);
+        if (fromAcc?.type === 'Investment' && toAcc?.type === 'Credit') {
+            toast('Pay cards from Checking or Savings. Withdraw investment cash first, then pay the card.', 'error');
+            return;
+        }
         const fromPostingPolicy = canPostTransactionToAccount(fromAcc, {
             transactionType: 'expense',
             category: 'Transfer',
@@ -2949,7 +3036,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
-        const dateStr = date ?? new Date().toISOString().split('T')[0];
         const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
         const transferOk = await guardRecordWrite(
             opts,
@@ -3165,6 +3251,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             transferGroupId,
             transferRole: 'principal_in',
         }, { system: true });
+        } finally {
+            transferInFlightKeysRef.current.delete(flightKey);
+        }
     };
     const updateTransaction = async (transaction: Transaction, opts?: RecordWriteOptions) => {
         if(!supabase || !auth?.user) return;
@@ -3656,6 +3745,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             payload.platform_details = platform.platformDetails;
         }
         if (platform.accountRole) payload.account_role = platform.accountRole;
+        else if ('accountRole' in platform) payload.account_role = null;
         if (platform.bucketType) payload.bucket_type = platform.bucketType;
         
         let { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
@@ -3987,6 +4077,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ),
             corporateActionEvents: snapshot?.corporateActionEvents ?? [],
             symbols,
+            existingLots: (snapshot?.investmentCostLots ?? []).filter((l) => l.portfolioId === args.portfolioId),
             updateHolding,
             addHolding,
             deleteHolding,
@@ -4007,6 +4098,50 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             },
         });
     };
+
+    const backfillRealizedPnLForAllPortfolios = async (): Promise<{ patchedSymbols: number }> => {
+        if (!supabase || !auth?.user) return { patchedSymbols: 0 };
+        const snap = dataRef.current;
+        let patchedSymbols = 0;
+        for (const portfolio of snap?.investments ?? []) {
+            try {
+                const result = await backfillRealizedPnLForPortfolio({
+                    portfolio,
+                    investmentTransactions: snap?.investmentTransactions ?? [],
+                    corporateActionEvents: snap?.corporateActionEvents ?? [],
+                    updateHolding,
+                    addHolding,
+                    resolveHolding: (sym) => {
+                        const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
+                        return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                    },
+                    supabase,
+                    userId: auth.user.id,
+                    onLotsUpdated: (updatedLots) => {
+                        applyFinancialDataPatch((prev) => ({
+                            ...prev,
+                            investmentCostLots: [
+                                ...updatedLots,
+                                ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolio.id),
+                            ],
+                        }));
+                    },
+                });
+                patchedSymbols += result.patchedSymbols;
+            } catch (e) {
+                if (import.meta.env.DEV) {
+                    console.warn(`Realized P/L backfill skipped (${portfolio.name}):`, e);
+                }
+            }
+        }
+        if (patchedSymbols > 0) {
+            bumpHoldingsBookGeneration();
+            toast(`Synced realized P/L for ${patchedSymbols} symbol(s).`, 'success');
+        }
+        return { patchedSymbols };
+    };
+    backfillRealizedPnLForAllPortfoliosRef.current = backfillRealizedPnLForAllPortfolios;
+
     const applyCorporateActionEvent = async (args: {
         portfolioId: string;
         symbol: string;
@@ -4469,6 +4604,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     investmentTransactions: snap?.investmentTransactions ?? [],
                     corporateActionEvents: snap?.corporateActionEvents ?? [],
                     touchedSymbols: symbols,
+                    existingLots: (snap?.investmentCostLots ?? []).filter((l) => l.portfolioId === portfolioId),
                     resolveHolding: (sym) => {
                         const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
                         return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
@@ -4486,6 +4622,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         }));
                     },
                 });
+            },
+            persistAlignedLotsForPortfolio: async ({
+                portfolioId,
+                lots,
+            }: {
+                portfolioId: string;
+                lots: InvestmentCostLot[];
+            }) => {
+                if (!supabase || !auth?.user) return;
+                await persistInvestmentCostLotsForPortfolio(supabase, auth.user.id, portfolioId, lots);
             },
             reverseInvestmentTransactionEdit: async (adj: ReconciliationAdjustment) => {
                 if (!supabase || !auth?.user) throw new Error('Not logged in');
@@ -4639,7 +4785,98 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const applyReconciliationAdjustment = async (input: ApplyReconciliationInput): Promise<ApplyReconciliationResult> => {
         const deps = getReconciliationOrchestratorDeps();
         if (!deps) return { ok: false, error: 'Not logged in' };
-        return orchestrateApplyReconciliation(deps, input);
+        const snap = dataRef.current ?? data;
+        const userId = auth?.user?.id ?? null;
+        let beforeBalance = 0;
+        let beforeNet = 0;
+        let holdingMeta: { portfolioId: string; symbol: string; beforeQty: number } | null = null;
+        if (input.entityType === 'account') {
+          const acc = (snap?.accounts ?? []).find((a) => a.id === input.entityId);
+          beforeBalance = Number(acc?.balance ?? 0);
+          beforeNet = transactionNetForAccount(input.entityId, snap?.transactions ?? []);
+        } else if (input.entityType === 'holding') {
+          for (const p of snap?.investments ?? []) {
+            const h = (p.holdings ?? []).find((x) => x.id === input.entityId);
+            if (h) {
+              holdingMeta = {
+                portfolioId: p.id,
+                symbol: String(h.symbol ?? ''),
+                beforeQty: Number(h.quantity) || 0,
+              };
+              break;
+            }
+          }
+        }
+        const result = await orchestrateApplyReconciliation(deps, input);
+        if (result.ok && !result.noop) {
+          /** Non-blocking: never stall Apply UX on settings upsert / network. */
+          const persistUiAcks = (partial: import('../services/uiAcks').UiAcks) => {
+            uiAcksPersistChainRef.current = uiAcksPersistChainRef.current
+              .catch(() => undefined)
+              .then(async () => {
+                const latest = normalizeUiAcks((dataRef.current ?? data)?.settings?.uiAcks);
+                await updateSettings({ uiAcks: mergeUiAcks(latest, partial) });
+              });
+            return uiAcksPersistChainRef.current;
+          };
+          void (async () => {
+            try {
+              if (input.entityType === 'account') {
+                const accType = (snap?.accounts ?? []).find((a) => a.id === input.entityId)?.type;
+                await acknowledgeCashBalanceDriftAfterReconcile({
+                  userId,
+                  accountId: input.entityId,
+                  beforeBalance,
+                  actualValue: Number(input.actualValue),
+                  beforeTransactionNet: beforeNet,
+                  currentUiAcks: (dataRef.current ?? data)?.settings?.uiAcks,
+                  persistUiAcks,
+                });
+                /** Broker cash Apply: sticky KPI cash drift needs its own fingerprint ack. */
+                if (accType === 'Investment') {
+                  const fresh = dataRef.current ?? data;
+                  if (fresh) {
+                    const rate = resolveSarPerUsd(fresh);
+                    const b = computePersonalInvestmentKpiBreakdown(fresh, rate, getAvailableCashForAccount);
+                    let brokerageCashRawSar = 0;
+                    for (const account of fresh.accounts ?? []) {
+                      if (account.type !== 'Investment') continue;
+                      const cash = getAvailableCashForAccount(account.id);
+                      brokerageCashRawSar += tradableCashBucketToSARSigned(
+                        { SAR: cash?.SAR ?? 0, USD: cash?.USD ?? 0 },
+                        rate,
+                      );
+                    }
+                    const driftSar = brokerageCashRawSar - b.expectedCashFromLedgerSpotSar;
+                    await acknowledgeInvestmentCashLedgerDriftDurable({
+                      driftSar,
+                      currentUiAcks: (dataRef.current ?? data)?.settings?.uiAcks,
+                      persistUiAcks,
+                    });
+                  }
+                }
+              } else if (
+                input.entityType === 'holding' &&
+                holdingMeta?.symbol &&
+                Math.abs(Number(input.actualValue) - holdingMeta.beforeQty) > 1e-6
+              ) {
+                /** Skip align-lots / cost-only applies — they must not silent-dismiss qty warnings. */
+                await acknowledgeHoldingsIntegrityDurable({
+                  userId,
+                  portfolioId: holdingMeta.portfolioId,
+                  symbol: holdingMeta.symbol,
+                  kind: 'keep_stored',
+                  storedQty: Number(input.actualValue),
+                  currentUiAcks: (dataRef.current ?? data)?.settings?.uiAcks,
+                  persistUiAcks,
+                });
+              }
+            } catch (ackErr) {
+              console.warn('ui_acks: post-reconcile dismissal failed', ackErr);
+            }
+          })();
+        }
+        return result;
     };
 
     const reverseReconciliationAdjustment = async (
@@ -4716,6 +4953,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         investmentTransactions: snap.investmentTransactions ?? [],
                         corporateActionEvents: snap.corporateActionEvents ?? [],
                         touchedSymbols: symbols,
+                        existingLots: (snap.investmentCostLots ?? []).filter((l) => l.portfolioId === portfolioId),
                         resolveHolding: (sym) => {
                             const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
                             return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
@@ -4980,6 +5218,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 positionDelta: 0,
             };
         }
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const db = supabase;
+        const userId = auth.user.id;
         if (tradeSubmissionInFlightRef.current) {
             throw new Error('A trade submission is already in progress. Please wait.');
         }
@@ -5253,7 +5494,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 p_fee_description: null as string | null,
                 p_transfer_group_id: (trade as { transferGroupId?: string }).transferGroupId ?? null,
             };
-            const invRpcRes = await supabase.rpc('create_investment_cash_transfer_with_fee', cashRpcPayload as Record<string, unknown>);
+            const invRpcRes = await db.rpc('create_investment_cash_transfer_with_fee', cashRpcPayload as Record<string, unknown>);
             const invRpcErr = invRpcRes.error as { code?: string; message?: string } | null;
             const invRpcRowRaw = invRpcRes.data as
                 | { investment_transaction_id?: string; cash_transaction_ids?: string[] }
@@ -5269,7 +5510,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const invId = invRpcRow.investment_transaction_id;
                 const cashIds = Array.isArray(invRpcRow.cash_transaction_ids) ? invRpcRow.cash_transaction_ids : [];
 
-                const { data: invFetched, error: invFetchErr } = await supabase
+                const { data: invFetched, error: invFetchErr } = await db
                     .from('investment_transactions')
                     .select('*')
                     .eq('id', invId)
@@ -5302,7 +5543,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
                 for (const cid of cashIds) {
                     if (!cid) continue;
-                    const { data: cashRow, error: cashFetchErr } = await supabase.from('transactions').select('*').eq('id', cid).maybeSingle();
+                    const { data: cashRow, error: cashFetchErr } = await db.from('transactions').select('*').eq('id', cid).maybeSingle();
                     if (cashFetchErr) console.warn(cashFetchErr);
                     if (!cashRow) continue;
                     const nt = normalizeTransaction(cashRow);
@@ -5313,7 +5554,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         entity: 'transaction',
                         entityId: nt.id,
                         summary: `${nt.type}: ${String(nt.description ?? '').slice(0, 120)} · ${nt.amount}`,
-                        userId: auth.user.id,
+                        userId: userId,
                     });
                     await applyLedgerAccountDeltaForTransaction(nt.accountId, Number(nt.amount) || 0);
                 }
@@ -5344,7 +5585,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         for (const payload of tradePayloadVariants(tradePayload)) {
-            const result = await supabase.from('investment_transactions').insert(withUser(payload)).select().single();
+            const result = await db.from('investment_transactions').insert(withUser(payload)).select().single();
             newTransaction = result.data;
             txError = result.error;
             if (!txError) break;
@@ -5354,10 +5595,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     (trade as { idempotency_key?: string }).idempotency_key ??
                     (tradePayload as { idempotency_key?: string }).idempotency_key;
                 if (idem) {
-                    const { data: existing } = await supabase
+                    const { data: existing } = await db
                         .from('investment_transactions')
                         .select('*')
-                        .eq('user_id', auth.user.id)
+                        .eq('user_id', userId)
                         .eq('idempotency_key', idem)
                         .maybeSingle();
                     if (existing) {
@@ -5382,9 +5623,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 ...prev,
                 investmentTransactions: [normalizedInserted, ...prev.investmentTransactions],
             }));
-            await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
-                includeTransaction: normalizedInserted,
-            });
+            /**
+             * Cash updates for buy/sell run in parallel with the position write below.
+             * Cash-only / dividend paths still update cash here before early return.
+             */
+            if (isCashFlow || tradeData.type === 'dividend') {
+                await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
+                    includeTransaction: normalizedInserted,
+                });
+            }
             recomputed = true;
             insertedInvestmentTransactionId = String(normalizedInserted.id || '');
             insertedTradeTransactions = 1;
@@ -5399,7 +5646,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         // 3. Process trade logic (skip for deposit/withdrawal / dividend — dividend only updates ledger cash)
         if (isCashFlow) {
-            sealHoldingsBookAfterTrade();
+            sealHoldingsBookAfterTrade({ defer: true });
             tradeSubmissionInFlightRef.current = false;
             return {
                 insertedInvestmentTransactionId,
@@ -5418,7 +5665,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
              */
             const dripHolding = existingHolding;
             const divId = insertedInvestmentTransactionId;
-            sealHoldingsBookAfterTrade();
+            sealHoldingsBookAfterTrade({ defer: true });
             tradeSubmissionInFlightRef.current = false;
             if (
                 dripHolding?.dividendDistribution === 'Reinvest' &&
@@ -5469,25 +5716,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     'For manual valuation, enter the current position value (e.g. Mashora balance, retirement account value).',
                 );
             }
-            const mergedTxs = newTransaction
-                ? [
-                      stampInvestmentTradeIdentity(
-                          normalizeInvestmentTransaction(newTransaction),
-                          {
-                              portfolioId: portfolio.id,
-                              currency: tradePayload.currency ?? portfolioLedgerCurrency ?? txCurrency,
-                          },
-                      ),
-                      ...(dataRef.current?.investmentTransactions ?? []).filter((t) => t.id !== newTransaction.id),
-                  ]
-                : [...(dataRef.current?.investmentTransactions ?? [])];
 
             /**
              * Position book: incremental mutation of the traded symbol only.
+             * Cash + holding writes run in parallel after the ledger insert.
              * Never run portfolio-wide persistHoldingsFromReplayMap after buy/sell.
              */
             if (tradeData.type === 'buy' || tradeData.type === 'sell') {
-                const deltaResult = await applyPositionDeltaForTrade({
+                const cashWrite = applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
+                    includeTransaction: newTransaction ?? undefined,
+                });
+                const positionWrite = applyPositionDeltaForTrade({
                     portfolioId: portfolio.id,
                     symbol: normalizedSymbol,
                     side: tradeData.type,
@@ -5504,87 +5743,97 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     addHolding,
                     deleteHolding,
                 });
+                const [, deltaResult] = await Promise.all([cashWrite, positionWrite]);
                 positionDeltaOut = deltaResult.positionDelta;
 
-                await yieldToMain();
-                const portfolioAfter = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id) ?? portfolio;
-                await syncLotsAfterTrade({
-                    portfolio: portfolioAfter,
-                    investmentTransactions: mergedTxs,
-                    corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
-                    touchedSymbols: [normalizedSymbol],
-                    resolveHolding: (sym) => {
-                        const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
-                        return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
-                    },
-                    updateHolding,
-                    supabase,
-                    userId: auth.user.id,
-                    onLotsUpdated: (updatedLots) => {
-                        applyFinancialDataPatch((prev) => ({
-                            ...prev,
-                            investmentCostLots: [
-                                ...updatedLots,
-                                ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolio.id),
-                            ],
-                        }));
-                    },
-                });
-            }
-            if (tradeData.type === 'buy') {
-                const snap = dataRef.current;
-                const pf = (snap?.investments ?? []).find((p) => p.id === portfolio.id);
-                let holdingAfter = pf?.holdings.find(
-                    (h) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol,
-                );
-                if (!holdingAfter && supabase && auth?.user) {
-                    const { data: holdingRow, error: holdingReadError } = await supabase
-                        .from('holdings')
-                        .select('*')
-                        .eq('user_id', auth.user.id)
-                        .eq('portfolio_id', portfolio.id)
-                        .ilike('symbol', normalizedSymbol)
-                        .maybeSingle();
-                    if (holdingReadError) throw new Error(formatDbError(holdingReadError));
-                    if (holdingRow) holdingAfter = normalizeHoldingFromRow(holdingRow);
-                }
-                /**
-                 * Critical: a buy must leave an open holding. Otherwise the trade appears in the
-                 * transaction log with no portfolio position (and KPIs miss the exposure).
-                 */
-                if (!holdingAfter || !(Number(holdingAfter.quantity) > 0)) {
-                    throw new Error(
-                        `Buy for ${normalizedSymbol} did not create an open holding. Rolling back the trade so the ledger and positions stay aligned.`,
+                if (tradeData.type === 'buy') {
+                    const snap = dataRef.current;
+                    const pf = (snap?.investments ?? []).find((p) => p.id === portfolio.id);
+                    const holdingAfter = pf?.holdings.find(
+                        (h) => (h.symbol || '').trim().toUpperCase() === normalizedSymbol,
                     );
+                    if (!holdingAfter || !(Number(holdingAfter.quantity) > 0)) {
+                        const { data: holdingRow, error: holdingReadError } = await supabase
+                            .from('holdings')
+                            .select('*')
+                            .eq('user_id', userId)
+                            .eq('portfolio_id', portfolio.id)
+                            .ilike('symbol', normalizedSymbol)
+                            .maybeSingle();
+                        if (holdingReadError) throw new Error(formatDbError(holdingReadError));
+                        if (!holdingRow || !(Number(holdingRow.quantity) > 0)) {
+                            throw new Error(
+                                `Buy for ${normalizedSymbol} did not create an open holding. Rolling back the trade so the ledger and positions stay aligned.`,
+                            );
+                        }
+                    }
                 }
-                if (holdingAfter) {
-                    const patched: Holding = {
-                        ...holdingAfter,
-                        ...(name ? { name } : {}),
-                        ...(tradeAssetClass ? { assetClass: tradeAssetClass as Holding['assetClass'] } : {}),
-                        ...(incomingHoldingType ? { holdingType: incomingHoldingType as Holding['holdingType'] } : {}),
-                        ...(manualCv != null ? { currentValue: manualCv } : {}),
-                        ...(tradeGoalId ? { goalId: tradeGoalId } : {}),
-                    };
-                    const needsPatch =
-                        (name && holdingAfter.name !== name) ||
-                        (tradeAssetClass && holdingAfter.assetClass !== tradeAssetClass) ||
-                        (incomingHoldingType && holdingAfter.holdingType !== incomingHoldingType) ||
-                        (manualCv != null && Math.abs((holdingAfter.currentValue ?? 0) - manualCv) > 0.01) ||
-                        (tradeGoalId && holdingAfter.goalId !== tradeGoalId);
-                    if (needsPatch) await updateHolding(patched);
-                }
+
+                /**
+                 * Lot FIFO + realized P/L: run after the modal can close.
+                 * Serialized via lotSyncChainRef so overlapping trades cannot persist stale snapshots.
+                 * Position + cash are already committed; lots are derived and may retry via repair.
+                 */
+                const portfolioIdForLots = portfolio.id;
+                const symbolForLots = normalizedSymbol;
+                const userIdForLots = userId;
+                const runLotSync = async () => {
+                    try {
+                        const snap = dataRef.current;
+                        const portfolioAfter =
+                            (snap?.investments ?? []).find((p) => p.id === portfolioIdForLots) ?? portfolio;
+                        await syncLotsAfterTrade({
+                            portfolio: portfolioAfter,
+                            investmentTransactions: snap?.investmentTransactions ?? [],
+                            corporateActionEvents: snap?.corporateActionEvents ?? [],
+                            touchedSymbols: [symbolForLots],
+                            existingLots: (snap?.investmentCostLots ?? []).filter(
+                                (l) => l.portfolioId === portfolioIdForLots,
+                            ),
+                            resolveHolding: (sym) => {
+                                const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioIdForLots);
+                                return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                            },
+                            updateHolding,
+                            supabase: db,
+                            userId: userIdForLots,
+                            onLotsUpdated: (updatedLots) => {
+                                applyFinancialDataPatch((prev) => ({
+                                    ...prev,
+                                    investmentCostLots: [
+                                        ...updatedLots,
+                                        ...(prev.investmentCostLots ?? []).filter(
+                                            (l) => l.portfolioId !== portfolioIdForLots,
+                                        ),
+                                    ],
+                                }));
+                            },
+                        });
+                    } catch (lotErr) {
+                        console.warn('Background lot sync after trade failed:', lotErr);
+                        try {
+                            toast(
+                                `Trade saved, but cost lots need a refresh (${formatUnknownError(lotErr, 'lot sync failed')}).`,
+                                'warning',
+                            );
+                        } catch {
+                            /* toast optional */
+                        }
+                    }
+                };
+                lotSyncChainRef.current = lotSyncChainRef.current.then(runLotSync, runLotSync);
+                void lotSyncChainRef.current;
             }
-            sealHoldingsBookAfterTrade();
+            sealHoldingsBookAfterTrade({ defer: true });
         } catch (error) {
             console.error("Error updating holdings after trade:", error);
             let rollbackSucceeded = false;
             let holdingsRollbackSucceeded = false;
             if (newTransaction?.id) {
-                const rollback = await supabase
+                const rollback = await db
                     .from('investment_transactions')
                     .delete()
-                    .match({ id: newTransaction.id, user_id: auth.user.id });
+                    .match({ id: newTransaction.id, user_id: userId });
                 if (rollback.error) {
                     console.error("Failed to rollback recorded transaction after holding update failure:", rollback.error);
                 } else {
@@ -5617,6 +5866,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         investmentTransactions: dataRef.current?.investmentTransactions ?? [],
                         corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
                         touchedSymbols: [normalizedSymbol],
+                        existingLots: (dataRef.current?.investmentCostLots ?? []).filter(
+                            (lot) => lot.portfolioId === portfolio.id,
+                        ),
                         resolveHolding: (sym) => {
                             const currentPortfolio = (dataRef.current?.investments ?? []).find(
                                 (candidate) => candidate.id === portfolio.id,
@@ -5626,8 +5878,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             );
                         },
                         updateHolding,
-                        supabase,
-                        userId: auth.user.id,
+                        supabase: db,
+                        userId: userId,
                         onLotsUpdated: (updatedLots) => {
                             applyFinancialDataPatch((prev) => ({
                                 ...prev,
@@ -5666,10 +5918,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     status: 'Executed',
                     filledQty: Math.max(plan.filledQty ?? 0, filledQty),
                 };
-                const { error: pe } = await supabase
+                const { error: pe } = await db
                     .from('planned_trades')
                     .update(plannedTradeToDbUpdate(executedPatch))
-                    .match({ id: plan.id, user_id: auth.user.id });
+                    .match({ id: plan.id, user_id: userId });
                 if (pe) console.error('Error updating executed plan:', pe);
                 const applyTrancheRecompute = (plannedTrades: PlannedTrade[]) => {
                     let trades = plannedTrades.map((p) => (p.id === plan.id ? executedPatch : p));
@@ -5693,20 +5945,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             t.id !== plan.id &&
                             t.status === 'Planned',
                     );
-                    for (const t of siblingsToPersist) {
-                        const { error: te } = await supabase
-                            .from('planned_trades')
-                            .update(plannedTradeToDbUpdate(t))
-                            .match({ id: t.id, user_id: auth.user.id });
-                        if (te) {
-                            console.error('Error updating tranche planned trade:', te, {
-                                id: t.id,
-                                symbol: t.symbol,
-                                trancheIndex: t.trancheIndex,
-                            });
-                            trancheUpdateErrors.push(t.symbol || t.id);
-                        }
-                    }
+                    await Promise.all(
+                        siblingsToPersist.map(async (t) => {
+                            const { error: te } = await db
+                                .from('planned_trades')
+                                .update(plannedTradeToDbUpdate(t))
+                                .match({ id: t.id, user_id: userId });
+                            if (te) {
+                                console.error('Error updating tranche planned trade:', te, {
+                                    id: t.id,
+                                    symbol: t.symbol,
+                                    trancheIndex: t.trancheIndex,
+                                });
+                                trancheUpdateErrors.push(t.symbol || t.id);
+                            }
+                        }),
+                    );
                     if (trancheUpdateErrors.length > 0) {
                         toast(
                             `Trade recorded, but ${trancheUpdateErrors.length} tranche row(s) failed to save (${trancheUpdateErrors.slice(0, 3).join(', ')}). Refresh and update remaining tranches in Execution History.`,
@@ -5731,6 +5985,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const updateInvestmentTransaction = async (tx: InvestmentTransaction, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
+        const db = supabase;
         const existing = (data?.investmentTransactions ?? []).find((t) => t.id === tx.id);
         if (!existing) throw new Error('Transaction not found.');
         if (!(opts as { system?: boolean } | undefined)?.system) {
@@ -5854,66 +6109,92 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (netDelta !== 0) {
             await applyInvestmentAccountDeltaForTrade(accountId, netDelta);
         }
-        if (isTradeEdit && normalized.portfolioId && normalized.symbol && normalized.symbol !== 'CASH') {
-            await rebuildHoldingsFromLedgerForSymbols({
-                portfolioId: normalized.portfolioId,
-                symbols: [String(normalized.symbol)],
-            });
-        }
-        const editIdempotency = `inv-tx-edit|${tx.id}|${String(normalized.date).slice(0, 10)}|${total}|${Date.now()}`;
-        const { data: editAdj } = await insertReconciliationAdjustment(supabase, auth.user.id, {
-            mechanism,
-            entityType: 'investment_transaction',
-            entityId: String(tx.id),
-            portfolioId: tx.portfolioId ?? null,
-            accountId,
-            symbol: tx.symbol || existing.symbol || null,
-            effectiveDate: String(normalized.date ?? tx.date).slice(0, 10),
-            currency: book,
-            beforeValue: Number(existing.total) || 0,
-            actualValue: total,
-            delta: roundMoney(total - (Number(existing.total) || 0)),
-            reason: `${existing.type} edited (${tx.symbol || existing.symbol || 'CASH'})`,
-            idempotencyKey: editIdempotency,
-            metadata: {
-                quantityBefore: existing.quantity ?? null,
-                quantityAfter: normalized.quantity ?? null,
-                netCashDelta: roundMoney(netDelta),
-            },
-        });
-        const cashAudit = await insertReconciliationAudit(supabase, auth.user.id, {
-            kind: 'correction',
-            mechanism,
-            entityType: 'investment_transaction',
-            entityId: String(tx.id),
-            effectiveDate: String(normalized.date ?? tx.date).slice(0, 10),
-            beforeValue: Number(existing.total) || 0,
-            afterValue: total,
-            delta: roundMoney(total - (Number(existing.total) || 0)),
-            currency: book,
-            reason: `${existing.type} edited (${tx.symbol || existing.symbol || 'CASH'})`,
-            summary: `${existing.type} ${existing.date} → ${normalized.date}: ${existing.total} → ${total} ${book}; net cash delta ${roundMoney(netDelta)}`,
-            adjustmentId: editAdj?.id ?? null,
-            metadata: {
-                accountId,
-                portfolioId: tx.portfolioId ?? null,
-                netCashDelta: roundMoney(netDelta),
-                quantityBefore: existing.quantity ?? null,
-                quantityAfter: normalized.quantity ?? null,
-            },
-        });
-        if (cashAudit || editAdj) {
-            applyFinancialDataPatch((prev) => ({
-                ...prev,
-                reconciliationAdjustments: editAdj
-                    ? [editAdj as any, ...(prev.reconciliationAdjustments ?? [])]
-                    : prev.reconciliationAdjustments,
-                reconciliationAuditEvents: cashAudit
-                    ? [cashAudit as any, ...(prev.reconciliationAuditEvents ?? [])]
-                    : prev.reconciliationAuditEvents,
-            }));
-        }
-        sealHoldingsBookAfterTrade();
+        sealHoldingsBookAfterTrade({ defer: true });
+
+        const portfolioIdForRebuild = normalized.portfolioId;
+        const symbolForRebuild = normalized.symbol;
+        const userIdForEdit = auth.user.id;
+        const runPostEditWork = async () => {
+            try {
+                if (
+                    isTradeEdit &&
+                    portfolioIdForRebuild &&
+                    symbolForRebuild &&
+                    symbolForRebuild !== 'CASH'
+                ) {
+                    await rebuildHoldingsFromLedgerForSymbols({
+                        portfolioId: portfolioIdForRebuild,
+                        symbols: [String(symbolForRebuild)],
+                    });
+                }
+                const editIdempotency = `inv-tx-edit|${tx.id}|${String(normalized.date).slice(0, 10)}|${total}|${Date.now()}`;
+                const { data: editAdj } = await insertReconciliationAdjustment(db, userIdForEdit, {
+                    mechanism,
+                    entityType: 'investment_transaction',
+                    entityId: String(tx.id),
+                    portfolioId: tx.portfolioId ?? null,
+                    accountId,
+                    symbol: tx.symbol || existing.symbol || null,
+                    effectiveDate: String(normalized.date ?? tx.date).slice(0, 10),
+                    currency: book,
+                    beforeValue: Number(existing.total) || 0,
+                    actualValue: total,
+                    delta: roundMoney(total - (Number(existing.total) || 0)),
+                    reason: `${existing.type} edited (${tx.symbol || existing.symbol || 'CASH'})`,
+                    idempotencyKey: editIdempotency,
+                    metadata: {
+                        quantityBefore: existing.quantity ?? null,
+                        quantityAfter: normalized.quantity ?? null,
+                        netCashDelta: roundMoney(netDelta),
+                    },
+                });
+                const cashAudit = await insertReconciliationAudit(db, userIdForEdit, {
+                    kind: 'correction',
+                    mechanism,
+                    entityType: 'investment_transaction',
+                    entityId: String(tx.id),
+                    effectiveDate: String(normalized.date ?? tx.date).slice(0, 10),
+                    beforeValue: Number(existing.total) || 0,
+                    afterValue: total,
+                    delta: roundMoney(total - (Number(existing.total) || 0)),
+                    currency: book,
+                    reason: `${existing.type} edited (${tx.symbol || existing.symbol || 'CASH'})`,
+                    summary: `${existing.type} ${existing.date} → ${normalized.date}: ${existing.total} → ${total} ${book}; net cash delta ${roundMoney(netDelta)}`,
+                    adjustmentId: editAdj?.id ?? null,
+                    metadata: {
+                        accountId,
+                        portfolioId: tx.portfolioId ?? null,
+                        netCashDelta: roundMoney(netDelta),
+                        quantityBefore: existing.quantity ?? null,
+                        quantityAfter: normalized.quantity ?? null,
+                    },
+                });
+                if (cashAudit || editAdj) {
+                    applyFinancialDataPatch((prev) => ({
+                        ...prev,
+                        reconciliationAdjustments: editAdj
+                            ? [editAdj as any, ...(prev.reconciliationAdjustments ?? [])]
+                            : prev.reconciliationAdjustments,
+                        reconciliationAuditEvents: cashAudit
+                            ? [cashAudit as any, ...(prev.reconciliationAuditEvents ?? [])]
+                            : prev.reconciliationAuditEvents,
+                    }));
+                }
+                sealHoldingsBookAfterTrade({ defer: true });
+            } catch (postEditErr) {
+                console.warn('Background post-edit sync failed:', postEditErr);
+                try {
+                    toast(
+                        `Trade saved, but holdings sync is still running (${formatUnknownError(postEditErr, 'sync failed')}). Refresh if quantities look stale.`,
+                        'warning',
+                    );
+                } catch {
+                    /* toast optional */
+                }
+            }
+        };
+        lotSyncChainRef.current = lotSyncChainRef.current.then(runPostEditWork, runPostEditWork);
+        void lotSyncChainRef.current;
     };
 
     const deleteInvestmentTransaction = async (transactionId: string, opts?: RecordWriteOptions) => {
@@ -6365,6 +6646,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
         let merged = { ...(data?.settings ?? {}), ...settingsUpdate };
+        if ('salaryInvestmentTargets' in settingsUpdate) {
+            merged = {
+                ...merged,
+                salaryInvestmentTargets: normalizeSalaryInvestmentTargets(settingsUpdate.salaryInvestmentTargets),
+            };
+        }
         const toValidate: Partial<Settings> = {};
         if ('goldPrice' in settingsUpdate) toValidate.goldPrice = merged.goldPrice ?? (merged as any).gold_price;
         if ('nisabAmount' in settingsUpdate) toValidate.nisabAmount = merged.nisabAmount ?? (merged as any).nisab_amount;
@@ -6378,7 +6665,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return;
         }
         const overrides = settingsOverridesToRow(merged, settingsUpdate);
-        const row: Record<string, unknown> = { ...overrides, user_id: auth.user.id };
+        /** Only write ui_acks when explicitly updated — avoid failing every settings edit if the column is not migrated yet. */
+        const { ui_acks: _omitUiAcks, ...overridesSansUiAcks } = overrides as Record<string, unknown> & {
+          ui_acks?: unknown;
+        };
+        const row: Record<string, unknown> = { ...overridesSansUiAcks, user_id: auth.user.id };
         /** Always persist when the user changes this field — `settingsOverridesToRow` omits values equal to app defaults, which would leave a stale DB value (e.g. reverting 25 → 1). */
         if ('monthStartDay' in settingsUpdate) {
           const d = Math.min(31, Math.max(1, Math.round(Number(merged.monthStartDay ?? initialData.settings.monthStartDay ?? 28))));
@@ -6395,22 +6686,65 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           row.emergency_fund_months_target = m;
           merged = { ...merged, emergencyFundMonthsTarget: m };
         }
+        if ('uiAcks' in settingsUpdate) {
+          const latest = normalizeUiAcks((dataRef.current ?? data)?.settings?.uiAcks);
+          const nextAcks = mergeUiAcks(latest, settingsUpdate.uiAcks);
+          row.ui_acks = nextAcks;
+          merged = { ...merged, uiAcks: nextAcks };
+          /**
+           * Optimistic local apply so notifications / banners clear immediately.
+           * Network upsert follows; failure keeps local dismiss (better than re-nagging).
+           */
+          applyFinancialDataPatch((prev) => ({
+            ...prev,
+            settings: { ...prev.settings, ...merged },
+          }));
+        }
+        if ('salaryInvestmentTargets' in settingsUpdate) {
+          row.salary_investing_targets = salaryInvestmentTargetsToRow(merged.salaryInvestmentTargets);
+        }
         let { error } = await supabase.from('settings').upsert([row], { onConflict: 'user_id' });
         /** Columns added by a later migration: keep older DBs writable instead of dropping every settings edit. */
-        if (error && /include_rewards_in_net_worth|emergency_fund_months_target/.test(String(error.message))) {
-            const { include_rewards_in_net_worth: _ir, emergency_fund_months_target: _ef, ...legacyRow } = row;
+        if (error && /include_rewards_in_net_worth|emergency_fund_months_target|ui_acks|salary_investing_targets/.test(String(error.message))) {
+            const {
+              include_rewards_in_net_worth: _ir,
+              emergency_fund_months_target: _ef,
+              ui_acks: _ua,
+              salary_investing_targets: _sit,
+              ...legacyRow
+            } = row;
             const retry = await supabase.from('settings').upsert([legacyRow], { onConflict: 'user_id' });
             error = retry.error;
             if (!error) {
                 console.warn(
-                    'settings: include_rewards_in_net_worth / emergency_fund_months_target columns missing — apply 20260726210000_settings_rewards_and_emergency_fund.sql to persist them.',
+                    'settings: optional columns missing — apply latest settings migrations (rewards/emergency fund / ui_acks / salary_investing_targets) to persist them.',
                 );
+                if ('salaryInvestmentTargets' in settingsUpdate) {
+                  try {
+                    toast(
+                      'Salary-invest targets saved locally only. Apply migration 20260728170500_settings_salary_investing_targets.sql to persist them.',
+                      'warning',
+                    );
+                  } catch {
+                    /* toast optional */
+                  }
+                }
+                /** Still keep uiAcks in local React state even if DB column missing. */
+                if ('uiAcks' in settingsUpdate) {
+                  return;
+                }
             }
         }
         if (error) {
             console.error("Error updating settings:", error);
-        } else {
+        } else if (!('uiAcks' in settingsUpdate)) {
             setData(prev => ({ ...prev, settings: merged }));
+        } else {
+            /** uiAcks already applied optimistically; refresh other merged fields if any. */
+            applyFinancialDataPatch((prev) => ({
+              ...prev,
+              settings: { ...prev.settings, ...merged },
+            }));
         }
     };
 
@@ -6675,6 +7009,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     for (const dupId of resolved.deleteIds) {
                         await deleteHolding(dupId);
                     }
+                    const live = (dataRef.current?.investments ?? [])
+                        .find((p) => p.id === group.portfolioId)
+                        ?.holdings.find((h) => h.id === resolved.keep.id);
+                    if (
+                        live &&
+                        Math.abs(Number(live.realizedPnL ?? 0) - Number(resolved.keep.realizedPnL ?? 0)) > 0.01
+                    ) {
+                        await updateHolding({ ...live, realizedPnL: Number(resolved.keep.realizedPnL ?? 0) });
+                    }
                 }
             } catch (error) {
                 console.warn('Duplicate holdings reconciliation skipped due to error:', error);
@@ -6731,6 +7074,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         refreshReconciliationAudit,
         retryReconciliationRun,
         rebuildHoldingsFromLedgerForSymbols,
+        backfillRealizedPnLForAllPortfolios,
         addWatchlistItem,
         updateWatchlistItem,
         deleteWatchlistItem,

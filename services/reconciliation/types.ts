@@ -96,6 +96,18 @@ export interface ApplyReconciliationInput {
   effectiveDate?: string;
   currency?: 'SAR' | 'USD';
   costBasisTotal?: number;
+  /**
+   * Restate remaining weighted-average cost (broker book). When set with unchanged or
+   * decreased qty, replaces holding.avgCost. Ignored on qty-up (use costBasisTotal for added shares).
+   */
+  targetAvgCost?: number;
+  /**
+   * Restate total remaining cost basis (avgCost × qty). Takes precedence over targetAvgCost
+   * when both are provided. On qty-up this is treated as the full new book (not only added shares).
+   */
+  targetBookCost?: number;
+  /** When true after reconcile, scale open-lot costs so FIFO book matches WAC book. Default true when cost is restated. */
+  alignLotCostsToBook?: boolean;
   /** Client nonce so intentional repeats with same delta are allowed. */
   clientNonce?: string;
   metadata?: Record<string, unknown>;

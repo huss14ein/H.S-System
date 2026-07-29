@@ -22,6 +22,10 @@ describe('portfolio period P/L end-to-end', () => {
     expect(read('services/portfolioPeriodPnL.ts')).toContain('endCashSar');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('singlePortfolioOnAccount');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('resolvePortfolioPeriodPnLEndValueSar');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('reconstructSeededStartCashSar');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('computeInPeriodBuyCostSar');
+    expect(read('services/portfolioPeriodPnLDigest.ts')).toContain('brokerCashBucketsFromInvestmentAccount');
+    expect(read('services/portfolioPeriodPnLDigest.ts')).toContain('getAvailableCashForAccount');
   });
 
   it('mixed-ownership account: managed deposit does not inflate personal week P/L', () => {

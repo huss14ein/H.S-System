@@ -84,8 +84,8 @@ export const EXPENSE_CATEGORIES: CategoryDefinition[] = [
     typicalRange: { min: 100, max: 500 },
     frequency: 'monthly',
     essentialLevel: 'critical',
-    keywords: ['electric', 'water', 'gas', 'internet', 'wifi', 'phone', 'bill', 'utility'],
-    merchantPatterns: ['*electric*', '*water*', '*gas*', '*internet*', '*telecom*', '*utility*'],
+    keywords: ['electric', 'water', 'gas', 'internet', 'wifi', 'phone', 'bill', 'utility', 'stc', 'mobily', 'zain', 'yaqoot', 'salam', 'اتصالات', 'جوال', 'فاتورة'],
+    merchantPatterns: ['*electric*', '*water*', '*gas*', '*internet*', '*telecom*', '*utility*', '*stc*', '*mobily*', '*zain*', '*yaqoot*'],
     priceBenchmarks: [
       { item: 'Electricity (Apartment)', typicalPrice: 100, unit: 'monthly', priceRange: { low: 60, high: 200 }, source: 'ai_aggregated', lastUpdated: new Date() },
       { item: 'Internet 100Mbps', typicalPrice: 60, unit: 'monthly', priceRange: { low: 40, high: 100 }, source: 'ai_aggregated', lastUpdated: new Date() },
@@ -99,8 +99,8 @@ export const EXPENSE_CATEGORIES: CategoryDefinition[] = [
     typicalRange: { min: 300, max: 1500 },
     frequency: 'monthly',
     essentialLevel: 'important',
-    keywords: ['grocery', 'restaurant', 'food', 'dining', 'takeout', 'delivery', 'supermarket'],
-    merchantPatterns: ['*grocery*', '*supermarket*', '*restaurant*', '*food*', '*dining*'],
+    keywords: ['grocery', 'restaurant', 'food', 'dining', 'takeout', 'delivery', 'supermarket', 'tamimi', 'panda', 'carrefour', 'danube', 'lulu', 'hungerstation', 'jahez', 'mrsool', 'keeta', 'starbucks', 'mcdonalds', 'kfc', 'مطعم', 'مقهى', 'بقالة'],
+    merchantPatterns: ['*grocery*', '*supermarket*', '*restaurant*', '*food*', '*dining*', '*tamimi*', '*panda*', '*carrefour*', '*hunger*', '*jahez*', '*mrsool*'],
     priceBenchmarks: [
       { item: 'Weekly Groceries (1 person)', typicalPrice: 80, unit: 'weekly', priceRange: { low: 50, high: 150 }, source: 'ai_aggregated', lastUpdated: new Date() },
       { item: 'Restaurant Meal (Casual)', typicalPrice: 25, unit: 'per meal', priceRange: { low: 15, high: 40 }, source: 'ai_aggregated', lastUpdated: new Date() },
@@ -114,8 +114,8 @@ export const EXPENSE_CATEGORIES: CategoryDefinition[] = [
     typicalRange: { min: 200, max: 1500 },
     frequency: 'monthly',
     essentialLevel: 'important',
-    keywords: ['gas', 'fuel', 'car', 'auto', 'maintenance', 'uber', 'lyft', 'transit', 'bus', 'train'],
-    merchantPatterns: ['*gas*', '*fuel*', '*auto*', '*car*', '*uber*', '*lyft*', '*transit*'],
+    keywords: ['gas', 'fuel', 'car', 'auto', 'maintenance', 'uber', 'lyft', 'transit', 'bus', 'train', 'careem', 'aldrees', 'sasco', 'petrol', 'وقود', 'نقل'],
+    merchantPatterns: ['*gas*', '*fuel*', '*auto*', '*car*', '*uber*', '*lyft*', '*transit*', '*careem*', '*aldrees*', '*sasco*'],
     priceBenchmarks: [
       { item: 'Gas (per gallon)', typicalPrice: 3.50, unit: 'per gallon', priceRange: { low: 3.00, high: 5.00 }, source: 'ai_aggregated', lastUpdated: new Date() },
       { item: 'Rideshare (per mile)', typicalPrice: 2.50, unit: 'per mile', priceRange: { low: 1.50, high: 4.00 }, source: 'ai_aggregated', lastUpdated: new Date() },
@@ -144,8 +144,8 @@ export const EXPENSE_CATEGORIES: CategoryDefinition[] = [
     typicalRange: { min: 100, max: 1000 },
     frequency: 'variable',
     essentialLevel: 'discretionary',
-    keywords: ['shopping', 'clothing', 'electronics', 'amazon', 'retail', 'store'],
-    merchantPatterns: ['*amazon*', '*retail*', '*store*', '*shopping*', '*mall*'],
+    keywords: ['shopping', 'clothing', 'electronics', 'amazon', 'retail', 'store', 'jarir', 'noon', 'extra', 'ikea', 'shein', 'namshi', 'متجر', 'تسوق', 'نون'],
+    merchantPatterns: ['*amazon*', '*retail*', '*store*', '*shopping*', '*mall*', '*jarir*', '*noon*', '*extra*', '*ikea*'],
     priceBenchmarks: [
       { item: 'Clothing Item (Average)', typicalPrice: 50, unit: 'per item', priceRange: { low: 20, high: 150 }, source: 'ai_aggregated', lastUpdated: new Date() },
       { item: 'Electronics (Accessory)', typicalPrice: 100, unit: 'per item', priceRange: { low: 20, high: 300 }, source: 'ai_aggregated', lastUpdated: new Date() }

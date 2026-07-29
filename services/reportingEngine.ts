@@ -173,6 +173,9 @@ export interface WealthSummaryReportInput {
   monthlyIncome: number;
   monthlyExpenses: number;
   monthlyPnL: number;
+  salaryInvestRatePct?: number;
+  investedFromSalarySar?: number;
+  fundedNotDeployedSar?: number;
   savingsRatePct: number;
   debtToAssetRatioPct: number;
   emergencyFundMonths: number;
@@ -258,6 +261,9 @@ export function generateWealthSummaryReportJson(input: WealthSummaryReportInput)
       monthlyIncome: safe(input.monthlyIncome),
       monthlyExpenses: safe(input.monthlyExpenses),
       monthlyPnL: safe(input.monthlyPnL),
+      salaryInvestRatePct: safe(input.salaryInvestRatePct ?? 0),
+      investedFromSalarySar: safe(input.investedFromSalarySar ?? 0),
+      fundedNotDeployedSar: safe(input.fundedNotDeployedSar ?? 0),
       savingsRatePct: safe(input.savingsRatePct),
       debtToAssetRatioPct: safe(input.debtToAssetRatioPct),
       emergencyFundMonths: safe(input.emergencyFundMonths),
@@ -325,6 +331,9 @@ export function generateWealthSummaryReportCsv(input: WealthSummaryReportInput):
     monthlyIncome: input.monthlyIncome,
     monthlyExpenses: input.monthlyExpenses,
     monthlyPnL: input.monthlyPnL,
+    salaryInvestRatePct: input.salaryInvestRatePct ?? '',
+    investedFromSalarySar: input.investedFromSalarySar ?? '',
+    fundedNotDeployedSar: input.fundedNotDeployedSar ?? '',
     savingsRatePct: input.savingsRatePct,
     debtToAssetRatioPct: input.debtToAssetRatioPct,
     emergencyFundMonths: input.emergencyFundMonths,
@@ -537,6 +546,9 @@ export function generateWealthSummaryReportHtml(
     ${metricCard('Savings Rate', pct(input.savingsRatePct), savingsTone(input.savingsRatePct))}
     ${metricCard('Debt-to-Asset Ratio', pct(input.debtToAssetRatioPct), input.debtToAssetRatioPct > 40 ? 'bad' : input.debtToAssetRatioPct > 20 ? 'warn' : 'good')}
     ${metricCard('Investment Style', escapeHtml(input.investmentStyle), 'neutral')}
+    ${metricCard('Salary invest rate', pct(input.salaryInvestRatePct ?? 0), 'neutral')}
+    ${metricCard('Invested from salary', money(input.investedFromSalarySar ?? 0), 'good')}
+    ${metricCard('Funded not deployed', money(input.fundedNotDeployedSar ?? 0), (input.fundedNotDeployedSar ?? 0) > 0 ? 'warn' : 'good')}
   </div></section>` : ''}
 
   ${cfg.includeRisk ? `<section class="section"><h2>Resilience & Risk</h2>

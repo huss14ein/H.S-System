@@ -43,6 +43,10 @@ import {
 } from './index';
 import { buildReplayRunPayload } from './replay';
 import { normalizeReconciliationAdjustmentRow } from './types';
+import {
+  alignOpenLotsToTargetQuantity,
+  rescaleOpenLotsToTargetBookCost,
+} from '../alignOpenLotsToHolding';
 
 export interface ReconciliationOrchestratorDeps {
   db: SupabaseClient;
@@ -72,6 +76,11 @@ export interface ReconciliationOrchestratorDeps {
    * overwriting the just-set book quantity (same contract as syncLotsAfterTrade).
    */
   syncLotsForSymbols?: (args: { portfolioId: string; symbols: string[] }) => Promise<void>;
+  /** Persist open lots after cost rescale (qty already trimmed by syncLotsForSymbols). */
+  persistAlignedLotsForPortfolio?: (args: {
+    portfolioId: string;
+    lots: import('../../types').InvestmentCostLot[];
+  }) => Promise<void>;
   /** Reverse a prior buy/sell/dividend/fee/deposit edit that wrote an adjustment row. */
   reverseInvestmentTransactionEdit?: (adj: ReconciliationAdjustment) => Promise<void>;
   applyFinancialDataPatch: (fn: (prev: FinancialData) => FinancialData) => void;
@@ -251,13 +260,29 @@ async function applyCashAccount(
     if (!rpcErr && rpcData && (rpcData as any).ok) {
       // Refresh local state via soft refetch of affected rows
       const { data: accRow } = await deps.db.from('accounts').select('*').eq('id', account.id).maybeSingle();
-      const { data: txs } = await deps.db
-        .from('transactions')
-        .select('*')
-        .eq('user_id', deps.userId)
-        .eq('account_id', account.id)
-        .order('date', { ascending: false })
-        .limit(50);
+      /** Production may expose camelCase `accountId` only — try snake then camel. */
+      let txs: unknown[] | null = null;
+      {
+        const snake = await deps.db
+          .from('transactions')
+          .select('*')
+          .eq('user_id', deps.userId)
+          .eq('account_id', account.id)
+          .order('date', { ascending: false })
+          .limit(50);
+        if (!snake.error && Array.isArray(snake.data)) {
+          txs = snake.data;
+        } else {
+          const camel = await deps.db
+            .from('transactions')
+            .select('*')
+            .eq('user_id', deps.userId)
+            .eq('accountId', account.id)
+            .order('date', { ascending: false })
+            .limit(50);
+          if (!camel.error && Array.isArray(camel.data)) txs = camel.data;
+        }
+      }
       let liabilityPatch: Liability | null = null;
       if (account.type === 'Credit') {
         const liab = findCreditCardLiabilityForAccount(data.liabilities, account.id);
@@ -316,8 +341,15 @@ async function applyCashAccount(
           : undefined,
       };
     }
-    // Fall through to client path when RPC missing.
-    if (rpcErr && !/could not find|PGRST|function|schema cache|404/i.test(String(rpcErr.message))) {
+    // Fall through to client path when RPC missing OR transactions column-compat error
+    // (production schemas that only have "accountId" before fix migration is applied).
+    const rpcMsg = String(rpcErr?.message ?? '');
+    if (
+      rpcErr &&
+      !/could not find|PGRST|function|schema cache|404|account_id does not exist|accountId does not exist/i.test(
+        rpcMsg,
+      )
+    ) {
       return { ok: false, error: rpcErr.message };
     }
   }
@@ -454,14 +486,13 @@ async function applyRevaluation(
     const l = (data.liabilities ?? []).find((x) => x.id === input.entityId);
     if (!l) return { ok: false, error: 'Liability not found.' };
     await deps.updateLiability({ ...l, amount: roundMoney(preview.actualValue) });
-    // Credit-linked mirror: credit account balances are stored as positive outstanding (same as Accounts UI).
+    // Credit-linked mirror: keep the same signed amount as the liability (debt = negative).
     const creditAccountId =
       (l as Liability & { accountId?: string }).accountId ?? (l as { account_id?: string }).account_id;
     if (l.type === 'Credit Card' && creditAccountId) {
       const acc = (deps.getData().accounts ?? []).find((a) => a.id === creditAccountId);
       if (acc && acc.type === 'Credit') {
-        const mirroredBalance = roundMoney(Math.abs(preview.actualValue));
-        await deps.updatePlatform({ ...acc, balance: mirroredBalance }, { fromTransactionDelta: true });
+        await deps.updatePlatform({ ...acc, balance: roundMoney(preview.actualValue) }, { fromTransactionDelta: true });
       }
     }
   }
@@ -658,25 +689,43 @@ async function applyHoldingQty(
 
   const newQty = roundQuantity(preview.actualValue);
   if (newQty < 0) return { ok: false, error: 'Quantity cannot be negative.' };
-  // Sold / closed: allow zero qty but do not resurrect via this path if holding missing (already guarded).
-  let avgCost = Number(holding.avgCost) || 0;
-  if (preview.delta > 0) {
-    const addCost = Number(input.costBasisTotal);
-    if (!Number.isFinite(addCost) || addCost < 0) {
-      return { ok: false, error: 'Increasing quantity requires total cost basis for added shares.' };
+  const beforeAvg = Number(holding.avgCost) || 0;
+  const beforeBook = roundMoney(beforeAvg * preview.beforeValue);
+  let avgCost = beforeAvg;
+
+  const hasTargetBook =
+    input.targetBookCost != null && Number.isFinite(Number(input.targetBookCost)) && Number(input.targetBookCost) >= 0;
+  const hasTargetAvg =
+    input.targetAvgCost != null && Number.isFinite(Number(input.targetAvgCost)) && Number(input.targetAvgCost) >= 0;
+  const hasAddCost =
+    input.costBasisTotal != null && Number.isFinite(Number(input.costBasisTotal)) && Number(input.costBasisTotal) >= 0;
+
+  if (newQty <= 0) {
+    avgCost = 0;
+  } else if (hasTargetBook) {
+    avgCost = roundAvgCostPerUnit(Number(input.targetBookCost) / newQty);
+  } else if (preview.delta > 0) {
+    if (hasAddCost) {
+      const oldCost = beforeAvg * preview.beforeValue;
+      avgCost = roundAvgCostPerUnit((oldCost + Number(input.costBasisTotal)) / newQty);
+    } else {
+      return { ok: false, error: 'Increasing quantity requires total cost basis for added shares (or target book cost).' };
     }
-    const oldCost = avgCost * preview.beforeValue;
-    avgCost = newQty > 0 ? roundAvgCostPerUnit((oldCost + addCost) / newQty) : 0;
+  } else if (hasTargetAvg) {
+    avgCost = roundAvgCostPerUnit(Number(input.targetAvgCost));
   }
+  // qty-down without cost restatement: keep WAC avgCost (standard accounting).
 
   const updated: Holding = {
     ...holding,
     quantity: newQty,
     avgCost,
     currentValue:
-      newQty > 0 && Number(holding.currentPrice) > 0
-        ? roundMoney(newQty * Number(holding.currentPrice))
-        : holding.currentValue,
+      newQty <= 0
+        ? 0
+        : Number(holding.currentPrice) > 0
+          ? roundMoney(newQty * Number(holding.currentPrice))
+          : holding.currentValue,
   };
   await deps.updateHolding(updated);
   deps.bumpHoldingsBookGeneration?.();
@@ -684,6 +733,7 @@ async function applyHoldingQty(
   /**
    * Always rebuild lots/PnL for this symbol after a book qty change (never rewrite qty again).
    * Backdated fixes also run the month-lock / marks gate so blocked cases surface instead of inventing ROI.
+   * syncLotsForSymbols also FIFO-trims open lots to the new holding quantity (sold qty).
    */
   const backdated = effectiveDate < appCalendarTodayYmd();
   let replayStatus: 'completed' | 'blocked' | 'failed' = 'completed';
@@ -713,6 +763,28 @@ async function applyHoldingQty(
     }
   }
 
+  /** After qty trim, rescale FIFO lot costs to the holding WAC book whenever align is requested. */
+  const shouldAlignLotCosts = input.alignLotCostsToBook !== false && newQty > 0;
+  if (shouldAlignLotCosts) {
+    const sym = String(holding.symbol ?? '').toUpperCase();
+    const targetBook = roundMoney(avgCost * newQty);
+    let lotsForPersist: import('../../types').InvestmentCostLot[] | null = null;
+    deps.applyFinancialDataPatch((prev) => {
+      let lots = prev.investmentCostLots ?? [];
+      const trimmed = alignOpenLotsToTargetQuantity(lots, sym, newQty);
+      lots = rescaleOpenLotsToTargetBookCost(trimmed.lots, sym, targetBook);
+      lotsForPersist = lots.filter((l) => l.portfolioId === portfolio.id);
+      return { ...prev, investmentCostLots: lots };
+    });
+    if (deps.persistAlignedLotsForPortfolio && lotsForPersist) {
+      try {
+        await deps.persistAlignedLotsForPortfolio({ portfolioId: portfolio.id, lots: lotsForPersist });
+      } catch (e) {
+        console.warn('persistAlignedLotsForPortfolio:', e);
+      }
+    }
+  }
+
   const runPayload = buildReplayRunPayload({
     userId: deps.userId,
     portfolioId: portfolio.id,
@@ -725,7 +797,17 @@ async function applyHoldingQty(
     entityType: 'holding',
     entityIds: [holding.id],
     errorMessage: replayError,
-    metadata: { ...runPayload.metadata, symbol: holding.symbol, backdated },
+    metadata: {
+      ...runPayload.metadata,
+      symbol: holding.symbol,
+      backdated,
+      beforeAvgCost: beforeAvg,
+      afterAvgCost: avgCost,
+      beforeBookCost: beforeBook,
+      afterBookCost: roundMoney(avgCost * newQty),
+      targetAvgCost: input.targetAvgCost ?? null,
+      targetBookCost: input.targetBookCost ?? null,
+    },
   });
   if (replayError) {
     deps.toast?.(replayError, 'info');
@@ -741,6 +823,13 @@ async function applyHoldingQty(
     reason,
     clientNonce,
   });
+  const storedCostBasis = hasTargetBook
+    ? Number(input.targetBookCost)
+    : hasAddCost
+      ? Number(input.costBasisTotal)
+      : hasTargetAvg && newQty > 0
+        ? roundMoney(Number(input.targetAvgCost) * newQty)
+        : input.costBasisTotal ?? null;
   const { data: adj, error: adjErr } = await insertReconciliationAdjustment(deps.db, deps.userId, {
     mechanism: 'reconcile_quantity',
     entityType: 'holding',
@@ -753,7 +842,7 @@ async function applyHoldingQty(
     beforeValue: preview.beforeValue,
     actualValue: preview.actualValue,
     delta: preview.delta,
-    costBasisTotal: input.costBasisTotal ?? null,
+    costBasisTotal: storedCostBasis,
     reason,
     idempotencyKey,
   });
@@ -771,7 +860,13 @@ async function applyHoldingQty(
     reason,
     adjustmentId: adj?.id ?? null,
     runId: run?.id ?? null,
-    summary: `Reconcile quantity ${holding.symbol}: ${preview.beforeValue} → ${preview.actualValue}`,
+    summary: `Reconcile holding ${holding.symbol}: qty ${preview.beforeValue} → ${preview.actualValue}, avg ${beforeAvg.toFixed(4)} → ${avgCost.toFixed(4)}`,
+    metadata: {
+      beforeAvgCost: beforeAvg,
+      afterAvgCost: avgCost,
+      beforeBookCost: beforeBook,
+      afterBookCost: roundMoney(avgCost * newQty),
+    },
   });
 
   deps.applyFinancialDataPatch((prev) => ({
@@ -791,7 +886,15 @@ async function applyHoldingQty(
     reason,
     mechanism: 'reconcile_quantity',
   });
-  deps.toast?.('Holding quantity reconciled.', 'success');
+  const costRestated =
+    hasTargetBook ||
+    hasTargetAvg ||
+    (preview.delta > 0 && hasAddCost) ||
+    Math.abs(avgCost - beforeAvg) > 1e-9;
+  deps.toast?.(
+    costRestated ? 'Holding quantity / cost basis reconciled.' : 'Holding quantity reconciled.',
+    'success',
+  );
   return { ok: true, adjustment: adj ?? undefined, audit: audit ?? undefined, run };
 }
 
@@ -879,7 +982,7 @@ export async function orchestrateReverseReconciliation(
       const acc = (deps.getData().accounts ?? []).find((a) => a.id === creditAccountId);
       if (acc && acc.type === 'Credit') {
         await deps.updatePlatform(
-          { ...acc, balance: roundMoney(Math.abs(targets.actualValue)) },
+          { ...acc, balance: roundMoney(targets.actualValue) },
           { fromTransactionDelta: true },
         );
       }

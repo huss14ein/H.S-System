@@ -642,8 +642,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
         if (!pageAction || !pageAction.startsWith('open-revalue')) return;
         if (!canRevalue) {
             toast('Your role cannot post reconciliation adjustments.', 'error');
-            clearPageAction?.();
-            return;
+            return scheduleClearPageAction(clearPageAction);
         }
         const requestedId = pageAction.includes(':') ? pageAction.split(':').slice(1).join(':') : '';
         const target = requestedId
@@ -651,7 +650,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
             : (assetsList as Asset[])[0] ?? null;
         if (target) setRevalueTarget({ kind: 'asset', asset: target });
         else toast('No physical asset found to revalue.', 'info');
-        clearPageAction?.();
+        return scheduleClearPageAction(clearPageAction);
     }, [pageAction, clearPageAction, canRevalue, assetsList]);
 
     const { totalAssetValue, totalPhysicalAssetValue, totalCommodityValue, totalRentalIncome } = useMemo(() => {

@@ -86,6 +86,7 @@ export function computePositionFieldsAfterTrade(args: {
   }
   const sold = applySellToHolding(args.existing, qty);
   if (sold.closed) {
+    /** Caller maps delete → qty-0 update so realized P/L survives full exits. */
     return { action: 'delete', quantity: 0, avgCost: sold.avgCost, currentValue: 0 };
   }
   return {

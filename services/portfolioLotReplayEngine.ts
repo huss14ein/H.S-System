@@ -136,8 +136,14 @@ export async function rebuildCostLotsFromEvents(args: {
   /** Symbols already held — allows legacy orphan buys to feed FIFO lots. */
   holdingSymbols?: Iterable<string>;
   accountId?: string | null;
+  /**
+   * When false, run the timeline without yielding (Record Trade hot path).
+   * Default true so long CA/repair rebuilds keep the UI responsive.
+   */
+  yieldDuringReplay?: boolean;
 }): Promise<LotReplayResult> {
   const bookCurrency = args.bookCurrency ?? 'SAR';
+  const yieldDuringReplay = args.yieldDuringReplay !== false;
   let internalLots: CostLot[] = [];
   const realizedPnLBySymbol = new Map<string, number>();
   const realizedPnLByTransactionId = new Map<string, number>();
@@ -167,7 +173,7 @@ export async function rebuildCostLotsFromEvents(args: {
 
   for (let i = 0; i < timeline.length; i++) {
     if (args.signal?.aborted) break;
-    if (i > 0 && i % CHUNK_SIZE === 0) await yieldToMain();
+    if (yieldDuringReplay && i > 0 && i % CHUNK_SIZE === 0) await yieldToMain();
 
     const item = timeline[i]!;
     if (item.kind === 'tx') {

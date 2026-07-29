@@ -333,7 +333,11 @@ export function computePortfolioSnapshotValueSar(args: {
   return holdingsSar + (args.includeCash ? args.state.cashSar : 0);
 }
 
-/** Net external cash added to the portfolio in [startMs, endMs]: deposits − withdrawals (SAR). */
+/**
+ * Net external cash added to the portfolio in [startMs, endMs]: deposits − withdrawals (SAR).
+ * Includes broker-cash reconcile deposit/withdrawal rows so MTM period P/L stays coherent when
+ * end cash reflects the same balance correction (capital Invested/Withdrawn KPIs exclude those rows).
+ */
 export function computeNetExternalInvestmentFlowSarInRange(args: {
   transactions: InvestmentTransaction[];
   startMs: number;
@@ -355,6 +359,86 @@ export function computeNetExternalInvestmentFlowSarInRange(args: {
   return deposits - withdrawals;
 }
 
+/** Buy notional inside the window (SAR) — used to reconstruct start cash when seeding. */
+export function computeInPeriodBuyCostSar(args: {
+  transactions: InvestmentTransaction[];
+  startMs: number;
+  endMs: number;
+  accounts: Account[];
+  portfolios: InvestmentPortfolio[];
+  data: FinancialData;
+  sarPerUsd: number;
+}): number {
+  let buyCostSar = 0;
+  for (const tx of args.transactions) {
+    const day = txDayMs(tx);
+    if (Number.isNaN(day) || day < args.startMs || day > args.endMs) continue;
+    if (isInvestmentTransactionType(tx.type, 'buy')) {
+      buyCostSar += cashSarForTx({ tx, ...args });
+    }
+  }
+  return buyCostSar;
+}
+
+/**
+ * Start cash for period P/L when holdings were seeded (ledger does not explain the book).
+ *
+ * Previously we set startCash = endCash. Combined with excluding in-period buy symbols from the
+ * seeded start lots, buys funded from existing broker cash inflated Week/Month P/L by ~buy notional
+ * (cash canceled in the identity, so buy cost never entered the denominator).
+ *
+ * Reconstruct so buy notional is treated as a cash→holdings transfer, not P/L:
+ *   startCash ≈ endCash − deposits + withdrawals + buys
+ *            = endCash − externalFlow + buyCost
+ *
+ * Do not subtract sell proceeds here: start lots are seeded from *current* holdings, so sold qty is
+ * already absent — subtracting sells would count full proceeds as fake gains.
+ */
+export function reconstructSeededStartCashSar(args: {
+  endCashSar: number;
+  externalFlowSar: number;
+  buyCostSar: number;
+}): number {
+  return Math.max(
+    0,
+    (Number(args.endCashSar) || 0) -
+      (Number(args.externalFlowSar) || 0) +
+      (Number(args.buyCostSar) || 0),
+  );
+}
+
+/** Resolve holdings+cash start value for period MTM (shared by summary + daily series). */
+export function resolvePeriodStartValueSar(args: {
+  holdingsStartSar: number;
+  includeCash: boolean;
+  ledgerExplainsHoldings: boolean;
+  /** @deprecated Prefer passing `endCashSar` for any seeded portfolio (incl. sibling-attributed cash). */
+  singlePortfolioOnAccount?: boolean;
+  startStateCashSar: number;
+  endCashSar?: number;
+  externalFlowSar: number;
+  buyCostSar: number;
+}): { startCashSar: number; startValueSar: number } {
+  let startCashSar = 0;
+  if (args.includeCash) {
+    /**
+     * Seeded / orphan ledger: reconstruct start cash from attributed end cash + flows + buys.
+     * Applies to single-portfolio accounts and sibling-attributed cash slices alike — gating only on
+     * `singlePortfolioOnAccount` left multi-portfolio brokers with the same buy-as-gain bug.
+     */
+    if (!args.ledgerExplainsHoldings && args.endCashSar != null) {
+      startCashSar = reconstructSeededStartCashSar({
+        endCashSar: Math.max(0, args.endCashSar),
+        externalFlowSar: args.externalFlowSar,
+        buyCostSar: args.buyCostSar,
+      });
+    } else if (args.ledgerExplainsHoldings) {
+      startCashSar = Math.max(0, args.startStateCashSar);
+    }
+  }
+  return { startCashSar, startValueSar: args.holdingsStartSar + startCashSar };
+}
+
 /**
  * Mark-to-market period P/L (SAR): end live value − start cost snapshot − net deposits/withdrawals.
  * Same formula as Wealth Analytics / Investments hub — not daily P/L × trading days.
@@ -365,9 +449,9 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
   startMs: number;
   endMs: number;
   endValueSar: number;
-  /** Cash slice at period end — aligns start cash when ledger does not explain holdings (single-portfolio accounts). */
+  /** Cash slice at period end — used to reconstruct start cash when ledger does not explain holdings. */
   endCashSar?: number;
-  /** When true, orphan-ledger portfolios align start cash to end cash (one portfolio per broker). */
+  /** When true, orphan-ledger portfolios reconstruct start cash from end cash + flows (one portfolio per broker). */
   singlePortfolioOnAccount?: boolean;
   includeCash: boolean;
   accounts: Account[];
@@ -402,15 +486,8 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     useLiveMark: false,
     includeCash: false,
   });
-  const startCashSar =
-    args.includeCash && !ledgerExplainsHoldings && args.singlePortfolioOnAccount
-      ? Math.max(0, args.endCashSar ?? 0)
-      : args.includeCash && ledgerExplainsHoldings
-        ? Math.max(0, startState.cashSar)
-        : 0;
-  const startValueSar = holdingsStartSar + startCashSar;
 
-  const externalFlowSar = computeNetExternalInvestmentFlowSarInRange({
+  const flowCtx = {
     transactions: args.transactions,
     startMs: args.startMs,
     endMs: args.endMs,
@@ -418,6 +495,18 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     portfolios: args.portfolios,
     data: args.data,
     sarPerUsd: args.sarPerUsd,
+  };
+  const externalFlowSar = computeNetExternalInvestmentFlowSarInRange(flowCtx);
+  const buyCostSar = computeInPeriodBuyCostSar(flowCtx);
+  const { startValueSar } = resolvePeriodStartValueSar({
+    holdingsStartSar,
+    includeCash: args.includeCash,
+    ledgerExplainsHoldings,
+    singlePortfolioOnAccount: args.singlePortfolioOnAccount,
+    startStateCashSar: startState.cashSar,
+    endCashSar: args.endCashSar,
+    externalFlowSar,
+    buyCostSar,
   });
 
   const ledgerSar = computePortfolioLedgerPnLSarInRangeWithFifo({
@@ -1099,13 +1188,24 @@ function buildPortfolioDailySeriesInWindow(args: {
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);
-  const startCashSar =
-    args.includeCash && !ledgerExplainsHoldings && args.singlePortfolioOnAccount
-      ? endCashSar
-      : args.includeCash && ledgerExplainsHoldings
-        ? Math.max(0, replayState.cashSar)
-        : 0;
-  const startValueSar = holdingsStartSar + startCashSar;
+  const flowCtx = {
+    transactions: args.transactions,
+    startMs: args.startMs,
+    endMs: args.endMs,
+    ...ctx,
+  };
+  const externalFlowForStart = computeNetExternalInvestmentFlowSarInRange(flowCtx);
+  const buyCostSar = computeInPeriodBuyCostSar(flowCtx);
+  const { startValueSar } = resolvePeriodStartValueSar({
+    holdingsStartSar,
+    includeCash: args.includeCash,
+    ledgerExplainsHoldings,
+    singlePortfolioOnAccount: args.singlePortfolioOnAccount,
+    startStateCashSar: replayState.cashSar,
+    endCashSar,
+    externalFlowSar: externalFlowForStart,
+    buyCostSar,
+  });
 
   const defaultBook = resolveInvestmentPortfolioCurrency(args.portfolio);
   const useFifoLedger = portfolioUsesFifoLedger(args.data.investmentCostLots, args.portfolio.id);
@@ -1382,13 +1482,24 @@ async function buildPortfolioDailySeriesInWindowAsync(
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);
-  const startCashSar =
-    args.includeCash && !ledgerExplainsHoldings && args.singlePortfolioOnAccount
-      ? endCashSar
-      : args.includeCash && ledgerExplainsHoldings
-        ? Math.max(0, replayState.cashSar)
-        : 0;
-  const startValueSar = holdingsStartSar + startCashSar;
+  const flowCtx = {
+    transactions: args.transactions,
+    startMs: args.startMs,
+    endMs: args.endMs,
+    ...ctx,
+  };
+  const externalFlowForStart = computeNetExternalInvestmentFlowSarInRange(flowCtx);
+  const buyCostSar = computeInPeriodBuyCostSar(flowCtx);
+  const { startValueSar } = resolvePeriodStartValueSar({
+    holdingsStartSar,
+    includeCash: args.includeCash,
+    ledgerExplainsHoldings,
+    singlePortfolioOnAccount: args.singlePortfolioOnAccount,
+    startStateCashSar: replayState.cashSar,
+    endCashSar,
+    externalFlowSar: externalFlowForStart,
+    buyCostSar,
+  });
 
   const defaultBook = resolveInvestmentPortfolioCurrency(args.portfolio);
   const useFifoLedger = portfolioUsesFifoLedger(args.data.investmentCostLots, args.portfolio.id);

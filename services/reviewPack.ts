@@ -4,6 +4,7 @@ import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { detectBudgetDrift } from './budgetDrift';
 import { detectGoalConflictsFromData } from './goalConflictDetection';
 import { buildHoldingsDividendReconciliationReport } from './holdingsDividendReconciliation';
+import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
 
 export type ReviewPackSection = { title: string; lines: string[] };
 
@@ -21,6 +22,7 @@ export function buildReviewPack(
   const drift = detectBudgetDrift(data, uiExchangeRate);
   const goals = detectGoalConflictsFromData(data, uiExchangeRate);
   const recon = buildHoldingsDividendReconciliationReport(data);
+  const salaryInvestment = computeSalaryInvestmentKpis(data, uiExchangeRate);
   const sections: ReviewPackSection[] = [
     {
       title: 'Net worth',
@@ -33,6 +35,16 @@ export function buildReviewPack(
     {
       title: 'Goal conflicts',
       lines: goals.length ? goals.map((g) => g.message) : ['No goal funding conflicts detected.'],
+    },
+    {
+      title: 'Salary to investment',
+      lines: salaryInvestment?.hasSalarySignal
+        ? [
+            `Salary this month: ${Math.round(salaryInvestment.salaryIncomeSarMonth).toLocaleString()} SAR`,
+            `Funded from salary: ${Math.round(salaryInvestment.investedFromSalarySarMonth).toLocaleString()} SAR (${salaryInvestment.salaryInvestRatePct.toFixed(1)}%)`,
+            `Funded not deployed: ${Math.round(salaryInvestment.fundedNotDeployedSar).toLocaleString()} SAR`,
+          ]
+        : ['No salary signal detected this financial month.'],
     },
     {
       title: 'Data quality',

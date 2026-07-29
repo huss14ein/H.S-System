@@ -14,7 +14,8 @@ describe('portfolioLedgerSellCompletion', () => {
   it('realized PnL patch on CA sync uses post-replay qty (never spreads stale pre-sell holding)', () => {
     const sync = read('services/portfolioLedgerSync.ts');
     expect(sync).toContain('const pos = replayed.get(upper)');
-    expect(sync).toContain('quantity: roundQuantity(pos.quantity)');
+    expect(sync).toContain('quantity: roundQuantity(pos!.quantity)');
+    expect(sync).toContain('openQty');
     expect(sync).toContain('syncLotsAfterTrade');
     expect(sync).toContain('rebuildHoldingsFromLedger');
     expect(sync).toContain('Cost lot persist failed after holdings sync');
@@ -318,23 +319,23 @@ describe('portfolioLedgerSellCompletion', () => {
     expect(apply).toContain('txsForHoldingsReplay');
   });
 
-  it('full sell deletes holding and never re-writes stale qty via PnL patch', async () => {
+  it('full sell keeps qty-0 row and patches realized PnL (never restores open qty)', async () => {
+    const holding: Holding = {
+      id: 'h1',
+      symbol: 'LCID',
+      name: 'Lucid',
+      quantity: 50,
+      avgCost: 5,
+      currentValue: 350,
+      realizedPnL: 0,
+      zakahClass: 'Zakatable',
+    };
     const portfolio: InvestmentPortfolio = {
       id: 'pf1',
       name: 'Test',
       accountId: 'acc1',
       currency: 'USD',
-      holdings: [
-        {
-          id: 'h1',
-          symbol: 'LCID',
-          name: 'Lucid',
-          quantity: 50,
-          avgCost: 5,
-          currentValue: 350,
-          realizedPnL: 0,
-        },
-      ],
+      holdings: [holding],
     };
     const transactions: InvestmentTransaction[] = [
       {
@@ -361,7 +362,9 @@ describe('portfolioLedgerSellCompletion', () => {
       },
     ];
 
-    const updateHolding = vi.fn(async () => {});
+    const updateHolding = vi.fn(async (h: Holding) => {
+      Object.assign(holding, h);
+    });
     const addHolding = vi.fn(async () => {});
     const deleteHolding = vi.fn(async () => {});
 
@@ -375,14 +378,9 @@ describe('portfolioLedgerSellCompletion', () => {
       symbols: ['LCID'],
     });
 
-    expect(deleteHolding).toHaveBeenCalledWith('h1');
-    // No updateHolding should restore qty 50 after delete.
-    for (const call of updateHolding.mock.calls) {
-      const h = call[0] as Holding;
-      if (String(h.symbol).toUpperCase() === 'LCID') {
-        expect(h.quantity).toBeLessThan(1e-9);
-      }
-    }
+    expect(deleteHolding).not.toHaveBeenCalled();
+    expect(holding.quantity).toBeLessThan(1e-9);
+    expect(holding.realizedPnL).toBeCloseTo(100, 1);
     expect(addHolding).not.toHaveBeenCalled();
   });
 });

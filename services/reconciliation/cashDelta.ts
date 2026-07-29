@@ -7,6 +7,31 @@ import {
 } from './constants';
 import { appCalendarTodayYmd } from './constants';
 
+/** Stable note prefix for broker-cash reconcile rows (investment ledger). */
+export const INVESTMENT_RECONCILIATION_NOTE_PREFIX = 'reconciliation:reconcile_balance:' as const;
+
+/**
+ * Broker-cash Reconcile Balance posts as deposit/withdrawal so Σ(ledger) can move with balance,
+ * but those rows are **not** economic capital in/out (ROI / invested / withdrawn / period external).
+ */
+export function isInvestmentReconciliationCashAdjustment(tx: {
+  type?: string | null;
+  note?: string | null;
+  description?: string | null;
+  category?: string | null;
+}): boolean {
+  const typ = String(tx.type ?? '').trim().toLowerCase();
+  if (typ !== 'deposit' && typ !== 'withdrawal') return false;
+  const note = String(tx.note ?? '').trim();
+  const desc = String(tx.description ?? '').trim();
+  const category = String(tx.category ?? '').trim();
+  if (note.toLowerCase().startsWith('reconciliation:')) return true;
+  if (/^reconciliation adjustment\s*:/i.test(note)) return true;
+  if (/reconciliation adjustment/i.test(desc)) return true;
+  if (category.toLowerCase() === RECONCILIATION_ADJUSTMENT_CATEGORY.toLowerCase()) return true;
+  return false;
+}
+
 /** Signed ledger amount: income positive, expense negative (matches account Σ(tx.amount)). */
 export function buildCashReconcileLedgerTransaction(args: {
   account: Account;
@@ -48,6 +73,7 @@ export function buildBrokerCashReconcileInvestmentRow(args: {
 } {
   const abs = Math.abs(roundMoney(Number(args.delta) || 0));
   const isDeposit = (Number(args.delta) || 0) >= 0;
+  const reason = String(args.reason ?? '').trim() || 'Broker cash reconcile';
   return {
     type: isDeposit ? 'deposit' : 'withdrawal',
     total: abs,
@@ -55,7 +81,8 @@ export function buildBrokerCashReconcileInvestmentRow(args: {
     accountId: args.accountId,
     portfolioId: args.portfolioId || undefined,
     currency: args.currency,
-    note: `Reconciliation Adjustment: ${args.reason}`.slice(0, 200),
+    /** Detected by {@link isInvestmentReconciliationCashAdjustment} — excluded from capital withdrawals/deposits. */
+    note: `${INVESTMENT_RECONCILIATION_NOTE_PREFIX} ${reason}`.slice(0, 200),
     symbol: undefined,
   };
 }

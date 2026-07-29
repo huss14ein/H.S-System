@@ -2,6 +2,7 @@ import type { FinancialData, PlannedTrade, InvestmentTransaction } from '../type
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { resolveInvestmentTransactionAccountId } from '../utils/investmentLedgerCurrency';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
+import { isInvestmentReconciliationCashAdjustment } from './reconciliation/cashDelta';
 
 export interface DisciplineScoreSummary {
   score: number; // 0-100
@@ -24,7 +25,12 @@ export function computeDisciplineScore(data: FinancialData | null | undefined): 
   const executed = plannedTrades.filter(p => p.status === 'Executed');
 
   const last90d = Date.now() - 90 * 24 * 60 * 60 * 1000;
-  const recentDeposits = txs.filter(t => isInvestmentTransactionType(t.type, 'deposit') && new Date(t.date).getTime() >= last90d);
+  const recentDeposits = txs.filter(
+    (t) =>
+      isInvestmentTransactionType(t.type, 'deposit') &&
+      !isInvestmentReconciliationCashAdjustment(t) &&
+      new Date(t.date).getTime() >= last90d,
+  );
   const recentBuys = txs.filter(t => isInvestmentTransactionType(t.type, 'buy') && new Date(t.date).getTime() >= last90d);
 
   let score = 100;

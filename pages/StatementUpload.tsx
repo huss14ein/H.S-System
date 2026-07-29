@@ -11,7 +11,7 @@ import { Transaction, InvestmentTransaction, Page } from '../types';
 import InfoHint from '../components/InfoHint';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import AIAdvisor from '../components/AIAdvisor';
-import { resolveBudgetCategoryForImportedExpense } from '../services/budgetCategoryResolve';
+import { categorizeImportedTransaction } from '../services/importTransactionCategorization';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { buildDividendDedupeKey, normalizeDividendForDedupe } from '../services/dividendLedgerGuards';
 import {
@@ -26,9 +26,11 @@ import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessag
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
   triggerPageAction?: (page: Page, action: string) => void;
+  pageAction?: string | null;
+  clearPageAction?: () => void;
 }
 
-const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction }) => {
+const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
   const { data, addTransaction, recordTrade } = useContext(DataContext)!;
   const confirmAction = useConfirmAction();
   const { commitParsedStatementFromUpload } = useStatementProcessing();
@@ -93,80 +95,20 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     return 'checking';
   }, [selectedAccountObj, activeTab]);
 
-  const autoMapBudgetCategory = useCallback((tx: Transaction): string | undefined => {
-    const budgetCategories = (data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean);
-    if (budgetCategories.length === 0) return tx.budgetCategory;
-    if (tx.budgetCategory && budgetCategories.includes(tx.budgetCategory)) return tx.budgetCategory;
-    if (tx.type !== 'expense') return undefined;
-
-    const normalize = (v: string) => v.toLowerCase().replace(/[^a-z0-9\u0600-\u06FF ]/g, ' ').replace(/\s+/g, ' ').trim();
-    const tokens = (v: string) => new Set(normalize(v).split(' ').filter((t) => t.length >= 2));
-    const jaccard = (a: Set<string>, b: Set<string>) => {
-      if (a.size === 0 || b.size === 0) return 0;
-      let inter = 0;
-      a.forEach((x) => { if (b.has(x)) inter++; });
-      const union = a.size + b.size - inter;
-      return union > 0 ? inter / union : 0;
-    };
-    const txDescNorm = normalize(String(tx.description || ''));
-    const txCatNorm = normalize(String(tx.category || ''));
-    const txTokens = tokens(`${txDescNorm} ${txCatNorm}`);
-    const history = (data?.transactions ?? []).filter((h) => h.type === 'expense' && !!h.budgetCategory);
-
-    // 1) Best historical fuzzy match from similar merchant/description rows.
-    const bestHistory = history
-      .map((h) => {
-        const desc = normalize(String(h.description || ''));
-        const cat = normalize(String(h.category || ''));
-        const score = (jaccard(txTokens, tokens(`${desc} ${cat}`)) * 0.8) + (desc && txDescNorm.includes(desc) ? 0.2 : 0);
-        return { budgetCategory: h.budgetCategory, score };
-      })
-      .sort((a, b) => b.score - a.score)[0];
-    if (bestHistory?.budgetCategory && bestHistory.score >= 0.48) return bestHistory.budgetCategory;
-
-    // 2) Semantic scoring against budget labels + transaction text.
-    const keywords: Record<string, string[]> = {
-      food: ['food', 'restaurant', 'cafe', 'grocery', 'grocer', 'مطعم', 'مقهى', 'بقالة'],
-      transport: ['fuel', 'uber', 'taxi', 'transport', 'metro', 'وقود', 'نقل', 'سيارة'],
-      housing: ['rent', 'housing', 'apartment', 'utilities', 'إيجار', 'سكن'],
-      shopping: ['shopping', 'store', 'market', 'amazon', 'متجر', 'تسوق'],
-      health: ['pharmacy', 'clinic', 'hospital', 'health', 'صيدلية', 'مستشفى', 'صحة'],
-      entertainment: ['cinema', 'netflix', 'spotify', 'game', 'ترفيه', 'سينما'],
-      education: ['school', 'tuition', 'course', 'education', 'تعليم', 'جامعة'],
-      travel: ['hotel', 'airline', 'travel', 'trip', 'سفر', 'رحلة', 'فندق'],
-      bills: ['bill', 'electricity', 'water', 'internet', 'فاتورة', 'كهرباء', 'مياه', 'انترنت'],
-    };
-
-    const scored = budgetCategories.map((budgetCat) => {
-      const bNorm = normalize(budgetCat);
-      const bTokens = tokens(bNorm);
-      let score = jaccard(txTokens, bTokens) * 6;
-      if (txCatNorm && (bNorm.includes(txCatNorm) || txCatNorm.includes(bNorm))) score += 2;
-      Object.values(keywords).forEach((words) => {
-        const txHit = words.some((w) => txDescNorm.includes(w) || txCatNorm.includes(w));
-        const budgetHit = words.some((w) => bNorm.includes(w));
-        if (txHit && budgetHit) score += 1.5;
-      });
-      return { budgetCat, score };
-    }).sort((a, b) => b.score - a.score);
-
-    if (scored[0]?.score >= 1.2) return scored[0].budgetCat;
-
-    if (scored[0]?.score >= 0.55 && scored[0]?.budgetCat) return scored[0].budgetCat;
-
-    const resolved = resolveBudgetCategoryForImportedExpense(tx, budgetCategories);
-    if (resolved) return resolved;
-
-    if (budgetCategories.length === 1) return budgetCategories[0];
-    return undefined;
-  }, [data?.budgets, data?.transactions]);
-
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
-    return rows.map((tx) => ({
-      ...tx,
-      budgetCategory: autoMapBudgetCategory(tx),
-    }));
-  }, [autoMapBudgetCategory]);
+    const budgetCategoryNames = Array.from(
+      new Set((data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean)),
+    );
+    const userHistory = data?.transactions ?? [];
+    return rows.map((tx) => {
+      const mapped = categorizeImportedTransaction(tx, { budgetCategoryNames, userHistory });
+      return {
+        ...tx,
+        category: mapped.category || tx.category,
+        budgetCategory: mapped.budgetCategory ?? tx.budgetCategory,
+      };
+    });
+  }, [data?.budgets, data?.transactions]);
   const setupValidationWarnings = useMemo(() => {
     const warnings: string[] = [];
     if ((activeTab === 'bank' || activeTab === 'sms') && bankAccounts.length === 0) {
@@ -193,6 +135,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       if (selectedAccount && !bankAccounts.some(a => a.id === selectedAccount)) setSelectedAccount('');
     }
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps -- only run when tab changes
+
+  useEffect(() => {
+    if (!pageAction) return;
+    if (pageAction === 'focus-sms-tab') setActiveTab('sms');
+    else if (pageAction === 'focus-bank-tab') setActiveTab('bank');
+    else if (pageAction === 'focus-trading-tab') setActiveTab('trading');
+    clearPageAction?.();
+  }, [pageAction, clearPageAction]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -710,7 +660,31 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
 
 
   const handleExtractedTransactionEdit = (index: number, patch: Partial<Transaction>) => {
-    setExtractedTransactions((prev) => prev.map((tx, i) => (i === index ? { ...tx, ...patch } : tx)));
+    setExtractedTransactions((prev) =>
+      prev.map((tx, i) => {
+        if (i !== index) return tx;
+        const next = { ...tx, ...patch };
+        if (
+          Object.prototype.hasOwnProperty.call(patch, 'description') &&
+          !Object.prototype.hasOwnProperty.call(patch, 'category') &&
+          !Object.prototype.hasOwnProperty.call(patch, 'budgetCategory')
+        ) {
+          const budgetCategoryNames = Array.from(
+            new Set((data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean)),
+          );
+          const mapped = categorizeImportedTransaction(next, {
+            budgetCategoryNames,
+            userHistory: data?.transactions ?? [],
+          });
+          return {
+            ...next,
+            category: mapped.category || next.category,
+            budgetCategory: mapped.budgetCategory ?? next.budgetCategory,
+          };
+        }
+        return next;
+      }),
+    );
   };
 
   const handleExtractedInvestmentTransactionEdit = (index: number, patch: Partial<InvestmentTransaction>) => {

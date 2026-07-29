@@ -1,4 +1,4 @@
-import { roundMoney } from '../../utils/money';
+import { roundAvgCostPerUnit, roundMoney } from '../../utils/money';
 import {
   appCalendarTodayYmd,
   isValidReason,
@@ -217,24 +217,91 @@ export function previewHoldingQuantityReconcile(args: {
   holdingId: string;
   beforeQty: number;
   actualQty: number;
+  /** Cost of *added* shares when quantity increases (legacy / preferred for buys). */
   costBasisTotal?: number;
+  /** Full remaining book cost after reconcile (optional restatement). */
+  targetBookCost?: number;
+  /** Remaining avg cost after reconcile (optional restatement). */
+  targetAvgCost?: number;
+  beforeAvgCost?: number;
+  /** When true, qty+cost noop still applies so open lots can be trim+cost-aligned. */
+  alignLotCostsToBook?: boolean;
   reason?: string;
 }): ReconciliationPreview {
   const before = Number(args.beforeQty) || 0;
   const actual = Number(args.actualQty);
   const delta = actual - before;
+  const beforeAvg = Number(args.beforeAvgCost) || 0;
+  const beforeBook = roundMoney(before * beforeAvg);
   let blockedReason: string | undefined;
   if (!Number.isFinite(actual) || actual < 0) {
     blockedReason = 'Actual quantity must be a non-negative finite number.';
   }
-  if (delta > 0 && (args.costBasisTotal == null || !Number.isFinite(args.costBasisTotal) || args.costBasisTotal < 0)) {
+
+  const hasTargetBook =
+    args.targetBookCost != null && Number.isFinite(Number(args.targetBookCost)) && Number(args.targetBookCost) >= 0;
+  const hasTargetAvg =
+    args.targetAvgCost != null && Number.isFinite(Number(args.targetAvgCost)) && Number(args.targetAvgCost) >= 0;
+  const hasAddCost =
+    args.costBasisTotal != null && Number.isFinite(Number(args.costBasisTotal)) && Number(args.costBasisTotal) >= 0;
+
+  if (delta > 0 && !hasAddCost && !hasTargetBook) {
     blockedReason =
       blockedReason ??
-      'Increasing quantity requires a confirmed total cost basis for the added shares.';
+      'Increasing quantity requires total cost basis for the added shares (or a full restated book cost).';
+  }
+  if (actual > 0 && hasTargetBook && Number(args.targetBookCost) < 0) {
+    blockedReason = blockedReason ?? 'Target book cost cannot be negative.';
   }
   if (args.reason != null && !isValidReason(args.reason)) {
     blockedReason = blockedReason ?? 'Reason is required (at least 3 characters).';
   }
+
+  let nextAvg = beforeAvg;
+  let nextBook = beforeBook;
+  if (actual <= 0) {
+    nextAvg = 0;
+    nextBook = 0;
+  } else if (hasTargetBook) {
+    nextBook = roundMoney(Number(args.targetBookCost));
+    nextAvg = roundAvgCostPerUnit(nextBook / actual);
+  } else if (hasTargetAvg && delta <= 0) {
+    nextAvg = roundAvgCostPerUnit(Number(args.targetAvgCost));
+    nextBook = roundMoney(nextAvg * actual);
+  } else if (delta > 0 && hasAddCost) {
+    nextBook = roundMoney(beforeBook + Number(args.costBasisTotal));
+    nextAvg = roundAvgCostPerUnit(nextBook / actual);
+  } else if (hasTargetAvg) {
+    nextAvg = roundAvgCostPerUnit(Number(args.targetAvgCost));
+    nextBook = roundMoney(nextAvg * actual);
+  } else {
+    nextBook = roundMoney(beforeAvg * actual);
+    nextAvg = beforeAvg;
+  }
+
+  const qtyNoop = Math.abs(delta) < 1e-9;
+  const costNoop = Math.abs(nextBook - beforeBook) < 0.005 && Math.abs(nextAvg - beforeAvg) < 1e-6;
+  const forceLotAlign = args.alignLotCostsToBook === true && actual > 0;
+  const impacts: string[] = [
+    'Symbol-only holding book update; market marks unchanged.',
+    'Open lots are trimmed FIFO for any sold / reduced quantity, then cost-aligned to the restated book when requested.',
+  ];
+  if (!qtyNoop) {
+    impacts.push(
+      delta > 0
+        ? `Quantity ${before} → ${actual} (+${roundMoney(delta)} shares).`
+        : `Quantity ${before} → ${actual} (${roundMoney(delta)} shares — treated as sold for open lots).`,
+    );
+  }
+  if (!costNoop) {
+    impacts.push(
+      `Cost basis ${beforeBook.toFixed(2)} → ${nextBook.toFixed(2)} (avg ${beforeAvg.toFixed(4)} → ${nextAvg.toFixed(4)}).`,
+    );
+  }
+  if (forceLotAlign && qtyNoop && costNoop) {
+    impacts.push('Holding book unchanged — open lots will be trimmed and cost-aligned to the current WAC book.');
+  }
+
   return {
     entityType: 'holding',
     entityId: args.holdingId,
@@ -243,11 +310,8 @@ export function previewHoldingQuantityReconcile(args: {
     actualValue: actual,
     delta,
     currency: 'SAR',
-    noop: Math.abs(delta) < 1e-9,
-    impacts: [
-      'Symbol-only quantity / WAC rebuild; market marks unchanged.',
-      'No unrelated symbols are rewritten.',
-    ],
+    noop: qtyNoop && costNoop && !forceLotAlign,
+    impacts,
     blockedReason,
   };
 }
@@ -332,10 +396,12 @@ export function previewFromInput(
   }
   if (input.entityType === 'holding') {
     let beforeQty = 0;
+    let beforeAvgCost = 0;
     for (const p of data.investments ?? []) {
       const h = (p.holdings ?? []).find((x) => x.id === input.entityId);
       if (h) {
         beforeQty = Number(h.quantity) || 0;
+        beforeAvgCost = Number(h.avgCost) || 0;
         break;
       }
     }
@@ -344,6 +410,10 @@ export function previewFromInput(
       beforeQty,
       actualQty: input.actualValue,
       costBasisTotal: input.costBasisTotal,
+      targetBookCost: input.targetBookCost,
+      targetAvgCost: input.targetAvgCost,
+      beforeAvgCost,
+      alignLotCostsToBook: input.alignLotCostsToBook,
       reason: input.reason,
     });
   }

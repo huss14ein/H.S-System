@@ -64,7 +64,7 @@ const BUDGET_CATEGORY_HINTS: Record<string, string> = {
     Entertainment: 'Subscriptions, dining out, and leisure. Restaurants, streaming (Netflix/Shahid), cinema, and hobbies.',
     Health: 'Medical, pharmacy, and wellness. Doctor visits, prescriptions, and health-related expenses.',
     Education: 'Tuition, books, and training. School fees, courses, and learning materials.',
-    'Savings & Investments': 'Money set aside or invested. Use for transfers to savings accounts or investment contributions.',
+    'Savings & Investments': 'Optional lifestyle tracking only. Use if you want a soft spending bucket, but salary-to-investment KPIs and broker funding targets come from Settings + investment deposits, not from this budget row.',
     'Personal Care': 'Toiletries, grooming, and self-care. Haircuts, skincare, and personal hygiene products.',
     Miscellaneous: 'Other or uncategorized expenses. Use when a transaction does not fit other categories.',
     'School & Children': 'School fees, uniforms, books, and child-related education or activities.',
@@ -102,6 +102,8 @@ import {
     budgetAppliesToFinancialView,
     dedupeBudgetRowsForFinancialView,
     addMonthsToKey,
+    calendarMonthRangeFromIsoKey,
+    currentCalendarMonthIso,
     dateInRange,
     financialMonthKey,
     financialMonthRangeFromKey,
@@ -509,7 +511,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [householdEngineReady, setHouseholdEngineReady] = useState(false);
     const [recurringBillsOpen, setRecurringBillsOpen] = useState(false);
     const governanceSessionRef = React.useRef<string | null>(null);
-    const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`);
+    const [sharedTxMonthFilter, setSharedTxMonthFilter] = useState<string>(() => currentCalendarMonthIso());
     const [sharedTxStatusFilter, setSharedTxStatusFilter] = useState<'All' | 'Approved' | 'Pending' | 'Rejected'>('All');
     const [sharedTxCategoryFilter, setSharedTxCategoryFilter] = useState<string>('All');
     const [showKsaExpenseRef, setShowKsaExpenseRef] = useState(false);
@@ -2640,13 +2642,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             const matchesStatus = requestStatusFilter === 'All' || r.status === requestStatusFilter;
             if (!matchesStatus) return false;
             
-            // Month filter
+            // Month filter (calendar month — matches HTML type=month picker)
             if (requestMonthFilter) {
-                const [filterYear, filterMonth] = requestMonthFilter.split('-').map(Number);
+                const monthRange = calendarMonthRangeFromIsoKey(requestMonthFilter);
                 const requestDate = String(r.created_at || '').slice(0, 10);
-                if (!requestDate) return false;
-                const { start, end } = financialMonthRangeFromKey({ year: filterYear, month: filterMonth }, monthStartDay);
-                if (!dateInRange(requestDate, start, end)) return false;
+                if (!requestDate || !monthRange || !dateInRange(requestDate, monthRange.start, monthRange.end)) return false;
             }
             
             if (!normalizedQuery) return true;
@@ -4509,7 +4509,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 <SectionCard title="Shared Budget Transactions" collapsible collapsibleSummary="Shared tx" defaultExpanded>
                     <div className="mb-4">
                         <p className="text-xs text-slate-500 mb-3">
-                            Default view is the <strong>current month</strong>. Use the month filter to view history. Track all transactions from shared accounts affecting your budgets; approved transactions are deducted from budget totals.
+                            Default view is the <strong>current calendar month</strong>. Use the month filter to view history. Track all transactions from shared accounts affecting your budgets; approved transactions are deducted from budget totals.
                         </p>
                         
                         {/* Filters */}
@@ -4524,7 +4524,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setSharedTxMonthFilter(`${currentYear}-${String(currentMonth).padStart(2, '0')}`)}
+                                    onClick={() => setSharedTxMonthFilter(currentCalendarMonthIso())}
                                     className="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-600"
                                 >
                                     Current
@@ -4562,15 +4562,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         
                         {/* Stats Cards */}
                         {(() => {
-                            const [filterYear, filterMonth] = sharedTxMonthFilter.split('-').map(Number);
-                            const monthValid = Number.isFinite(filterYear) && Number.isFinite(filterMonth) && filterMonth >= 1 && filterMonth <= 12;
+                            const monthRange = calendarMonthRangeFromIsoKey(sharedTxMonthFilter);
                             const filteredTxs = (ownerSharedTransactions.length > 0 ? ownerSharedTransactions : mySharedBudgetTransactions).filter((tx) => {
                                 const txDay = String(tx.transaction_date || tx.date || '').slice(0, 10);
-                                let matchesMonth = true;
-                                if (monthValid) {
-                                    const { start, end } = financialMonthRangeFromKey({ year: filterYear, month: filterMonth }, monthStartDay);
-                                    matchesMonth = txDay.length === 10 && dateInRange(txDay, start, end);
-                                }
+                                const matchesMonth =
+                                    !monthRange || (txDay.length === 10 && dateInRange(txDay, monthRange.start, monthRange.end));
                                 const matchesStatus = sharedTxStatusFilter === 'All' || (tx.status ?? 'Approved') === sharedTxStatusFilter;
                                 const matchesCategory = sharedTxCategoryFilter === 'All' || tx.budget_category === sharedTxCategoryFilter;
                                 return matchesMonth && matchesStatus && matchesCategory;

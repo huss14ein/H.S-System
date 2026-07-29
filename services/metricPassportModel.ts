@@ -30,9 +30,9 @@ const FALLBACK_DEFINITIONS: Record<MetricPassportModel['key'], string> = {
   monthlyPnL:
     'Financial-month income minus expenses (transaction-dated FX). Cashflow P/L — not portfolio mark-to-market.',
   weeklyPnL:
-    'Portfolio mark-to-market week P/L from period start: ledger (realized sells, dividends, fees) + market estimate. FIFO lots when available.',
+    'Portfolio mark-to-market week P/L: end live value − start cost snapshot − net deposits/withdrawals. Seeded books reconstruct start cash so buys funded from broker cash are not fake gains. Ledger = realized sells, dividends, fees; market = remainder. FIFO lots when available.',
   portfolioPeriodPnL:
-    'Financial-month portfolio mark-to-market P/L — same engine as Wealth Analytics and Investments platform rows.',
+    'Financial-month portfolio mark-to-market P/L — same engine as Wealth Analytics and Investments platform rows (cost start + live end; seeded start-cash reconstruct).',
   investmentRoi:
     'Platform rollup + commodities + direct Sukuk vs net capital (computeHeadlinePersonalInvestmentRoiDecimal).',
   emergencyFund:

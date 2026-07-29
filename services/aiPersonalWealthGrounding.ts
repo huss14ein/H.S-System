@@ -22,6 +22,7 @@ import { getPersonalTransactions, getPersonalSukukPositions } from '../utils/wea
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { sumRewardsFiatSar, rewardsExpiringWithinDays } from './rewards/rewardsDomain';
 import { buildAvailableLiquiditySnapshot } from './availableLiquidity';
+import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
 
 export type AiGroundingBuildOptions = {
   data: FinancialData;
@@ -41,6 +42,9 @@ export type AiPersonalWealthGrounding = {
   monthlyPnLSar: number;
   monthlyIncomeSar: number;
   monthlyExpensesSar: number;
+  salaryInvestRatePct: number;
+  investedFromSalarySar: number;
+  fundedNotDeployedSar: number;
   roiPct: number;
   overspentBudgetLines: string[];
   goalsProgress: string;
@@ -153,6 +157,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   });
 
   const roiPct = snap ? snap.roi * 100 : 0;
+  const salaryInvestment = computeSalaryInvestmentKpis(data, exchangeRate);
   const promptBlock = [
     '=== FINOVA GROUND TRUTH (use only these figures for SAR amounts; do not invent) ===',
     `As-of: ${asOfDate}`,
@@ -162,6 +167,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     `Available liquidity (SAR): ${fmt(liq.availableLiquiditySar)} (reserved ${fmt(liq.reservedLiquiditySar)}; EF floor ${fmt(liq.emergencyFundFloorSar)})`,
     `Rewards memo (SAR, not cash/Zakat): ${fmt(rewardsSar)}${expiringN ? `; ${expiringN} lot(s) expire ≤30d` : ''}`,
     `This financial month — income ${fmt(cf.monthlyIncomeSar)} SAR, expenses ${fmt(cf.monthlyExpensesSar)} SAR, net ${fmt(cf.monthlyPnLSar)} SAR`,
+    `Salary to investment — salary ${fmt(salaryInvestment?.salaryIncomeSarMonth ?? 0)} SAR, funded from salary ${fmt(salaryInvestment?.investedFromSalarySarMonth ?? 0)} SAR, invest rate ${(salaryInvestment?.salaryInvestRatePct ?? 0).toFixed(1)}%, funded not deployed ${fmt(salaryInvestment?.fundedNotDeployedSar ?? 0)} SAR`,
     `Investment ROI (% on net capital, app): ${roiPct.toFixed(2)}`,
     overspentBudgetLines.length ? `Budget pressure (≥75% used): ${overspentBudgetLines.join('; ')}` : 'Budget pressure: none ≥75% this month',
     `Goals (resolved linked wealth): ${goalsProgress || 'none set'}`,
@@ -180,6 +186,9 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     monthlyPnLSar: cf.monthlyPnLSar,
     monthlyIncomeSar: cf.monthlyIncomeSar,
     monthlyExpensesSar: cf.monthlyExpensesSar,
+    salaryInvestRatePct: salaryInvestment?.salaryInvestRatePct ?? 0,
+    investedFromSalarySar: salaryInvestment?.investedFromSalarySarMonth ?? 0,
+    fundedNotDeployedSar: salaryInvestment?.fundedNotDeployedSar ?? 0,
     roiPct,
     overspentBudgetLines,
     goalsProgress,

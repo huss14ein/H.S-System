@@ -270,6 +270,8 @@ describe('performance recovery E2E wiring', () => {
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('fastBundle');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('extendCanonicalFinancialMetricsAsync');
     expect(read('context/CanonicalFinancialMetricsContext.tsx')).toContain('yieldToMain');
+    expect(read('services/salaryInvestmentKpis.ts')).not.toContain('portfolioLotReplayEngine');
+    expect(read('services/salaryInvestmentKpis.ts')).not.toContain('rebuildHoldingsFromLedger');
     expect(read('hooks/useEnhancementSignals.ts')).toContain('scheduleIdleWorkAsync');
     expect(read('hooks/useHydrateSarPerUsdDailySeries.ts')).toContain('scheduleIdleWork');
     expect(read('hooks/useFinancialEnginesIntegration.ts')).toContain('options?.eager === true');

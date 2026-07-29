@@ -1,4 +1,4 @@
-import type { Transaction } from '../types';
+import type { Account, Liability, Transaction } from '../types';
 import { isInternalTransferTransaction } from './transactionFilters';
 
 export type CreditCardStatementAggregate = {
@@ -88,4 +88,25 @@ export function estimateMinimumCardPaymentDue(
 /** @deprecated Prefer {@link estimateMinimumCardPaymentDue} with explicit card currency. */
 export function estimateMinimumDueSar(statementPurchasesMagnitudeSar: number): number {
   return estimateMinimumCardPaymentDue(statementPurchasesMagnitudeSar, 'SAR');
+}
+
+/**
+ * Outstanding card balance to pay off (account currency).
+ * Prefers the credit **account ledger** (what the transfer actually pays down). Linked liability is
+ * only a fallback when the account balance is not negative debt. Positive liability (credit balance /
+ * overpay) is never treated as amount due.
+ */
+export function resolveCreditCardAmountDue(
+  creditAccount: Account | undefined | null,
+  liability?: Liability | null,
+): number {
+  if (creditAccount && creditAccount.type === 'Credit') {
+    const bal = Number(creditAccount.balance) || 0;
+    if (bal < 0) return Math.abs(bal);
+  }
+  if (liability != null) {
+    const liabAmt = Number(liability.amount);
+    if (Number.isFinite(liabAmt) && liabAmt < 0) return Math.abs(liabAmt);
+  }
+  return 0;
 }

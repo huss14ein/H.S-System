@@ -15,7 +15,7 @@ import PageLayout from '../components/PageLayout';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import SectionCard from '../components/SectionCard';
 import { useCurrency } from '../context/CurrencyContext';
-import { useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { CHART_MARGIN, CHART_GRID_STROKE, CHART_GRID_COLOR, CHART_AXIS_COLOR, formatAxisNumber, CHART_COLORS } from '../components/charts/chartTheme';
@@ -57,6 +57,7 @@ import {
 import EnhancementInsightStrip from '../components/EnhancementInsightStrip';
 import { useFinancialEnhancementInsights } from '../hooks/useFinancialEnhancementInsights';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
+import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -79,8 +80,8 @@ const AnnualFinancialPlan: React.FC<{
     const auth = useContext(AuthContext);
     const { formatCurrencyString, formatCurrency, formatSecondaryEquivalent } = useFormatCurrency();
     const { currency: displayCurrency } = useCurrency();
-    const { sarPerUsd, liquidCashSar: dashboardLiquidCashSar, netWorth: dashboardNetWorthSar, kpiSnapshot: dashboardKpiSnapshot } =
-        useCanonicalFinancialMetrics();
+    const { sarPerUsd, liquidCashSar: dashboardLiquidCashSar, netWorth: dashboardNetWorthSar, kpiSnapshot: dashboardKpiSnapshot, salaryInvestment, extendedReady } =
+        useExtendedCanonicalMetrics();
 
     const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
     const emergencyFund = useEmergencyFund(data);
@@ -724,6 +725,25 @@ const AnnualFinancialPlan: React.FC<{
                 </div>
             }
         >
+            <div className="mb-4">
+                <SalaryInvestmentSummaryCard
+                    model={salaryInvestment}
+                    loading={!extendedReady && !salaryInvestment}
+                    formatCurrencyString={formatCurrencyString}
+                    compact
+                    onOpenSettings={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Settings', 'focus-salary-investing') : setActivePage('Settings'))
+                        : undefined
+                    }
+                    onOpenInvestments={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Investments', 'focus-salary-invest') : setActivePage('Investments'))
+                        : undefined
+                    }
+                    onOpenTransactions={setActivePage ? () => setActivePage('Transactions') : undefined}
+                />
+            </div>
             {planSubPage === 'experts' ? (
                 <div className="space-y-6">
                     <SalaryPlanningExperts />

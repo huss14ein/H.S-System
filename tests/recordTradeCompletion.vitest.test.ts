@@ -60,14 +60,32 @@ describe('recordTradeCompletion', () => {
     expect(ledgerFn).toContain('const snap = dataRef.current ?? data');
   });
 
-  it('post-sync buy patches name / assetClass / manual value / goal', () => {
+  it('buy metadata goes through applyPositionDeltaForTrade; post-check only verifies open holding', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('goalId: tradeGoalId');
     expect(ctx).toContain('if (tradeData.type === \'buy\')');
-    expect(ctx).toContain("const { data: holdingRow, error: holdingReadError } = await supabase");
-    expect(ctx).toContain('needsPatch');
-    expect(ctx).toContain('await updateHolding(patched)');
+    // Robust to formatting / `supabase` vs `db` alias — scoped to the buy/sell trade path.
+    const buySellStart = ctx.indexOf("if (tradeData.type === 'buy' || tradeData.type === 'sell')");
+    const buySellEnd = ctx.indexOf('Error updating holdings after trade:', buySellStart);
+    const buySellBlock = ctx.slice(buySellStart, buySellEnd);
+    expect(buySellBlock).toMatch(/holdingAfter/);
+    expect(buySellBlock).toMatch(/\bholdingRow\b/);
+    expect(buySellBlock).toMatch(/\bholdingReadError\b/);
+    expect(buySellBlock).toMatch(/await\s+(?:supabase|db)\s*[\s\n]*\.from\(\s*['"]holdings['"]\s*\)/);
+    expect(buySellBlock).toMatch(/\.maybeSingle\s*\(/);
     expect(ctx).toContain('did not create an open holding');
+    expect(ctx).not.toContain('needsPatch');
+    expect(buySellBlock).toContain('manualCurrentValue: manualCv');
+    expect(buySellBlock).toContain('goalId: tradeGoalId');
+    expect(buySellBlock).toContain('Background lot sync after trade');
+  });
+
+  it('Record Trade modal confirms first, then records with success toast', () => {
+    const page = read('pages/Investments.tsx');
+    const submit = page.slice(page.indexOf('const handleSubmit = async'), page.indexOf('const hasNoAccounts'));
+    expect(submit.indexOf('await confirmAction')).toBeLessThan(submit.indexOf('setIsSubmitting(true)'));
+    expect(submit).toContain("toast(");
+    expect(submit).toMatch(/Buy'|Sell'|Dividend/);
   });
 
   it('holding validation failures throw and trade rollback restores the holding snapshot before refresh', () => {

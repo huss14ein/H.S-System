@@ -110,7 +110,7 @@ describe('holdingsIntegrityAck', () => {
 
   it('panel wires Keep stored to acknowledgeHoldingsIntegrity + toast (not message-only)', () => {
     const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
-    expect(panel).toContain('acknowledgeHoldingsIntegrity');
+    expect(panel).toContain('acknowledgeHoldingsIntegrityDurable');
     expect(panel).toContain("kind: 'keep_stored'");
     expect(panel).toContain("kind: 'keep_closed'");
     expect(panel).toContain('filterUnackedDriftRows');

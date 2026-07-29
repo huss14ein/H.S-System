@@ -35,11 +35,12 @@ export const ConfirmActionProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [confirmAction]);
 
   const finish = (result: boolean) => {
+    if (!resolveRef.current) return;
     setOpen(false);
     setOpts(null);
     const r = resolveRef.current;
     resolveRef.current = null;
-    r?.(result);
+    r(result);
   };
 
   return (

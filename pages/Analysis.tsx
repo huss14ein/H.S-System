@@ -43,6 +43,7 @@ import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenter
 import { useAnalyticsWorkspace } from '../context/AnalyticsWorkspaceContext';
 import { DeferredMount } from '../components/dashboard/DeferredMount';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
+import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
 import {
     buildVisitSnapshotFromModel,
     computeVisitDelta,
@@ -174,6 +175,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         buckets: personalBuckets,
         kpiSnapshot,
         extendedReady,
+        salaryInvestment,
     } = metrics;
     useHydrateSarPerUsdDailySeries(engineData, headlineFx);
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
@@ -401,6 +403,26 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         </ExtendedMetricGate>
                     </div>
                 </div>
+            </div>
+
+            <div className="mb-4">
+                <SalaryInvestmentSummaryCard
+                    model={salaryInvestment}
+                    loading={!extendedReady && !salaryInvestment}
+                    formatCurrencyString={formatCurrencyString}
+                    compact
+                    onOpenSettings={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Settings', 'focus-salary-investing') : setActivePage('Settings'))
+                        : undefined
+                    }
+                    onOpenInvestments={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Investments', 'focus-salary-invest') : setActivePage('Investments'))
+                        : undefined
+                    }
+                    onOpenTransactions={setActivePage ? () => setActivePage('Transactions') : undefined}
+                />
             </div>
 
             <AnalyticsPeriodScopeBar className="mb-4" />

@@ -155,6 +155,8 @@ describe('portfolioLedgerSync wiring', () => {
     expect(ctx).toContain('syncPortfolioAfterLedgerMutation');
     expect(ctx).toContain('syncPortfolioLedgerAfterChange');
     expect(ctx).toContain('investment_cost_lots');
+    expect(ctx).toContain('Promise.all([cashWrite, positionWrite])');
+    expect(read('services/portfolioLedgerSync.ts')).toContain('persistInvestmentCostLotsForSymbols');
     expect(read('services/portfolioLedgerSync.ts')).toContain('persistInvestmentCostLotsForPortfolio');
     expect(ctx).toContain('applyPositionDeltaForTrade');
   });

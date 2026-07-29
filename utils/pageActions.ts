@@ -8,7 +8,11 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
   if (!action || typeof action !== 'string') return false;
 
   if (page === 'Dashboard') {
-    return action === 'plan-compare-dashboard';
+    return action === 'plan-compare-dashboard' || action === 'focus-salary-invest';
+  }
+
+  if (page === 'Settings') {
+    return action === 'focus-salary-investing';
   }
 
   if (page === 'Notifications') {
@@ -43,7 +47,10 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
   if (page === 'Accounts') {
     return (
       action === 'open-reconcile-balance' ||
-      /^open-reconcile-balance:[^\s:]+$/.test(action)
+      /^open-reconcile-balance:[^\s:]+$/.test(action) ||
+      action === 'open-pay-card' ||
+      /^open-pay-card:[^\s:]+$/.test(action) ||
+      /^open-pay-card:[^\s:]+:full$/.test(action)
     );
   }
 
@@ -83,10 +90,23 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
     );
   }
 
+  if (page === 'Engines & Tools') {
+    return action === 'openLiquidation' || action === 'openJournal' || action === 'openLogic' || action === 'openRiskTradingHub';
+  }
+
+  if (page === 'Statement Upload') {
+    return (
+      action === 'focus-sms-tab' ||
+      action === 'focus-bank-tab' ||
+      action === 'focus-trading-tab'
+    );
+  }
+
   if (page === 'Investments') {
     return (
       action === 'open-trade-modal' ||
       /^open-trade-modal:.+/.test(action) ||
+      action === 'investment-tab:Overview' ||
       action === 'investment-tab:Recovery Plan' ||
       action === 'investment-tab:Investment Plan' ||
       action === 'investment-tab:Dividend Tracker' ||
@@ -94,6 +114,8 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'investment-tab:Watchlist' ||
       action === 'focus-investment-plan' ||
       action === 'focus-dividend-sms' ||
+      action === 'focus-salary-invest' ||
+      action === 'sync-realized-pnl' ||
       action === 'open-corporate-action-wizard' ||
       action === 'open-corporate-action-wizard:from-plan' ||
       /^focus-symbol:.+/.test(action) ||
@@ -105,10 +127,6 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'open-edit-investment-tx' ||
       /^open-edit-investment-tx:[^\s:]+$/.test(action)
     );
-  }
-
-  if (page === 'Engines & Tools') {
-    return action === 'openLiquidation' || action === 'openJournal' || action === 'openLogic' || action === 'openRiskTradingHub';
   }
 
   return false;

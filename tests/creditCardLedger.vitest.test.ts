@@ -3,8 +3,9 @@ import {
   aggregateCreditCardStatementActivity,
   estimateMinimumCardPaymentDue,
   estimateMinimumDueSar,
+  resolveCreditCardAmountDue,
 } from '../services/creditCardLedger';
-import type { Transaction } from '../types';
+import type { Account, Liability, Transaction } from '../types';
 
 describe('creditCardLedger', () => {
   it('aggregates purchases, transfer payments, interest, and refunds in-range', () => {
@@ -32,5 +33,17 @@ describe('creditCardLedger', () => {
     expect(estimateMinimumCardPaymentDue(100, 'USD')).toBe(1);
     expect(estimateMinimumCardPaymentDue(0, 'USD')).toBe(1);
     expect(estimateMinimumCardPaymentDue(5000, 'USD')).toBe(50);
+  });
+
+  it('resolveCreditCardAmountDue prefers account ledger debt; ignores positive liability', () => {
+    const account = { id: 'cc', name: 'Visa', type: 'Credit', balance: -360, currency: 'SAR' } as Account;
+    expect(resolveCreditCardAmountDue(account)).toBe(360);
+    // Drift: liability higher than ledger — pay the card ledger, not the liability figure
+    expect(resolveCreditCardAmountDue(account, { id: 'l1', name: 'Visa', type: 'Credit Card', amount: -400 } as Liability)).toBe(360);
+    // Positive liability (credit balance) is not amount due
+    expect(resolveCreditCardAmountDue({ ...account, balance: 0 }, { id: 'l1', name: 'Visa', type: 'Credit Card', amount: 50 } as Liability)).toBe(0);
+    // Fallback when account flat but liability still debt
+    expect(resolveCreditCardAmountDue({ ...account, balance: 0 }, { id: 'l1', name: 'Visa', type: 'Credit Card', amount: -200 } as Liability)).toBe(200);
+    expect(resolveCreditCardAmountDue(undefined)).toBe(0);
   });
 });

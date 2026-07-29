@@ -2,7 +2,7 @@ import React, { useContext, useState, useEffect, useMemo, useCallback, useRef } 
 import { DataContext } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { AuthContext } from '../context/AuthContext';
-import { RiskProfile, Page, type Settings as AppSettings } from '../types';
+import { RiskProfile, Page, type Settings as AppSettings, type SalaryInvestmentTargets } from '../types';
 import { supabase } from '../services/supabaseClient';
 import { inferIsAdmin } from '../utils/role';
 import InfoHint from '../components/InfoHint';
@@ -15,6 +15,8 @@ import DecisionPreviewPanel from '../components/DecisionPreviewPanel';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
 import { useExtendedCanonicalMetrics, pickWealthSummary } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
+import { normalizeSalaryInvestmentTargets } from '../services/salaryInvestmentSettings';
 import { loadTradingPolicy, saveTradingPolicy, type TradingPolicy, DEFAULT_TRADING_POLICY, TRADING_POLICY_PRESETS } from '../services/tradingPolicy';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import {
@@ -80,7 +82,12 @@ const FINANCIAL_PREFERENCE_PRESETS: Record<string, { riskProfile: RiskProfile; b
     aggressive: { riskProfile: 'Aggressive', budgetThreshold: 95, driftThreshold: 8 },
 };
 
-const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
+const Settings: React.FC<{
+    setActivePage?: (page: Page) => void;
+    triggerPageAction?: (page: Page, action: string) => void;
+    pageAction?: string | null;
+    clearPageAction?: () => void;
+}> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
     const { data, updateSettings, restoreFromBackup } = useContext(DataContext)!;
     const { showToast } = useToast();
     const auth = useContext(AuthContext)!;
@@ -436,6 +443,18 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         setLocalSettings(newSettings);
         updateSettings({ [key]: value });
     };
+    const salaryTargets = useMemo<SalaryInvestmentTargets>(
+        () => (localSettings?.salaryInvestmentTargets ?? {}) as SalaryInvestmentTargets,
+        [localSettings?.salaryInvestmentTargets],
+    );
+    const updateSalaryTargets = useCallback((patch: Partial<SalaryInvestmentTargets>) => {
+        const next = normalizeSalaryInvestmentTargets({
+            ...(localSettings?.salaryInvestmentTargets ?? {}),
+            ...patch,
+        });
+        setLocalSettings((prev) => ({ ...prev, salaryInvestmentTargets: next }));
+        updateSettings({ salaryInvestmentTargets: next });
+    }, [localSettings?.salaryInvestmentTargets, updateSettings]);
 
     const scrollToSettingsSection = useCallback((sectionId: string) => {
         if (typeof document === 'undefined') return;
@@ -445,6 +464,19 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         const top = sectionEl.getBoundingClientRect().top + window.scrollY - STICKY_HEADER_OFFSET;
         window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     }, []);
+
+    useEffect(() => {
+        if (pageAction !== 'focus-salary-investing') return;
+        const t = window.setTimeout(() => {
+            scrollToSettingsSection('salary-investing-targets');
+            document.getElementById('salary-invest-target')?.focus?.();
+        }, 140);
+        const cancelClear = scheduleClearPageAction(clearPageAction);
+        return () => {
+            window.clearTimeout(t);
+            cancelClear();
+        };
+    }, [pageAction, clearPageAction, scrollToSettingsSection]);
 
     const accountsForEmptyCheck = getPersonalAccounts(data);
     const hasData = accountsForEmptyCheck.length > 0;
@@ -470,6 +502,7 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                         { id: 'settings-snapshot', label: 'Snapshot' },
                         { id: 'user-profile', label: 'Profile' },
                         { id: 'financial-preferences', label: 'Financial' },
+                        { id: 'salary-investing-targets', label: 'Salary invest' },
                         { id: 'default-parameters', label: 'Parameters' },
                         { id: 'decision-preview', label: 'Decision cockpit' },
                         { id: 'trading-policy', label: 'Trading policy' },
@@ -853,6 +886,216 @@ const Settings: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                                 }}
                                 className="mt-2 w-full input-base"
                             />
+                        </div>
+                        <div id="salary-investing-targets" className="rounded-lg border border-slate-200 p-4 md:col-span-2 bg-indigo-50/40 scroll-mt-32">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700">
+                                        Salary-to-investment targets
+                                        <InfoHint text="This is a capital-allocation model, not a spending budget. It tracks salary received, broker funding, and buy deployment for the current financial month." />
+                                    </label>
+                                    <p className="mt-1 text-xs text-slate-600 max-w-2xl">
+                                        Use this to set a monthly invest target and optional attribution hints. The app still derives historical results from transactions and investment deposits; this section only stores preferences.
+                                    </p>
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                    {salaryTargets.monthlyInvestTargetSar ? `Target ${salaryTargets.monthlyInvestTargetSar.toLocaleString()} SAR` : 'No target yet'}
+                                </div>
+                            </div>
+                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="salary-invest-target" className="block text-sm font-medium text-slate-700">Monthly invest target (SAR)</label>
+                                    <input
+                                        id="salary-invest-target"
+                                        type="number"
+                                        min={0}
+                                        step={100}
+                                        value={salaryTargets.monthlyInvestTargetSar ?? ''}
+                                        onChange={(e) => {
+                                            const raw = e.target.value;
+                                            setLocalSettings((prev) => ({
+                                                ...prev,
+                                                salaryInvestmentTargets: {
+                                                    ...(prev?.salaryInvestmentTargets ?? {}),
+                                                    monthlyInvestTargetSar: raw === '' ? undefined : Math.max(0, Number(raw) || 0),
+                                                },
+                                            }));
+                                        }}
+                                        onBlur={(e) => {
+                                            const raw = e.target.value.trim();
+                                            updateSalaryTargets({ monthlyInvestTargetSar: raw ? Math.max(0, Number(raw) || 0) : undefined });
+                                        }}
+                                        className="mt-2 w-full input-base"
+                                        placeholder="e.g. 6000"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="salary-invest-lag-days" className="block text-sm font-medium text-slate-700">Invest reminder lag (days)</label>
+                                    <input
+                                        id="salary-invest-lag-days"
+                                        type="number"
+                                        min={1}
+                                        max={28}
+                                        step={1}
+                                        value={salaryTargets.investLagAlertDays ?? 7}
+                                        onChange={(e) => {
+                                            const value = Math.max(1, Math.min(28, Number(e.target.value) || 7));
+                                            setLocalSettings((prev) => ({
+                                                ...prev,
+                                                salaryInvestmentTargets: {
+                                                    ...(prev?.salaryInvestmentTargets ?? {}),
+                                                    investLagAlertDays: value,
+                                                },
+                                            }));
+                                        }}
+                                        onBlur={(e) => updateSalaryTargets({ investLagAlertDays: Math.max(1, Math.min(28, Number(e.target.value) || 7)) })}
+                                        className="mt-2 w-full input-base"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="salary-source-account" className="block text-sm font-medium text-slate-700">Preferred salary source account</label>
+                                    <select
+                                        id="salary-source-account"
+                                        value={salaryTargets.salarySourceAccountId ?? ''}
+                                        onChange={(e) => updateSalaryTargets({ salarySourceAccountId: e.target.value || undefined })}
+                                        className="mt-2 w-full input-base"
+                                    >
+                                        <option value="">Auto-detect from income + account roles</option>
+                                        {getPersonalAccounts(data).map((account) => (
+                                            <option key={`salary-src-${account.id}`} value={account.id}>{account.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label htmlFor="default-funding-account" className="block text-sm font-medium text-slate-700">Preferred funding account</label>
+                                    <select
+                                        id="default-funding-account"
+                                        value={salaryTargets.defaultFundingAccountId ?? ''}
+                                        onChange={(e) => updateSalaryTargets({ defaultFundingAccountId: e.target.value || undefined })}
+                                        className="mt-2 w-full input-base"
+                                    >
+                                        <option value="">No default funding hint</option>
+                                        {getPersonalAccounts(data).map((account) => (
+                                            <option key={`salary-funding-${account.id}`} value={account.id}>{account.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="salary-category-list" className="block text-sm font-medium text-slate-700">Salary categories / keywords</label>
+                                    <input
+                                        id="salary-category-list"
+                                        type="text"
+                                        value={(salaryTargets.salaryIncomeCategories ?? ['salary']).join(', ')}
+                                        onChange={(e) => {
+                                            const values = e.target.value.split(',').map((item) => item.trim()).filter(Boolean);
+                                            setLocalSettings((prev) => ({
+                                                ...prev,
+                                                salaryInvestmentTargets: {
+                                                    ...(prev?.salaryInvestmentTargets ?? {}),
+                                                    salaryIncomeCategories: values,
+                                                },
+                                            }));
+                                        }}
+                                        onBlur={(e) => updateSalaryTargets({
+                                            salaryIncomeCategories: e.target.value.split(',').map((item) => item.trim()).filter(Boolean),
+                                        })}
+                                        className="mt-2 w-full input-base"
+                                        placeholder="salary, payroll, راتب"
+                                    />
+                                    <p className="mt-1 text-[11px] text-slate-500">Comma-separated. Defaults to salary detection from the app taxonomy.</p>
+                                </div>
+                                <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white p-3 cursor-pointer">
+                                    <span className="text-sm text-slate-700">
+                                        <span className="font-medium">Include bonus in salary invest rate</span>
+                                        <p className="text-xs text-slate-500 mt-0.5">When on, bonus-tagged income contributes to the salary denominator.</p>
+                                    </span>
+                                    <input
+                                        type="checkbox"
+                                        className="h-5 w-5 rounded border-slate-300 text-primary"
+                                        checked={salaryTargets.includeBonusInSalaryIncome === true}
+                                        onChange={(e) => updateSalaryTargets({ includeBonusInSalaryIncome: e.target.checked })}
+                                    />
+                                </label>
+                            </div>
+                            <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                    <p className="text-sm font-medium text-slate-700">Platform targets (SAR)</p>
+                                    <div className="mt-3 space-y-2">
+                                        {getPersonalAccounts(data).filter((account) => account.type === 'Investment').slice(0, 8).map((account) => (
+                                            <label key={`platform-target-${account.id}`} className="flex items-center justify-between gap-3 text-sm">
+                                                <span className="truncate text-slate-600">{account.name}</span>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    step={100}
+                                                    value={salaryTargets.platformTargets?.[account.id] ?? ''}
+                                                    onChange={(e) => {
+                                                        const nextMap = { ...(salaryTargets.platformTargets ?? {}) } as Record<string, number>;
+                                                        if (e.target.value === '') delete nextMap[account.id];
+                                                        else nextMap[account.id] = Math.max(0, Number(e.target.value) || 0);
+                                                        setLocalSettings((prev) => ({
+                                                            ...prev,
+                                                            salaryInvestmentTargets: {
+                                                                ...(prev?.salaryInvestmentTargets ?? {}),
+                                                                platformTargets: nextMap,
+                                                            },
+                                                        }));
+                                                    }}
+                                                    onBlur={(e) => {
+                                                        const nextMap = { ...(salaryTargets.platformTargets ?? {}) } as Record<string, number>;
+                                                        if (e.target.value === '') delete nextMap[account.id];
+                                                        else nextMap[account.id] = Math.max(0, Number(e.target.value) || 0);
+                                                        updateSalaryTargets({ platformTargets: nextMap });
+                                                    }}
+                                                    className="w-28 input-base text-right"
+                                                    aria-label={`Target for ${account.name}`}
+                                                />
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                    <p className="text-sm font-medium text-slate-700">Asset-class targets (SAR)</p>
+                                    <div className="mt-3 space-y-2">
+                                        {Array.from(new Set(getPersonalInvestments(data).flatMap((portfolio) => (portfolio.holdings ?? []).map((holding) => holding.assetClass || 'Other')))).slice(0, 8).map((assetClass) => (
+                                            <label key={`asset-target-${assetClass}`} className="flex items-center justify-between gap-3 text-sm">
+                                                <span className="truncate text-slate-600">{assetClass}</span>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    step={100}
+                                                    value={salaryTargets.assetClassTargets?.[assetClass] ?? ''}
+                                                    onChange={(e) => {
+                                                        const nextMap = { ...(salaryTargets.assetClassTargets ?? {}) } as Record<string, number>;
+                                                        if (e.target.value === '') delete nextMap[assetClass];
+                                                        else nextMap[assetClass] = Math.max(0, Number(e.target.value) || 0);
+                                                        setLocalSettings((prev) => ({
+                                                            ...prev,
+                                                            salaryInvestmentTargets: {
+                                                                ...(prev?.salaryInvestmentTargets ?? {}),
+                                                                assetClassTargets: nextMap,
+                                                            },
+                                                        }));
+                                                    }}
+                                                    onBlur={(e) => {
+                                                        const nextMap = { ...(salaryTargets.assetClassTargets ?? {}) } as Record<string, number>;
+                                                        if (e.target.value === '') delete nextMap[assetClass];
+                                                        else nextMap[assetClass] = Math.max(0, Number(e.target.value) || 0);
+                                                        updateSalaryTargets({ assetClassTargets: nextMap });
+                                                    }}
+                                                    className="w-28 input-base text-right"
+                                                    aria-label={`Target for ${assetClass}`}
+                                                />
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                            <p className="mt-3 text-xs text-slate-500">
+                                Targets stay optional. If you leave them blank, the KPI still computes salary received, funding, deployment, and funded-not-deployed from your ledger.
+                            </p>
                         </div>
                     </div>
                     <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3 cursor-pointer">

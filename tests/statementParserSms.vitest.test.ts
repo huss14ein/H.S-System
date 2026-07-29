@@ -188,4 +188,20 @@ Balance SAR 54500
     expect(income).toBeDefined();
     expect(income!.amount).toBeCloseTo(20222, 2);
   });
+
+  it('keeps separate rows when multiple SMS share date and amount but different merchants', async () => {
+    const sms = `شراء عبر نقاط البيع
+لدى:CAFE NERO
+SAR مبلغ:50.00
+8/4/26
+شراء عبر نقاط البيع
+لدى:JARIR BOOK
+SAR مبلغ:50.00
+8/4/26`;
+    const res = await parseSMSTransactions(sms, 'acc-multi-same-amt');
+    expect(res.transactions.length).toBe(2);
+    const descs = res.transactions.map((t) => t.description.toUpperCase());
+    expect(descs.some((d) => d.includes('CAFE'))).toBe(true);
+    expect(descs.some((d) => d.includes('JARIR'))).toBe(true);
+  });
 });

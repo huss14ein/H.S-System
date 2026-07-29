@@ -652,6 +652,25 @@ export interface WatchlistItem {
 
 export type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
+export interface SalaryInvestmentTargets {
+    /** Optional monthly salary-to-invest target in SAR. */
+    monthlyInvestTargetSar?: number;
+    /** Optional per-platform monthly targets in SAR keyed by investment account id. */
+    platformTargets?: Record<string, number>;
+    /** Optional per-asset-class monthly targets in SAR keyed by asset class label. */
+    assetClassTargets?: Record<string, number>;
+    /** Optional income-category allowlist override (matches category / budgetCategory labels). */
+    salaryIncomeCategories?: string[];
+    /** Optional preferred salary source account for attribution confidence. */
+    salarySourceAccountId?: string;
+    /** Optional preferred funding source account for investment deposits. */
+    defaultFundingAccountId?: string;
+    /** Days into the financial month before invest-rate reminders escalate. */
+    investLagAlertDays?: number;
+    /** When true, treat bonus-tagged income as salary for invest-rate KPIs. */
+    includeBonusInSalaryIncome?: boolean;
+}
+
 export interface Settings {
     user_id?: string;
     riskProfile: RiskProfile;
@@ -675,6 +694,38 @@ export interface Settings {
     includeRewardsInNetWorth?: boolean;
     /** Months of essential expenses to treat as emergency-fund floor when computing Available Liquidity. */
     emergencyFundMonthsTarget?: number;
+    /**
+     * Durable dismissals for reconcile/integrity prompts (synced via settings.ui_acks).
+     * Fingerprinted so a real new drift resurfaces.
+     */
+    uiAcks?: {
+      holdingsQtyIntegrity?: Record<
+        string,
+        {
+          portfolioId: string;
+          symbol: string;
+          kind: 'keep_stored' | 'keep_closed';
+          storedQtyFingerprint: number;
+          at: string;
+        }
+      >;
+      cashBalanceDrift?: Record<
+        string,
+        {
+          accountId: string;
+          balanceFp: number;
+          netFp: number;
+          at: string;
+        }
+      >;
+      /** System Health investment KPI cash-ledger drift dismissal. */
+      investmentCashLedgerDrift?: {
+        driftSarFp: number;
+        at: string;
+      };
+    };
+    /** Salary-to-investment target configuration (preferences only; historical results stay derived). */
+    salaryInvestmentTargets?: SalaryInvestmentTargets;
 }
 
 export interface ZakatPayment {

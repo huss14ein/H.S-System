@@ -725,6 +725,9 @@ const TransactionModal: React.FC<{
                         <select id="income-category" value={incomeCategoryOptions.includes(category) ? category : (incomeCategoryOptions[0] || 'Salary')} onChange={e => setCategory(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md">
                             {incomeCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
+                        <p className="mt-1 text-xs text-slate-500">
+                            Tag recurring pay as <strong>Salary</strong> so salary-to-investment KPIs and alerts stay accurate.
+                        </p>
                     </div>
                 )}
                  {type === 'expense' && (
@@ -1141,6 +1144,9 @@ const RecurringModal: React.FC<{
                         <select value={incomeCategoryOptions.includes(category) ? category : (incomeCategoryOptions[0] || 'Salary')} onChange={e => setCategory(e.target.value)} className="select-base">
                             {incomeCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
+                        <p className="mt-1 text-xs text-slate-500">
+                            Use <strong>Salary</strong> for paycheck rows when you want broker-funding attribution to count toward salary-invest KPIs.
+                        </p>
                     </div>
                 ) : (
                     <div>

@@ -4,19 +4,22 @@
  *
  * Keep stored / Keep closed: dismiss repair UI; KPIs use holdings.quantity (SSoT).
  * Missing + last leg buy → Restore holding (critical: trade in log, no open position).
+ * Acks persist in settings.ui_acks (cross-device) with localStorage write-through.
  */
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { DataContext } from '../../context/DataContext';
 import { toast } from '../../context/ToastContext';
 import {
-  acknowledgeHoldingsIntegrity,
-  clearHoldingsIntegrityAck,
   filterUnackedDriftRows,
   filterUnackedMissingRows,
-  loadHoldingsIntegrityAcks,
   type HoldingsIntegrityAckMap,
 } from '../../services/holdingsIntegrityAck';
+import {
+  acknowledgeHoldingsIntegrityDurable,
+  clearHoldingsIntegrityAckDurable,
+  resolveHoldingsIntegrityAcks,
+} from '../../services/uiAcks';
 import {
   buildHoldingsQtyDriftReport,
   holdingsQtyDriftNeedsAttention,
@@ -35,19 +38,31 @@ type Props = {
    * and the ledger may still be incomplete). Receives the stored holding id when found.
    */
   onReconcileQuantity?: (args: { holdingId: string; portfolioId: string; symbol: string }) => void;
+  /** Align open lots to the stored holding book (trim + WAC cost match). */
+  onAlignLotsToBook?: (args: { holdingId: string; portfolioId: string; symbol: string }) => void | Promise<void>;
 };
 
-const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconcileQuantity }) => {
+const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconcileQuantity, onAlignLotsToBook }) => {
   const ctx = useContext(DataContext);
   const auth = useContext(AuthContext);
   const userId = auth?.user?.id ?? null;
   const data = ctx?.data;
+  const updateSettings = ctx?.updateSettings;
   const [rebuildBusyKey, setRebuildBusyKey] = useState<string | null>(null);
-  const [acks, setAcks] = useState<HoldingsIntegrityAckMap>(() => loadHoldingsIntegrityAcks(userId));
+  const [ackBusyKey, setAckBusyKey] = useState<string | null>(null);
+  const [acks, setAcks] = useState<HoldingsIntegrityAckMap>(() =>
+    resolveHoldingsIntegrityAcks(userId, data?.settings),
+  );
 
   useEffect(() => {
-    setAcks(loadHoldingsIntegrityAcks(userId));
-  }, [userId]);
+    setAcks(resolveHoldingsIntegrityAcks(userId, data?.settings, { writeThrough: true }));
+  }, [userId, data?.settings?.uiAcks]);
+
+  const persistUiAcks = async (partial: import('../../types').Settings['uiAcks']) => {
+    if (!updateSettings) return;
+    // Pass only the partial map — updateSettings merges against dataRef so sibling acks stay fresh.
+    await updateSettings({ uiAcks: partial ?? {} });
+  };
 
   const driftAttention = useMemo(() => {
     if (!data) return [] as HoldingsQtyDriftRow[];
@@ -88,30 +103,56 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
   }
 
   const keepStored = (r: HoldingsQtyDriftRow) => {
-    const next = acknowledgeHoldingsIntegrity({
-      userId,
-      portfolioId: r.portfolioId,
-      symbol: r.symbol,
-      kind: 'keep_stored',
-      storedQty: r.storedQuantity,
-    });
-    setAcks(next);
-    toast(
-      `Kept stored ${r.symbol}: ${r.storedQuantity.toLocaleString()} shares (KPIs use this book).`,
-      'success',
-    );
+    const key = `${r.portfolioId}:${r.symbol}`;
+    if (ackBusyKey) return;
+    setAckBusyKey(key);
+    void (async () => {
+      try {
+        const next = await acknowledgeHoldingsIntegrityDurable({
+          userId,
+          portfolioId: r.portfolioId,
+          symbol: r.symbol,
+          kind: 'keep_stored',
+          storedQty: r.storedQuantity,
+          currentUiAcks: data.settings?.uiAcks,
+          persistUiAcks,
+        });
+        setAcks(next);
+        toast(
+          `Kept stored ${String(r.symbol).slice(0, 32)}: ${r.storedQuantity.toLocaleString()} shares (KPIs use this book).`,
+          'success',
+        );
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Could not save dismissal.', 'error');
+      } finally {
+        setAckBusyKey(null);
+      }
+    })();
   };
 
   const keepClosed = (r: { portfolioId: string; symbol: string; ledgerNet: number }) => {
-    const next = acknowledgeHoldingsIntegrity({
-      userId,
-      portfolioId: r.portfolioId,
-      symbol: r.symbol,
-      kind: 'keep_closed',
-      storedQty: r.ledgerNet,
-    });
-    setAcks(next);
-    toast(`Kept ${r.symbol} closed — will not re-open from ledger.`, 'success');
+    const key = `${r.portfolioId}:${r.symbol}`;
+    if (ackBusyKey) return;
+    setAckBusyKey(key);
+    void (async () => {
+      try {
+        const next = await acknowledgeHoldingsIntegrityDurable({
+          userId,
+          portfolioId: r.portfolioId,
+          symbol: r.symbol,
+          kind: 'keep_closed',
+          storedQty: r.ledgerNet,
+          currentUiAcks: data.settings?.uiAcks,
+          persistUiAcks,
+        });
+        setAcks(next);
+        toast(`Kept ${String(r.symbol).slice(0, 32)} closed — will not re-open from ledger.`, 'success');
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Could not save dismissal.', 'error');
+      } finally {
+        setAckBusyKey(null);
+      }
+    })();
   };
 
   const rebuild = async (
@@ -135,7 +176,14 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
     setRebuildBusyKey(key);
     try {
       await ctx.rebuildHoldingsFromLedgerForSymbols({ portfolioId, symbols: [symbol] });
-      setAcks(clearHoldingsIntegrityAck({ userId, portfolioId, symbol }));
+      const next = await clearHoldingsIntegrityAckDurable({
+        userId,
+        portfolioId,
+        symbol,
+        currentUiAcks: data.settings?.uiAcks,
+        persistUiAcks,
+      });
+      setAcks(next);
       toast(
         opts?.restoreOpen
           ? `Restored ${symbol} holding from ledger.`
@@ -165,14 +213,24 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
         list.push(r.symbol);
         byPortfolio.set(r.portfolioId, list);
       }
+      let nextMap: HoldingsIntegrityAckMap = acks;
       for (const [portfolioId, symbols] of byPortfolio) {
         await ctx.rebuildHoldingsFromLedgerForSymbols({ portfolioId, symbols });
         for (const symbol of symbols) {
-          clearHoldingsIntegrityAck({ userId, portfolioId, symbol });
+          nextMap = await clearHoldingsIntegrityAckDurable({
+            userId,
+            portfolioId,
+            symbol,
+            currentUiAcks: {
+              ...(data.settings?.uiAcks ?? {}),
+              holdingsQtyIntegrity: nextMap,
+            },
+            persistUiAcks,
+          });
         }
         await yieldToMain(0);
       }
-      setAcks(loadHoldingsIntegrityAcks(userId));
+      setAcks(nextMap);
       toast(`Restored ${likelyOpenMissing.length} holding(s) from ledger.`, 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Restore failed.', 'error');
@@ -204,14 +262,15 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
             <button
               type="button"
               data-testid={`keep-closed-${r.symbol}`}
-              className="text-xs px-2.5 py-1.5 rounded-md border border-slate-400 text-slate-900 bg-white hover:bg-slate-100 font-medium cursor-pointer shadow-sm"
+              disabled={ackBusyKey === `${r.portfolioId}:${r.symbol}`}
+              className="text-xs px-2.5 py-1.5 rounded-md border border-slate-400 text-slate-900 bg-white hover:bg-slate-100 font-medium cursor-pointer shadow-sm disabled:opacity-50"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 keepClosed(r);
               }}
             >
-              Keep closed
+              {ackBusyKey === `${r.portfolioId}:${r.symbol}` ? 'Saving…' : 'Keep closed'}
             </button>
           )}
           <button
@@ -316,14 +375,15 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
                   <button
                     type="button"
                     data-testid={`keep-stored-${r.symbol}`}
-                    className="text-xs px-2.5 py-1.5 rounded-md border border-slate-400 text-slate-900 bg-white hover:bg-slate-100 font-medium cursor-pointer shadow-sm"
+                    disabled={ackBusyKey === `${r.portfolioId}:${r.symbol}`}
+                    className="text-xs px-2.5 py-1.5 rounded-md border border-slate-400 text-slate-900 bg-white hover:bg-slate-100 font-medium cursor-pointer shadow-sm disabled:opacity-50"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
                       keepStored(r);
                     }}
                   >
-                    Keep stored
+                    {ackBusyKey === `${r.portfolioId}:${r.symbol}` ? 'Saving…' : 'Keep stored'}
                   </button>
                   {onReconcileQuantity && (
                     <button
@@ -370,7 +430,31 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
                   </button>
                 </span>
                 <div className="w-full">
-                  <HoldingLotsPanel symbol={r.symbol} portfolioId={r.portfolioId} compact />
+                  {(() => {
+                    const portfolio = (data?.investments ?? []).find((p) => p.id === r.portfolioId);
+                    const holding = (portfolio?.holdings ?? []).find(
+                      (h) => String(h.symbol ?? '').trim().toUpperCase() === r.symbol.toUpperCase(),
+                    );
+                    return (
+                      <HoldingLotsPanel
+                        symbol={r.symbol}
+                        portfolioId={r.portfolioId}
+                        compact
+                        holdingQty={holding?.quantity}
+                        holdingAvgCost={holding?.avgCost}
+                        onAlignLotsToBook={
+                          holding?.id && onAlignLotsToBook
+                            ? () =>
+                                onAlignLotsToBook({
+                                  holdingId: holding.id,
+                                  portfolioId: r.portfolioId,
+                                  symbol: r.symbol,
+                                })
+                            : undefined
+                        }
+                      />
+                    );
+                  })()}
                 </div>
               </li>
             );

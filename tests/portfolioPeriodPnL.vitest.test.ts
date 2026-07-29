@@ -7,12 +7,38 @@ import {
   computePortfolioPnLDailySeries,
   platformPeriodPnLFromSummary,
   portfolioPeriodPnLInputsFingerprint,
+  reconstructSeededStartCashSar,
+  resolvePeriodStartValueSar,
   resolvePortfolioPeriodPnLEndValueSar,
 } from '../services/portfolioPeriodPnL';
 import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
 import type { Account, FinancialData, InvestmentCostLot, InvestmentPortfolio, InvestmentTransaction } from '../types';
 
 describe('portfolioPeriodPnL', () => {
+  it('reconstructSeededStartCashSar treats buys as cash→holdings, not P/L', () => {
+    expect(
+      reconstructSeededStartCashSar({ endCashSar: 2000, externalFlowSar: 0, buyCostSar: 1336 }),
+    ).toBe(3336);
+    expect(
+      reconstructSeededStartCashSar({ endCashSar: 5000, externalFlowSar: 1000, buyCostSar: 0 }),
+    ).toBe(4000);
+  });
+
+  it('resolvePeriodStartValueSar reconstructs for any seeded portfolio when endCashSar is set', () => {
+    const { startCashSar, startValueSar } = resolvePeriodStartValueSar({
+      holdingsStartSar: 1000,
+      includeCash: true,
+      ledgerExplainsHoldings: false,
+      singlePortfolioOnAccount: false,
+      startStateCashSar: 0,
+      endCashSar: 500,
+      externalFlowSar: 0,
+      buyCostSar: 200,
+    });
+    expect(startCashSar).toBe(700);
+    expect(startValueSar).toBe(1700);
+  });
+
   it('ledger P/L counts sell gain and dividends in range', () => {
     const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
     const portfolios: InvestmentPortfolio[] = [
@@ -695,6 +721,132 @@ describe('portfolioPeriodPnL', () => {
       summary,
     });
     expect(series.weekly[series.weekly.length - 1]?.cumulativeSar).toBeCloseTo(200, 0);
+  });
+
+  it('seeded portfolio: in-period buy from existing cash is not fake Week P/L', () => {
+    // Reproduces the Investments hub bug: deposits-only ledger → seed holdings → exclude
+    // in-period buy symbols → startCash=endCash made buy notional look like gains (~75k Week).
+    const accounts: Account[] = [{ id: 'acc-1', name: 'Awaed', type: 'Investment', balance: 0 }];
+    const p1: InvestmentPortfolio = {
+      id: 'p1',
+      name: "Hussein's Awaed",
+      accountId: 'acc-1',
+      currency: 'USD',
+      holdings: [
+        {
+          id: 'h-old',
+          symbol: 'UNH',
+          quantity: 10,
+          avgCost: 400,
+          currentValue: 4500,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'equity',
+        },
+        {
+          id: 'h-new',
+          symbol: 'SNAP',
+          quantity: 250,
+          avgCost: 5.3448,
+          currentValue: 1400,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          holdingType: 'equity',
+        },
+      ],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'd-old',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        type: 'deposit',
+        date: '2024-01-15',
+        total: 20000,
+        currency: 'USD',
+      },
+      {
+        id: 'buy-snap',
+        accountId: 'acc-1',
+        portfolioId: 'p1',
+        type: 'buy',
+        symbol: 'SNAP',
+        date: '2026-06-20',
+        quantity: 250,
+        price: 5.3448,
+        total: 1336.2,
+        currency: 'USD',
+      },
+    ];
+    const data = {
+      accounts,
+      investments: [p1],
+      investmentTransactions: txs,
+      personalInvestments: [p1],
+      personalAccounts: accounts,
+      monthStartDay: 1,
+    } as FinancialData;
+    const sarPerUsd = 3.75;
+    const buyCostSar = 1336.2 * sarPerUsd; // ~5010
+    const endCashUsd = 2000;
+    const now = new Date(2026, 5, 25); // Jun 25 — buy is in week/month
+
+    const period = computePortfolioMarkToMarketPeriodPnLSar({
+      portfolio: p1,
+      transactions: txs,
+      startMs: new Date(2026, 5, 19).getTime(),
+      endMs: new Date(2026, 5, 25, 23, 59, 59).getTime(),
+      // holdings mark + cash
+      endValueSar: (4500 + 1400 + endCashUsd) * sarPerUsd,
+      endCashSar: endCashUsd * sarPerUsd,
+      includeCash: true,
+      singlePortfolioOnAccount: true,
+      accounts,
+      portfolios: [p1],
+      data,
+      sarPerUsd,
+      simulatedPrices: {
+        UNH: { price: 450, change: 0, changePercent: 0 },
+        SNAP: { price: 5.6, change: 0, changePercent: 0 },
+      },
+    });
+
+    // Must NOT be ~buyCostSar (~5k) as fake gain; only UNH mark-vs-cost + SNAP mark-vs-buy.
+    // UNH: 4500-4000=500 USD; SNAP: 1400-1336.2=63.8 USD → ~563.8 USD ≈ 2114 SAR
+    expect(period.totalSar).toBeLessThan(buyCostSar);
+    expect(period.totalSar).toBeCloseTo((500 + 63.8) * sarPerUsd, 0);
+
+    const summary = computePortfolioPeriodPnLSummary({
+      data,
+      portfolios: [p1],
+      accounts,
+      sarPerUsd,
+      simulatedPrices: {
+        UNH: { price: 450, change: 0, changePercent: 0 },
+        SNAP: { price: 5.6, change: 0, changePercent: 0 },
+      },
+      monthStartDay: 1,
+      getAvailableCashForAccount: () => ({ SAR: 0, USD: endCashUsd }),
+      now,
+    });
+    expect(Math.abs(summary.rows[0]!.weekly.totalSar)).toBeLessThan(buyCostSar);
+    expect(summary.rows[0]!.weekly.totalSar).toBeCloseTo((500 + 63.8) * sarPerUsd, 0);
+
+    const series = computePortfolioPnLDailySeries({
+      data,
+      portfolios: [p1],
+      accounts,
+      sarPerUsd,
+      simulatedPrices: {
+        UNH: { price: 450, change: 0, changePercent: 0 },
+        SNAP: { price: 5.6, change: 0, changePercent: 0 },
+      },
+      monthStartDay: 1,
+      getAvailableCashForAccount: () => ({ SAR: 0, USD: endCashUsd }),
+      now,
+      summary,
+    });
+    expect(series.weekly[series.weekly.length - 1]?.cumulativeSar).toBeCloseTo(summary.rows[0]!.weekly.totalSar, 0);
   });
 
   it('portfolioPeriodPnLInputsFingerprint changes when holding currentValue updates', () => {

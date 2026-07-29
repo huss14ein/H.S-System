@@ -8,6 +8,7 @@ import { buildFinancialDataForWeeklyDigest } from "../../../services/digestFinan
 import { computeWeeklyDigestPersonalNetWorthSar } from "../../../services/weeklyDigestNetWorthSar.ts";
 import { computeWeeklyDigestPortfolioPnLSar } from "../../../services/portfolioPeriodPnLDigest.ts";
 import { financialMonthRange, resolveMonthStartDayFromData } from "../../../utils/financialMonth.ts";
+import { computeSalaryInvestmentKpis } from "../../../services/salaryInvestmentKpis.ts";
 
 declare const Deno: {
   env: {
@@ -27,6 +28,9 @@ interface WeeklyDigestPayload {
   netWorth: number;
   portfolioWeekPnLSar: number;
   portfolioMonthPnLSar: number;
+  salaryInvestRatePct?: number;
+  fundedNotDeployedSar?: number;
+  hasSalaryInvestSignal?: boolean;
   alerts: string[];
 }
 
@@ -97,6 +101,12 @@ function renderEmailTemplate(payload: WeeklyDigestPayload): string {
         <p style="margin: 0; font-size: 14px; color: #64748b;">Financial month: <strong style="color:#0f172a">${payload.portfolioMonthPnLSar}</strong> SAR</p>
         <p style="margin: 8px 0 0; font-size: 12px; color: #94a3b8;">Stored marks only — not live quote fetch in email.</p>
       </section>
+      ${(payload.hasSalaryInvestSignal || (payload.salaryInvestRatePct ?? 0) > 0 || (payload.fundedNotDeployedSar ?? 0) > 0) ? `
+      <section style="margin-bottom: 24px;">
+        <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">Salary to investment</h2>
+        <p style="margin: 0 0 6px; font-size: 14px; color: #64748b;">Invest rate this financial month: <strong style="color:#0f172a">${(payload.salaryInvestRatePct ?? 0).toFixed(1)}%</strong></p>
+        <p style="margin: 0; font-size: 14px; color: #64748b;">Funded not deployed: <strong style="color:#0f172a">${payload.fundedNotDeployedSar ?? 0}</strong> SAR</p>
+      </section>` : ''}
       ${alertsHtml}
       <p style="margin: 24px 0 0; font-size: 13px; color: #94a3b8;">You're receiving this because Weekly Email Reports are enabled in Settings. Open the app to see full details.</p>
     </div>
@@ -204,6 +214,9 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
   netWorth: number;
   portfolioWeekPnLSar: number;
   portfolioMonthPnLSar: number;
+  salaryInvestRatePct: number;
+  fundedNotDeployedSar: number;
+  hasSalaryInvestSignal: boolean;
 }> {
   const fallbackFx = sarPerUsd();
 
@@ -218,6 +231,8 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
     { data: investmentCostLotsRaw, error: eLots },
     { data: wealthUltraUser, error: eWuUser },
     { data: wealthUltraGlobal, error: eWuGlobal },
+    { data: transactionsRaw, error: eCashTx },
+    { data: settingsRaw, error: eSettings },
   ] = await Promise.all([
     supabase.from('accounts').select('*').eq('user_id', userId),
     supabase.from('assets').select('*').eq('user_id', userId),
@@ -229,6 +244,13 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
     supabase.from('investment_cost_lots').select('*').eq('user_id', userId),
     supabase.from('wealth_ultra_config').select('*').eq('user_id', userId).maybeSingle(),
     supabase.from('wealth_ultra_config').select('*').is('user_id', null).limit(1).maybeSingle(),
+    // ~7 months of cash txs for salary-invest history (same window as app KPI history).
+    supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('date', new Date(Date.now() - 220 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)),
+    supabase.from('settings').select('month_start_day, salary_investing_targets').eq('user_id', userId).maybeSingle(),
   ]);
 
   if (eAcc) console.error('weekly-digest accounts:', eAcc.message);
@@ -241,6 +263,22 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
   if (eLots) console.warn('weekly-digest investment_cost_lots:', eLots.message);
   if (eWuUser) console.warn('weekly-digest wealth_ultra_config (user):', eWuUser.message);
   if (eWuGlobal) console.warn('weekly-digest wealth_ultra_config (global):', eWuGlobal.message);
+  if (eCashTx) console.warn('weekly-digest transactions:', eCashTx.message);
+  if (eSettings) console.warn('weekly-digest settings:', eSettings.message);
+
+  let settingsForDigest: Record<string, unknown> | null = settingsRaw
+    ? (settingsRaw as Record<string, unknown>)
+    : null;
+  // If salary_investing_targets column is missing, still load month_start_day.
+  if (eSettings && /salary_investing_targets|column/i.test(String(eSettings.message ?? ''))) {
+    const fallback = await supabase
+      .from('settings')
+      .select('month_start_day')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (fallback.error) console.warn('weekly-digest settings fallback:', fallback.error.message);
+    settingsForDigest = fallback.data ? (fallback.data as Record<string, unknown>) : null;
+  }
 
   const data = buildFinancialDataForWeeklyDigest({
     accountsRaw: (accountsRaw ?? []) as Record<string, unknown>[],
@@ -251,18 +289,24 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
     sukukPositionsRaw: (sukukPositionsRaw ?? []) as Record<string, unknown>[],
     investmentTransactionsRaw: (investmentTransactionsRaw ?? []) as Record<string, unknown>[],
     investmentCostLotsRaw: (investmentCostLotsRaw ?? []) as Record<string, unknown>[],
+    transactionsRaw: (transactionsRaw ?? []) as Record<string, unknown>[],
+    settingsRaw: settingsForDigest,
     wealthUltraUserRow: wealthUltraUser ? (wealthUltraUser as Record<string, unknown>) : null,
     wealthUltraGlobalRow: wealthUltraGlobal ? (wealthUltraGlobal as Record<string, unknown>) : null,
   });
 
   const netWorth = computeWeeklyDigestPersonalNetWorthSar(data, fallbackFx);
   const pnl = computeWeeklyDigestPortfolioPnLSar({ data, sarPerUsd: fallbackFx, simulatedPrices: {} });
+  const salaryInvestment = computeSalaryInvestmentKpis(data as any, fallbackFx);
   return {
     data,
     fx: fallbackFx,
     netWorth,
     portfolioWeekPnLSar: pnl.weeklyTotalSar,
     portfolioMonthPnLSar: pnl.monthlyTotalSar,
+    salaryInvestRatePct: salaryInvestment?.salaryInvestRatePct ?? 0,
+    fundedNotDeployedSar: salaryInvestment?.fundedNotDeployedSar ?? 0,
+    hasSalaryInvestSignal: Boolean(salaryInvestment?.hasSalarySignal),
   };
 }
 
@@ -363,6 +407,9 @@ serve(async (req: Request) => {
           netWorth: digestCtx.netWorth,
           portfolioWeekPnLSar: Math.round(digestCtx.portfolioWeekPnLSar),
           portfolioMonthPnLSar: Math.round(digestCtx.portfolioMonthPnLSar),
+          salaryInvestRatePct: digestCtx.salaryInvestRatePct,
+          fundedNotDeployedSar: Math.round(digestCtx.fundedNotDeployedSar),
+          hasSalaryInvestSignal: digestCtx.hasSalaryInvestSignal,
           alerts,
         };
 

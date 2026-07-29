@@ -9,11 +9,14 @@ import {
   appCalendarTodayYmd,
   assertCanReverseAdjustment,
   assertTransferEditAllowed,
+  buildBrokerCashReconcileInvestmentRow,
   buildCashReconcileLedgerTransaction,
   buildIdempotencyKey,
   collectMissingMarks,
   computeReconcileDelta,
   describeTransferDeleteCascade,
+  isInvestmentReconciliationCashAdjustment,
+  INVESTMENT_RECONCILIATION_NOTE_PREFIX,
   isNoopDelta,
   isReconciliationLedgerCategory,
   isValidReason,
@@ -33,7 +36,10 @@ import {
   countsAsIncomeForCashflowKpi,
 } from '../services/transactionFilters';
 import { canPostTransactionToAccount } from '../services/dataQuality/accountPostingPolicy';
-import type { Account, Transaction } from '../types';
+import { computePersonalInvestmentKpiBreakdown } from '../services/investmentKpiCore';
+import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
+import { flowsFromInvestmentTransactionsInSAR } from '../services/portfolioXirr';
+import type { Account, FinancialData, InvestmentPortfolio, InvestmentTransaction, Transaction } from '../types';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
@@ -305,6 +311,98 @@ describe('posting policy + category filters', () => {
   });
 });
 
+describe('broker-cash reconcile is not capital withdrawal/deposit', () => {
+  const platformId = 'inv-plat-1';
+  const account: Account = {
+    id: platformId,
+    name: 'Broker',
+    type: 'Investment',
+    balance: 9_000,
+    currency: 'SAR',
+  } as Account;
+  const portfolio: InvestmentPortfolio = {
+    id: 'pf-1',
+    name: 'Main',
+    accountId: platformId,
+    currency: 'SAR',
+    holdings: [],
+  } as InvestmentPortfolio;
+
+  it('tags broker reconcile rows with detectable note prefix', () => {
+    const row = buildBrokerCashReconcileInvestmentRow({
+      accountId: platformId,
+      portfolioId: 'pf-1',
+      delta: -500,
+      currency: 'SAR',
+      reason: 'Match statement cash',
+    });
+    expect(row.type).toBe('withdrawal');
+    expect(row.note.startsWith(INVESTMENT_RECONCILIATION_NOTE_PREFIX)).toBe(true);
+    expect(isInvestmentReconciliationCashAdjustment(row)).toBe(true);
+    expect(
+      isInvestmentReconciliationCashAdjustment({
+        type: 'withdrawal',
+        note: 'Reconciliation Adjustment: legacy reason',
+      }),
+    ).toBe(true);
+  });
+
+  it('excludes reconcile withdrawal from invested/withdrawn capital but keeps cash identity', () => {
+    const realDeposit: InvestmentTransaction = {
+      id: 'd1',
+      type: 'deposit',
+      total: 10_000,
+      date: '2026-01-01',
+      accountId: platformId,
+      currency: 'SAR',
+      symbol: 'CASH',
+      quantity: 0,
+      price: 0,
+    } as InvestmentTransaction;
+    const reconcileWdr = {
+      id: 'r1',
+      ...buildBrokerCashReconcileInvestmentRow({
+        accountId: platformId,
+        delta: -1_000,
+        currency: 'SAR',
+        reason: 'Statement',
+      }),
+    } as InvestmentTransaction;
+
+    const data = {
+      accounts: [account],
+      personalAccounts: [account],
+      investments: [portfolio],
+      personalInvestments: [portfolio],
+      investmentTransactions: [realDeposit, reconcileWdr],
+      transactions: [],
+      budgets: [],
+    } as unknown as FinancialData;
+
+    const getCash = () => ({ SAR: 9_000, USD: 0 });
+    const b = computePersonalInvestmentKpiBreakdown(data, 3.75, getCash);
+    expect(b.depositsRecordedSar).toBeCloseTo(10_000, 5);
+    expect(b.totalWithdrawnSar).toBe(0);
+    expect(b.expectedCashFromLedgerDatedSar).toBeCloseTo(9_000, 5);
+
+    const card = computePlatformCardMetrics({
+      portfolios: [portfolio],
+      transactions: [realDeposit, reconcileWdr],
+      accounts: [account],
+      allInvestments: [portfolio],
+      sarPerUsd: 3.75,
+      availableCashByCurrency: { SAR: 9_000, USD: 0 },
+      simulatedPrices: {},
+      platformCurrency: 'SAR',
+    });
+    expect(card.totalInvestedSAR).toBeCloseTo(10_000, 5);
+    expect(card.totalWithdrawnSAR).toBe(0);
+
+    const flows = flowsFromInvestmentTransactionsInSAR([realDeposit, reconcileWdr], 3.75);
+    expect(flows).toEqual([{ date: '2026-01-01', amount: -10_000 }]);
+  });
+});
+
 describe('reconciliation wiring + live-data migration', () => {
   it('migration is additive and defines preview/apply/reverse RPCs', () => {
     const sql = read('supabase/migrations/20260726120000_reconciliation_adjustment_engine.sql');
@@ -318,6 +416,21 @@ describe('reconciliation wiring + live-data migration', () => {
     expect(sql.toLowerCase()).not.toMatch(/drop\s+table/);
     expect(sql.toLowerCase()).not.toMatch(/truncate/);
     expect(sql).not.toContain('rebuild_investments_tables_from_scratch');
+  });
+
+  it('follow-up migration makes apply/reverse RPCs schema-compatible with transactions accountId', () => {
+    const sql = read('supabase/migrations/20260727140000_fix_reconciliation_rpc_transactions_accountId.sql');
+    expect(sql).toContain('apply_reconciliation_adjustment');
+    expect(sql).toContain('reverse_reconciliation_adjustment');
+    expect(sql).toContain('information_schema.columns');
+    expect(sql).toContain('"accountId"');
+    expect(sql).toContain('account_id');
+  });
+
+  it('client falls through when RPC hits account_id column-compat error', () => {
+    const orch = read('services/reconciliation/orchestrator.ts');
+    expect(orch).toContain('account_id does not exist');
+    expect(orch).toContain(".eq('accountId', account.id)");
   });
 
   it('DataContext exposes preview/apply/reverse and wipes reconciliation tables on reset', () => {
@@ -687,10 +800,10 @@ describe('audit surfaces + role gates + entry points', () => {
     expect(accounts).toContain('mechanism,');
   });
 
-  it('Credit-linked liability Restate mirrors absolute credit balance', () => {
+  it('Credit-linked liability Restate mirrors signed credit balance', () => {
     const orch = read('services/reconciliation/orchestrator.ts');
-    expect(orch).toContain('Math.abs(preview.actualValue)');
-    expect(orch).toContain('Math.abs(targets.actualValue)');
+    expect(orch).toContain('balance: roundMoney(preview.actualValue)');
+    expect(orch).toContain("l.type === 'Credit Card' && creditAccountId");
   });
 
   it('managed owner entities are blocked from personal reconcile', () => {
