@@ -8,6 +8,8 @@ Apply these in order when setting up or updating the app database.
 
 - **Household budget profiles (cloud sync)** — Table used by the Plan page for syncing household budget engine profile per user. Script: `docs/household_budget_profiles.sql`. Creates `public.household_budget_profiles` with RLS so each user can only read/write their own row.
 
+- **Salary investing settings** — Adds `public.settings.salary_investing_targets` JSONB for monthly salary-to-investment targets, allocation splits, attribution hints, and alert lag. Script: `supabase/migrations/20260728170500_settings_salary_investing_targets.sql`.
+
 ## Notes
 
-- Other SQL files in `supabase/` (e.g. `run_these_for_app.sql`, `full_schema_for_app.sql`) may be used for initial setup or full schema; the two items above are the migrations specifically referenced by the investment and Plan features.
+- Other SQL files in `supabase/` (e.g. `run_these_for_app.sql`, `full_schema_for_app.sql`) may be used for initial setup or full schema; the items above are the migrations specifically referenced by the investment, salary-investing, and Plan features.

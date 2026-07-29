@@ -27,6 +27,7 @@ import OverviewZone from '../components/analytics/zones/OverviewZone';
 import WealthZone from '../components/analytics/zones/WealthZone';
 import InvestmentsZone from '../components/analytics/zones/InvestmentsZone';
 import CashSpendZone from '../components/analytics/zones/CashSpendZone';
+import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
 import {
   buildVisitSnapshotFromModel,
   computeVisitDelta,
@@ -63,6 +64,7 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
     investmentsTotalSar,
     extendedReady,
     simulatedPrices: kpiQuotePrices,
+    salaryInvestment,
   } = useExtendedCanonicalMetrics();
 
   const personalTransactions = useMemo(() => getPersonalTransactions(engineData), [engineData]);
@@ -145,6 +147,22 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
   return (
     <PageLayout title="Wealth Analytics" action={exportAction}>
       <div dir={dir} className="flex flex-col gap-6 min-w-0 w-full">
+        <SalaryInvestmentSummaryCard
+          model={salaryInvestment}
+          loading={!extendedReady && !salaryInvestment}
+          formatCurrencyString={formatCurrencyString}
+          compact
+          onOpenSettings={
+            setActivePage
+              ? () => (triggerPageAction ? triggerPageAction('Settings', 'focus-salary-investing') : setActivePage('Settings'))
+              : undefined
+          }
+          onOpenInvestments={setActivePage ? () => setActivePage('Investments') : undefined}
+          onOpenTransactions={() => {
+            setActivePage?.('Transactions');
+            triggerPageAction?.('Transactions', 'open-transaction-modal');
+          }}
+        />
         {showHydrateBanner && (
           <p className="text-sm text-slate-600 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2" role="status">
             {t('syncingWorkspace')}

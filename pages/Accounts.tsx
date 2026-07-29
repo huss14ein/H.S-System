@@ -35,7 +35,10 @@ import { summarizeTransferForConfirm } from '../utils/recordConfirmMessages';
 import PageLayout from '../components/PageLayout';
 import SectionCard from '../components/SectionCard';
 
-import { currentFinancialMonthIso, financialMonthRangeFromIsoKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
+import {
+    calendarMonthRangeFromIsoKey,
+    dateInRange,
+} from '../utils/financialMonth';
 import { tradableCashBucketToSAR, toSAR, fromSAR } from '../utils/currencyMath';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import { accountBookCurrency } from '../utils/cashAccountDisplay';
@@ -136,7 +139,7 @@ const AccountModal: React.FC<{
             // Always send linkedAccountIds for Investment so backend can persist (including clearing when empty)
             ...(type === 'Investment' ? { linkedAccountIds: linkedAccountIds || [] } : {}),
             ...(type === 'Checking' || type === 'Savings' || type === 'Credit' ? { currency: cashCurrency } : {}),
-            ...(accountRole ? { accountRole } : {}),
+            accountRole: accountRole || null,
         };
 
         try {
@@ -196,6 +199,9 @@ const AccountModal: React.FC<{
                             <option value="goal_reserve">Goal reserve</option>
                             <option value="debt_servicing">Debt servicing</option>
                         </select>
+                        <p className="mt-1 text-xs text-slate-500">
+                            Use <strong>Salary receiving</strong> and <strong>Investment funding</strong> on your main cash accounts to improve salary-invest attribution confidence.
+                        </p>
                     </div>
                 )}
                 {(type === 'Checking' || type === 'Savings' || type === 'Credit') && (
@@ -409,13 +415,8 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
     const [transferSubview, setTransferSubview] = useState<'scheduled' | 'history'>('scheduled');
     const [transferHistoryFilterFrom, setTransferHistoryFilterFrom] = useState<string>('all');
     const [transferHistoryFilterTo, setTransferHistoryFilterTo] = useState<string>('all');
-    const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
-    const [transferHistoryMonth, setTransferHistoryMonth] = useState(() =>
-        currentFinancialMonthIso(new Date(), resolveMonthStartDayFromData(null)),
-    );
-    useEffect(() => {
-        setTransferHistoryMonth(currentFinancialMonthIso(new Date(), monthStartDay));
-    }, [monthStartDay]);
+    /** Calendar `YYYY-MM` or `all` — default all so History (N) is not empty on first open. */
+    const [transferHistoryMonth, setTransferHistoryMonth] = useState<string>('all');
     const [reschedulePair, setReschedulePair] = useState<ScheduledTransferPair | null>(null);
     const [rescheduleDay, setRescheduleDay] = useState('1');
     const [rescheduleAmount, setRescheduleAmount] = useState('');
@@ -678,18 +679,15 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
     }, [data?.transactions, data?.investmentTransactions, (data as any)?.personalInvestmentTransactions]);
 
     const filteredTransferHistory = useMemo(() => {
-        const { start: monthStart, end: monthEnd } = financialMonthRangeFromIsoKey(
-            transferHistoryMonth,
-            monthStartDay,
-        );
+        const monthRange =
+            transferHistoryMonth === 'all' ? null : calendarMonthRangeFromIsoKey(transferHistoryMonth);
         return transferHistory.filter((p) => {
-            const d = new Date(p.date);
-            if (Number.isNaN(d.getTime()) || d < monthStart || d > monthEnd) return false;
+            if (monthRange && !dateInRange(p.date, monthRange.start, monthRange.end)) return false;
             if (transferHistoryFilterFrom !== 'all' && p.fromAccountId !== transferHistoryFilterFrom) return false;
             if (transferHistoryFilterTo !== 'all' && p.toAccountId !== transferHistoryFilterTo) return false;
             return true;
         });
-    }, [transferHistory, transferHistoryMonth, transferHistoryFilterFrom, transferHistoryFilterTo, monthStartDay]);
+    }, [transferHistory, transferHistoryMonth, transferHistoryFilterFrom, transferHistoryFilterTo]);
 
     const handleOpenAccountModal = (account: Account | null = null) => { setAccountToEdit(account); setIsAccountModalOpen(true); };
 
@@ -1292,13 +1290,26 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                 <div className="flex flex-wrap items-center gap-3 mb-3">
                     <div className="flex items-center gap-2">
                         <label className="text-xs font-medium text-slate-600 whitespace-nowrap">Month</label>
-                        <input
-                            type="month"
+                        <select
                             value={transferHistoryMonth}
                             onChange={(e) => setTransferHistoryMonth(e.target.value)}
-                            className="input-base text-sm py-1.5 min-w-[140px]"
+                            className="select-base text-sm py-1.5 min-w-[140px]"
                             aria-label="Filter transfers by month"
-                        />
+                        >
+                            <option value="all">All months</option>
+                            {Array.from({ length: 24 }, (_, i) => {
+                                const d = new Date();
+                                d.setDate(1);
+                                d.setMonth(d.getMonth() - i);
+                                const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                                const label = d.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+                                return (
+                                    <option key={iso} value={iso}>
+                                        {label}
+                                    </option>
+                                );
+                            })}
+                        </select>
                     </div>
                     <div className="flex items-center gap-2">
                         <label className="text-xs font-medium text-slate-600 whitespace-nowrap">From</label>
@@ -1318,13 +1329,13 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                             ))}
                         </select>
                     </div>
-                    {(transferHistoryFilterFrom !== 'all' || transferHistoryFilterTo !== 'all' || transferHistoryMonth !== currentFinancialMonthIso(new Date(), monthStartDay)) && (
+                    {(transferHistoryFilterFrom !== 'all' || transferHistoryFilterTo !== 'all' || transferHistoryMonth !== 'all') && (
                         <button
                             type="button"
                             onClick={() => {
                                 setTransferHistoryFilterFrom('all');
                                 setTransferHistoryFilterTo('all');
-                                setTransferHistoryMonth(currentFinancialMonthIso(new Date(), monthStartDay));
+                                setTransferHistoryMonth('all');
                             }}
                             className="text-xs font-medium text-slate-500 hover:text-slate-700 flex items-center gap-1"
                         >
@@ -1339,8 +1350,19 @@ const Accounts: React.FC<AccountsProps> = ({ setActivePage, pageAction, clearPag
                             {transferHistory.length === 0 ? 'No transfer history yet' : 'No transfers match the filters'}
                         </p>
                         <p className="text-sm text-slate-500 mt-1">
-                            {transferHistory.length === 0 ? 'Transfers you make with &quot;Transfer now&quot; will appear here.' : 'Try changing or clearing the filters above.'}
+                            {transferHistory.length === 0
+                                ? 'Transfers you make with &quot;Transfer now&quot; will appear here.'
+                                : 'Try changing or clearing the filters above.'}
                         </p>
+                        {transferHistory.length > 0 && transferHistoryMonth !== 'all' && (
+                            <button
+                                type="button"
+                                onClick={() => setTransferHistoryMonth('all')}
+                                className="mt-3 text-sm font-medium text-blue-600 hover:text-blue-700"
+                            >
+                                Show all {transferHistory.length} transfers
+                            </button>
+                        )}
                     </div>
                 ) : (
                     <div className="space-y-2 max-h-64 overflow-y-auto rounded-lg border border-slate-200">

@@ -91,6 +91,33 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setA
                 icon: INVESTMENT_SUB_NAV_ITEMS.find((i) => i.name === 'Dividend Tracker')!.icon,
             });
             subPages.push({
+                name: 'Open salary invest rate (Dashboard)',
+                action: () => {
+                    trackAction('salary-invest-dashboard', 'Dashboard');
+                    triggerPageAction('Dashboard', 'focus-salary-invest');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Dashboard')!.icon,
+            });
+            subPages.push({
+                name: 'Open funded not deployed (Investments)',
+                action: () => {
+                    trackAction('salary-invest-investments', 'Investments');
+                    triggerPageAction('Investments', 'focus-salary-invest');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Investments')!.icon,
+            });
+            subPages.push({
+                name: 'Open salary investing targets (Settings)',
+                action: () => {
+                    trackAction('salary-invest-settings', 'Settings');
+                    triggerPageAction('Settings', 'focus-salary-investing');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Settings')!.icon,
+            });
+            subPages.push({
                 name: 'Sync realized P/L from ledger',
                 action: () => {
                     trackAction('sync-realized-pnl', 'Investments');

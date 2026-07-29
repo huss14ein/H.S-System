@@ -5,7 +5,7 @@ import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useMarketDebouncedPrices } from '../hooks/useDebouncedMarketPrices';
-import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import {
   reconcileCashAccountBalance,
   reconcileCreditAccountBalance,
@@ -49,6 +49,7 @@ import { cachedSupabaseHeadCount } from '../services/supabaseQueryCache';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import { rewardsExpiringWithinDays } from '../services/rewards/rewardsDomain';
+import { computeSalaryInvestmentKpis } from '../services/salaryInvestmentKpis';
 
 const READ_STORAGE_KEY = 'h.s.notifications.read';
 
@@ -119,6 +120,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const auth = useContext(AuthContext);
   const todosOpt = useTodosOptional();
   const sarPerUsd = useCanonicalSpotFx();
+  const { salaryInvestment: salaryInvestmentCanonical } = useCanonicalFinancialMetrics();
   const { lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { debouncedPrices } = useMarketDebouncedPrices();
   const staleQuoteScanAtRef = useRef(0);
@@ -271,6 +273,70 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         });
       }
     });
+
+    const salaryInvestment =
+      salaryInvestmentCanonical ?? computeSalaryInvestmentKpis(data, sarPerUsd);
+    if (salaryInvestment?.hasSalarySignal) {
+      const lagDays = Math.max(1, Number(salaryInvestment.settings?.investLagAlertDays) || 7);
+      const monthProgressDays = Math.max(
+        0,
+        Math.floor((now.getTime() - financialMonthRange(now, resolveMonthStartDayFromData(data)).start.getTime()) / 86400000),
+      );
+      if (salaryInvestment.hasTargetsConfigured && salaryInvestment.targetVsActualGapSar > 0 && monthProgressDays >= lagDays) {
+        push({
+          id: 'salary-invest-target-gap',
+          category: 'Plan',
+          message: `Salary invest target is short by ${Math.round(salaryInvestment.targetVsActualGapSar).toLocaleString()} SAR this financial month.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Investments',
+          pageAction: safePageAction('Investments', 'focus-salary-invest'),
+          severity: salaryInvestment.salaryInvestRatePct < 25 ? 'warning' : 'info',
+          actionHint: 'Review salary funding deposits, idle broker cash, and deployment this month.',
+        });
+      }
+      if (salaryInvestment.fundedNotDeployedSar > 0) {
+        push({
+          id: 'salary-invest-funded-not-deployed',
+          category: 'Investment',
+          message: `${Math.round(salaryInvestment.fundedNotDeployedSar).toLocaleString()} SAR of salary-funded broker cash is still not deployed.`,
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Investments',
+          pageAction: safePageAction('Investments', 'focus-salary-invest'),
+          severity: salaryInvestment.fundedNotDeployedSar > salaryInvestment.investedFromSalarySarMonth * 0.5 ? 'warning' : 'info',
+          actionHint: 'Open Investments to compare platform funding against actual buys.',
+        });
+      }
+      const recentHistory = salaryInvestment.history.slice(-3);
+      const underInvestingMonths = recentHistory.filter((row) => row.targetVsActualGapSar > 0).length;
+      if (salaryInvestment.hasTargetsConfigured && underInvestingMonths >= 3) {
+        push({
+          id: 'salary-invest-rolling-trend',
+          category: 'Plan',
+          message: 'Salary invest target has been missed for 3 straight financial months.',
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Investments',
+          pageAction: safePageAction('Investments', 'focus-salary-invest'),
+          severity: 'warning',
+          actionHint: 'Review whether the target, salary tagging, or monthly deployment plan needs adjustment.',
+        });
+      }
+      if (salaryInvestment.salaryDetectionConfidence === 'low') {
+        push({
+          id: 'salary-invest-low-confidence',
+          category: 'System',
+          message: 'Salary-invest attribution confidence is low. Salary source account or income tags may need cleanup.',
+          date: now.toISOString(),
+          isRead: false,
+          pageLink: 'Settings',
+          pageAction: safePageAction('Settings', 'focus-salary-investing'),
+          severity: 'info',
+          actionHint: 'Set a preferred salary source account and keep salary transactions tagged consistently.',
+        });
+      }
+    }
 
     (data.goals ?? []).forEach((g: any) => {
       const alloc = Number(g.savingsAllocationPercent) || 0;
@@ -771,6 +837,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     isLive,
     symbolQuoteUpdatedAt,
     sarPerUsd,
+    salaryInvestmentCanonical,
     pendingBudgetRequestCount,
     pendingTransactionApprovalCount,
     isAdmin,

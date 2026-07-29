@@ -54,6 +54,7 @@ import {
   getExceptionQueue,
 } from '../services/exceptionHandlingEngine';
 import type { Transaction, Account, Goal, Liability } from '../types';
+import { useCanonicalFinancialMetrics, useExtendedMetricsReady } from '../hooks/useCanonicalFinancialMetrics';
 
 const EMPTY_SIMULATED_PRICES: SimulatedPriceMap = {};
 
@@ -241,8 +242,11 @@ const SystemHealth: React.FC<{
   const auth = useContext(AuthContext);
   const marketDataCtx = useContext(MarketDataContext);
   const { exchangeRate } = useCurrency();
+  const { salaryInvestment: salaryInvestmentFromCanonical } = useCanonicalFinancialMetrics();
+  const metricsExtendedReady = useExtendedMetricsReady();
   const [quoteCooldownSec, setQuoteCooldownSec] = useState<number>(0);
   const [quoteQueueLen, setQuoteQueueLen] = useState<number>(0);
+  const salaryInvestmentHealth = salaryInvestmentFromCanonical;
 
   useEffect(() => {
     if (!marketDataCtx) return;
@@ -1019,6 +1023,58 @@ const SystemHealth: React.FC<{
               Deep-link: <a className="text-indigo-700 underline" href="#reconciliation-audit-log">reconciliation audit log</a>.
             </p>
           </section>
+
+          {salaryInvestmentHealth ? (
+            <section className="rounded-xl border border-cyan-200/80 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-800 mb-1">Salary-invest attribution health</h3>
+              <p className="text-xs text-slate-600 mb-3">
+                Tracks whether salary tagging and broker funding links are strong enough for the salary-to-investment KPI family.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <Metric
+                  title="Detection confidence"
+                  value={String(salaryInvestmentHealth.salaryDetectionConfidence ?? 'unknown')}
+                  tone={salaryInvestmentHealth.salaryDetectionConfidence === 'high' ? 'good' : salaryInvestmentHealth.salaryDetectionConfidence === 'medium' ? 'warn' : 'bad'}
+                />
+                <Metric
+                  title="Unlinked broker funding"
+                  value={`SAR ${formatSarFixed2(salaryInvestmentHealth.unlinkedBrokerFundingSar)}`}
+                  tone={salaryInvestmentHealth.unlinkedBrokerFundingSar > 0 ? 'warn' : 'good'}
+                />
+                <Metric
+                  title="Non-salary funding"
+                  value={`SAR ${formatSarFixed2(salaryInvestmentHealth.nonSalaryFundingSar)}`}
+                  tone={salaryInvestmentHealth.nonSalaryFundingSar > 0 ? 'warn' : 'good'}
+                />
+                <Metric
+                  title="Funded not deployed"
+                  value={`SAR ${formatSarFixed2(salaryInvestmentHealth.fundedNotDeployedSar)}`}
+                  tone={salaryInvestmentHealth.fundedNotDeployedSar > 0 ? 'warn' : 'good'}
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-3 text-sm">
+                {setActivePage ? (
+                  <button type="button" className="text-indigo-700 underline" onClick={() => setActivePage('Settings')}>
+                    Open Settings →
+                  </button>
+                ) : null}
+                {setActivePage ? (
+                  <button type="button" className="text-indigo-700 underline" onClick={() => setActivePage('Accounts')}>
+                    Review account roles →
+                  </button>
+                ) : null}
+                {setActivePage ? (
+                  <button type="button" className="text-indigo-700 underline" onClick={() => setActivePage('Transactions')}>
+                    Review salary tags →
+                  </button>
+                ) : null}
+              </div>
+            </section>
+          ) : !metricsExtendedReady ? (
+            <section className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600" aria-busy="true">
+              Computing salary-invest attribution health…
+            </section>
+          ) : null}
 
           <ReconciliationAuditPanel />
 

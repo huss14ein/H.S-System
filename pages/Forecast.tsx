@@ -25,19 +25,20 @@ import { computeGoalResolvedAmountsSar } from '../services/goalResolvedTotals';
 import PageActionsDropdown from '../components/PageActionsDropdown';
 import { projectForecastSeries, downsampleForecastRows, type ForecastMonthRow } from '../services/forecastProjection';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
+import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const TOOLTIP_STYLE = { backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '10px 14px' };
 
-const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActivePage }) => {
+const Forecast: React.FC<{ setActivePage?: (page: Page) => void; triggerPageAction?: (page: Page, action: string) => void }> = ({ setActivePage, triggerPageAction }) => {
     const { formatCurrencyString, formatSecondaryEquivalent } = useFormatCurrency();
     const { data } = useContext(DataContext)!;
     const { computeData } = usePageDeferredData();
     const engineData = computeData ?? data;
     const { exchangeRate, currency: displayCurrency } = useCurrency();
     const metrics = useExtendedCanonicalMetrics();
-    const { netWorth: headlineNetWorth, sarPerUsd, liquidCashSar, extendedReady, kpiSnapshot } = metrics;
+    const { netWorth: headlineNetWorth, sarPerUsd, liquidCashSar, extendedReady, kpiSnapshot, salaryInvestment } = metrics;
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
     const baselinesPending = metrics.showHydrateBanner || !extendedReady;
     useHydrateSarPerUsdDailySeries(data, exchangeRate);
@@ -346,6 +347,23 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void }> = ({ setActiv
             }
         >
             <div className="space-y-6 lg:space-y-8">
+                <SalaryInvestmentSummaryCard
+                    model={salaryInvestment}
+                    loading={!extendedReady && !salaryInvestment}
+                    formatCurrencyString={formatCurrencyString}
+                    compact
+                    onOpenSettings={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Settings', 'focus-salary-investing') : setActivePage('Settings'))
+                        : undefined
+                    }
+                    onOpenInvestments={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Investments', 'focus-salary-invest') : setActivePage('Investments'))
+                        : undefined
+                    }
+                    onOpenTransactions={setActivePage ? () => setActivePage('Transactions') : undefined}
+                />
                 <div className="rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-50/90 to-white px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-slate-700 shadow-sm">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                         <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-violet-900">SAR projections</span>

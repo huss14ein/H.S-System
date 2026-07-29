@@ -77,6 +77,7 @@ import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
 import WealthAnalyticsGuideBanner from '../components/WealthAnalyticsGuideBanner';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { useLanguage } from '../context/LanguageContext';
+import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
 
 const AccountsOverview: React.FC<{ accounts: Account[], onClick: () => void }> = ({ accounts, onClick }) => {
     const { formatCurrencyString } = useFormatCurrency();
@@ -245,7 +246,7 @@ const DashboardContent: React.FC<{
         investableCashBars: dashboardInvestableCashBars,
         sarPerUsd: canonicalSarPerUsd,
     } = useDashboardCanonicalMetrics();
-    const { availableLiquiditySar, reservedLiquiditySar, emergencyFundFloorSar } = useCanonicalFinancialMetrics();
+    const { availableLiquiditySar, reservedLiquiditySar, emergencyFundFloorSar, salaryInvestment } = useCanonicalFinancialMetrics();
     const liveQuotePrices = useLiveQuotePrices();
     const metricsExtendedReady = useExtendedMetricsReady();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
@@ -282,11 +283,12 @@ const DashboardContent: React.FC<{
     const kpiDensity = 'compact' as const;
 
     useEffect(() => {
-        if (pageAction !== 'plan-compare-dashboard') return;
-        const scrollToKpis = () => {
-            document.getElementById('dashboard-kpi-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (pageAction !== 'plan-compare-dashboard' && pageAction !== 'focus-salary-invest') return;
+        const targetId = pageAction === 'focus-salary-invest' ? 'salary-to-investment' : 'dashboard-kpi-row';
+        const scrollToTarget = () => {
+            document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         };
-        const t = window.setTimeout(scrollToKpis, 120);
+        const t = window.setTimeout(scrollToTarget, 120);
         const cancelClear = scheduleClearPageAction(clearPageAction);
         return () => {
             window.clearTimeout(t);
@@ -792,6 +794,18 @@ const DashboardContent: React.FC<{
             </Suspense>
             )}
             </div>
+
+            <section id="salary-to-investment" aria-label="Salary to investment" className="mb-6 scroll-mt-24">
+                <SalaryInvestmentSummaryCard
+                    model={salaryInvestment}
+                    loading={!metricsExtendedReady && !salaryInvestment}
+                    formatCurrencyString={formatCurrencyString}
+                    compact
+                    onOpenSettings={() => (triggerPageAction ? triggerPageAction('Settings', 'focus-salary-investing') : setActivePage('Settings'))}
+                    onOpenInvestments={() => (triggerPageAction ? triggerPageAction('Investments', 'focus-salary-invest') : setActivePage('Investments'))}
+                    onOpenTransactions={() => setActivePage('Transactions')}
+                />
+            </section>
 
             <section aria-label="Net worth" className="mb-6">
                 <div className="section-card flex flex-col min-h-[420px] overflow-hidden border-l-4 border-l-primary/30">

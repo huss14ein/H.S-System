@@ -24,6 +24,7 @@ import type { WealthSummaryReportInput } from './reportingEngine';
 import { computeRiskLaneFromData, type RiskLaneContext } from './riskLaneEngine';
 import { runShockDrill, type ShockDrillResult } from './shockDrillEngine';
 import { computeLiquidNetWorth } from './liquidNetWorth';
+import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
@@ -358,6 +359,7 @@ export function computeWealthSummaryReportModel(
     exchangeRate: uiExchangeRate,
     simulatedPrices,
   });
+  const salaryInvestment = computeSalaryInvestmentKpis(data, uiExchangeRate);
 
   const wealthSummaryReportPayload: WealthSummaryReportInput = {
     generatedAtIso: new Date().toISOString(),
@@ -367,6 +369,9 @@ export function computeWealthSummaryReportModel(
     monthlyIncome: Number(financialMetricsWithEf.monthlyIncome) || 0,
     monthlyExpenses: Number(financialMetricsWithEf.monthlyExpenses) || 0,
     monthlyPnL: Number(financialMetricsWithEf.monthlyIncome) - Number(financialMetricsWithEf.monthlyExpenses),
+    salaryInvestRatePct: Number(salaryInvestment?.salaryInvestRatePct) || 0,
+    investedFromSalarySar: Number(salaryInvestment?.investedFromSalarySarMonth) || 0,
+    fundedNotDeployedSar: Number(salaryInvestment?.fundedNotDeployedSar) || 0,
     savingsRatePct: (Number(financialMetricsWithEf.savingsRate) || 0) * 100,
     debtToAssetRatioPct: (Number(financialMetricsWithEf.debtToAssetRatio) || 0) * 100,
     emergencyFundMonths: Number(financialMetricsWithEf.emergencyFundMonths) || 0,

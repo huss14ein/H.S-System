@@ -7,12 +7,16 @@ import type {
   InvestmentPortfolio,
   InvestmentTransaction,
   Liability,
+  Settings,
+  Transaction,
 } from '../types';
 import { getDefaultWealthUltraSystemConfig, mergeWealthUltraSystemConfigFromRow } from '../wealth-ultra/config';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 import { normalizeInvestmentCostLotRow } from './investmentCostLotDb';
 import { normalizeSukukPositionRow } from './sukuk/sukukPositionDb';
+import { normalizeSalaryInvestmentTargets } from './salaryInvestmentSettings';
+import { DEFAULT_FINANCIAL_MONTH_START_DAY, clampMonthStartDay } from '../utils/financialMonth';
 
 function resolveAccountId(candidate: string | undefined, accounts: Account[]): string | undefined {
   const c = (candidate ?? '').trim();
@@ -44,6 +48,19 @@ function digestNormalizeAccount(raw: Record<string, unknown>): Account {
   const linkedAccountIds = raw.linkedAccountIds ?? raw.linked_account_ids;
   const cur = raw.currency;
   const accountCurrency = cur === 'SAR' || cur === 'USD' ? cur : undefined;
+  const roleRaw = String(raw.accountRole ?? raw.account_role ?? '').trim();
+  const knownRoles = new Set([
+    'operating_cash',
+    'salary_receiving',
+    'bills_payment',
+    'emergency_reserve',
+    'investment_funding',
+    'trading_capital',
+    'long_term_savings',
+    'goal_reserve',
+    'debt_servicing',
+  ]);
+  const accountRole = knownRoles.has(roleRaw) ? (roleRaw as Account['accountRole']) : undefined;
   return {
     ...(raw as Record<string, unknown>),
     id: String(id),
@@ -52,6 +69,7 @@ function digestNormalizeAccount(raw: Record<string, unknown>): Account {
     type,
     balance,
     currency: accountCurrency,
+    accountRole,
     owner: raw.owner as string | undefined,
     linkedAccountIds: Array.isArray(linkedAccountIds)
       ? linkedAccountIds.filter((x): x is string => typeof x === 'string')
@@ -224,6 +242,30 @@ function mapPortfolio(portfolio: Record<string, unknown>, accounts: Account[]): 
   } as InvestmentPortfolio;
 }
 
+function digestNormalizeTransaction(raw: Record<string, unknown>): Transaction {
+  const amount = Number(raw.amount ?? 0);
+  const typeRaw = String(raw.type ?? '').toLowerCase();
+  const type =
+    typeRaw === 'income' || typeRaw === 'expense' || typeRaw === 'transfer'
+      ? typeRaw
+      : amount >= 0
+        ? 'income'
+        : 'expense';
+  return {
+    ...(raw as object),
+    id: String(raw.id ?? ''),
+    accountId: String(raw.accountId ?? raw.account_id ?? ''),
+    amount: Number.isFinite(amount) ? amount : 0,
+    type: type as Transaction['type'],
+    category: String(raw.category ?? ''),
+    budgetCategory: (raw.budgetCategory ?? raw.budget_category) as string | undefined,
+    description: String(raw.description ?? ''),
+    date: String(raw.date ?? '').slice(0, 10),
+    transferGroupId: (raw.transferGroupId ?? raw.transfer_group_id) as string | undefined,
+    transferRole: (raw.transferRole ?? raw.transfer_role) as Transaction['transferRole'],
+  } as Transaction;
+}
+
 export type WeeklyDigestFinanceRows = {
   accountsRaw: Record<string, unknown>[];
   assetsRaw: Record<string, unknown>[];
@@ -234,6 +276,9 @@ export type WeeklyDigestFinanceRows = {
   sukukPositionsRaw?: Record<string, unknown>[];
   investmentTransactionsRaw: Record<string, unknown>[];
   investmentCostLotsRaw?: Record<string, unknown>[];
+  /** Cash ledger rows — required for salary-to-investment KPIs in the digest. */
+  transactionsRaw?: Record<string, unknown>[];
+  settingsRaw?: Record<string, unknown> | null;
   wealthUltraUserRow: Record<string, unknown> | null;
   wealthUltraGlobalRow: Record<string, unknown> | null;
 };
@@ -255,20 +300,38 @@ export function buildFinancialDataForWeeklyDigest(rows: WeeklyDigestFinanceRows)
   );
   const sukukPositions = (rows.sukukPositionsRaw ?? []).map((r) => normalizeSukukPositionRow(r));
   const investmentCostLots = (rows.investmentCostLotsRaw ?? []).map((r) => normalizeInvestmentCostLotRow(r));
+  const transactions = (rows.transactionsRaw ?? []).map(digestNormalizeTransaction);
+  const settingsRow = rows.settingsRaw ?? null;
+  const monthStartDay = clampMonthStartDay(
+    settingsRow?.monthStartDay ?? settingsRow?.month_start_day,
+    DEFAULT_FINANCIAL_MONTH_START_DAY,
+  );
+  const salaryInvestmentTargets = normalizeSalaryInvestmentTargets(
+    settingsRow?.salaryInvestmentTargets ?? settingsRow?.salary_investing_targets,
+  );
+  const settings: Settings = {
+    riskProfile: 'Moderate',
+    budgetThreshold: 90,
+    driftThreshold: 5,
+    enableEmails: true,
+    goldPrice: 275,
+    monthStartDay,
+    ...(salaryInvestmentTargets ? { salaryInvestmentTargets } : {}),
+  };
 
   return {
     accounts,
     assets: (rows.assetsRaw ?? []).map(digestNormalizeAsset),
     liabilities: (rows.liabilitiesRaw ?? []).map(digestNormalizeLiability),
     goals: [],
-    transactions: [],
+    transactions,
     recurringTransactions: [],
     investments,
     investmentTransactions,
     budgets: [],
     commodityHoldings: (rows.commodityHoldingsRaw ?? []).map(digestNormalizeCommodity),
     watchlist: [],
-    settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275, monthStartDay: 1 },
+    settings,
     zakatPayments: [],
     priceAlerts: [],
     plannedTrades: [],

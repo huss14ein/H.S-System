@@ -8,9 +8,12 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Notifications', 'notifications-tab:tasks')).toBe(true);
   });
 
-  it('accepts Dashboard plan compare action', () => {
+  it('accepts Dashboard plan compare and salary-invest deep-links', () => {
     expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard')).toBe(true);
+    expect(isSupportedPageAction('Dashboard', 'focus-salary-invest')).toBe(true);
     expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard-extra')).toBe(false);
+    expect(isSupportedPageAction('Settings', 'focus-salary-investing')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'focus-salary-invest')).toBe(true);
   });
 
   it('accepts known transaction and goal actions', () => {
@@ -25,6 +28,7 @@ describe('isSupportedPageAction', () => {
   });
 
   it('accepts known investment and engines actions', () => {
+    expect(isSupportedPageAction('Investments', 'investment-tab:Overview')).toBe(true);
     expect(isSupportedPageAction('Investments', 'investment-tab:Watchlist')).toBe(true);
     expect(isSupportedPageAction('Investments', 'investment-tab:Dividend Tracker')).toBe(true);
     expect(isSupportedPageAction('Investments', 'open-trade-modal')).toBe(true);

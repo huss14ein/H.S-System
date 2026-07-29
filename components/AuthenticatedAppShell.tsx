@@ -132,15 +132,15 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
       case 'Goals':
         return <Lazy key={routeKey} setActivePage={setActivePage} pageAction={pageAction} clearPageAction={clearPageAction} triggerPageAction={triggerPageAction} />;
       case 'Forecast':
-        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+        return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Analysis':
-        return <Lazy key={routeKey} setActivePage={setActivePage} />;
+        return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
       case 'Zakat':
         return <Lazy key={routeKey} setActivePage={setActivePage} />;
       case 'Notifications':
         return <Lazy key={routeKey} setActivePage={setActivePage} {...actionProps} triggerPageAction={triggerPageAction} />;
       case 'Settings':
-        return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} />;
+        return <Lazy key={routeKey} setActivePage={setActivePage} triggerPageAction={triggerPageAction} {...actionProps} />;
       case 'Investments':
         return <Lazy key={routeKey} {...actionProps} {...nav} />;
       case 'Plan':

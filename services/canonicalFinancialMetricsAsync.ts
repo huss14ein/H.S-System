@@ -19,6 +19,7 @@ import {
   type HeadlinePersonalInvestmentRoi,
 } from './investmentKpiCore';
 import { buildHeadlineInvestmentAllocationSlices } from './headlineInvestmentAllocation';
+import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
 import { waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
 
@@ -123,6 +124,7 @@ export async function extendCanonicalFinancialMetricsAsync(
       investmentsTotalSar,
       headlineExposureParts,
       investmentAllocation,
+      salaryInvestment: data ? computeSalaryInvestmentKpis(data, exchangeRate) : null,
     },
     liquidity,
   );

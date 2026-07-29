@@ -652,6 +652,25 @@ export interface WatchlistItem {
 
 export type RiskProfile = 'Conservative' | 'Moderate' | 'Aggressive';
 
+export interface SalaryInvestmentTargets {
+    /** Optional monthly salary-to-invest target in SAR. */
+    monthlyInvestTargetSar?: number;
+    /** Optional per-platform monthly targets in SAR keyed by investment account id. */
+    platformTargets?: Record<string, number>;
+    /** Optional per-asset-class monthly targets in SAR keyed by asset class label. */
+    assetClassTargets?: Record<string, number>;
+    /** Optional income-category allowlist override (matches category / budgetCategory labels). */
+    salaryIncomeCategories?: string[];
+    /** Optional preferred salary source account for attribution confidence. */
+    salarySourceAccountId?: string;
+    /** Optional preferred funding source account for investment deposits. */
+    defaultFundingAccountId?: string;
+    /** Days into the financial month before invest-rate reminders escalate. */
+    investLagAlertDays?: number;
+    /** When true, treat bonus-tagged income as salary for invest-rate KPIs. */
+    includeBonusInSalaryIncome?: boolean;
+}
+
 export interface Settings {
     user_id?: string;
     riskProfile: RiskProfile;
@@ -705,6 +724,8 @@ export interface Settings {
         at: string;
       };
     };
+    /** Salary-to-investment target configuration (preferences only; historical results stay derived). */
+    salaryInvestmentTargets?: SalaryInvestmentTargets;
 }
 
 export interface ZakatPayment {

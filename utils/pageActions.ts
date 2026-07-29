@@ -8,7 +8,11 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
   if (!action || typeof action !== 'string') return false;
 
   if (page === 'Dashboard') {
-    return action === 'plan-compare-dashboard';
+    return action === 'plan-compare-dashboard' || action === 'focus-salary-invest';
+  }
+
+  if (page === 'Settings') {
+    return action === 'focus-salary-investing';
   }
 
   if (page === 'Notifications') {
@@ -102,6 +106,7 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
     return (
       action === 'open-trade-modal' ||
       /^open-trade-modal:.+/.test(action) ||
+      action === 'investment-tab:Overview' ||
       action === 'investment-tab:Recovery Plan' ||
       action === 'investment-tab:Investment Plan' ||
       action === 'investment-tab:Dividend Tracker' ||
@@ -109,6 +114,7 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'investment-tab:Watchlist' ||
       action === 'focus-investment-plan' ||
       action === 'focus-dividend-sms' ||
+      action === 'focus-salary-invest' ||
       action === 'sync-realized-pnl' ||
       action === 'open-corporate-action-wizard' ||
       action === 'open-corporate-action-wizard:from-plan' ||

@@ -19,6 +19,9 @@ const sampleInput: WealthSummaryReportInput = {
   monthlyIncome: 20000,
   monthlyExpenses: 12000,
   monthlyPnL: 8000,
+  salaryInvestRatePct: 30,
+  investedFromSalarySar: 6000,
+  fundedNotDeployedSar: 1200,
   savingsRatePct: 40,
   debtToAssetRatioPct: 18,
   emergencyFundMonths: 6,
@@ -75,6 +78,8 @@ describe('wealth summary report exports', () => {
     expect(parsed.holdings).toHaveLength(2);
     expect(parsed.holdings[0].symbol).toBe('AAPL');
     expect(parsed.holdings[1].currentValueSar).toBe(6375);
+    expect(parsed.salaryInvestRatePct).toBe(30);
+    expect(parsed.fundedNotDeployedSar).toBe(1200);
   });
 
   it('includes summary and per-holding rows in CSV export', () => {

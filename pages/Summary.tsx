@@ -43,6 +43,7 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import Modal from '../components/Modal';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
+import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
         case 'Excellent': return { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-500', icon: <CheckCircleIcon className="h-6 w-6 text-green-500" /> };
@@ -80,7 +81,7 @@ interface SummaryProps {
   triggerPageAction?: (page: Page, action: string) => void;
 }
 
-const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
+const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
     const { aiActionsEnabled, aiHealthChecked, isAiAvailable } = useAI();
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
@@ -96,6 +97,7 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
         investableCashBars,
         sarPerUsd: canonicalSarPerUsd,
         extendedReady,
+        salaryInvestment,
     } = useExtendedCanonicalMetrics();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
     const fxBanner = useMemo(() => {
@@ -386,6 +388,25 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage }) => {
                 )
             }
         >
+            <div className="mb-4">
+                <SalaryInvestmentSummaryCard
+                    model={salaryInvestment}
+                    loading={!extendedReady && !salaryInvestment}
+                    formatCurrencyString={formatCurrencyString}
+                    compact
+                    onOpenSettings={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Settings', 'focus-salary-investing') : setActivePage('Settings'))
+                        : undefined
+                    }
+                    onOpenInvestments={
+                      setActivePage
+                        ? () => (triggerPageAction ? triggerPageAction('Investments', 'focus-salary-invest') : setActivePage('Investments'))
+                        : undefined
+                    }
+                    onOpenTransactions={setActivePage ? () => setActivePage('Transactions') : undefined}
+                />
+            </div>
             <Modal isOpen={isPrintOptionsOpen} onClose={() => setIsPrintOptionsOpen(false)} title="Choose what to include in the HTML report">
                 <div className="space-y-3 text-sm text-slate-700">
                     <p className="text-slate-600">Pick sections for export. This helps non-financial users print only what they need.</p>

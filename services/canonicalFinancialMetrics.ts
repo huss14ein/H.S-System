@@ -40,6 +40,7 @@ import {
 } from './availableLiquidity';
 import { computeEmergencyFundMetrics } from '../hooks/useEmergencyFund';
 import { sumRewardsFiatSar } from './rewards';
+import { computeSalaryInvestmentKpis, type SalaryInvestmentKpis } from './salaryInvestmentKpis';
 
 /** Platforms + commodities + Sukuk slice totals (matches headline investments bucket decomposition). */
 export type HeadlineExposureParts = Pick<
@@ -149,6 +150,8 @@ export type CanonicalFinancialMetrics = {
   emergencyFundFloorSar: number;
   /** Rewards/points/cashback memo value (SAR) — never EF or investable cash. */
   rewardsSar: number;
+  /** Monthly salary-to-investment attribution bundle. */
+  salaryInvestment: SalaryInvestmentKpis | null;
 };
 
 /** Dashboard + NetWorthCockpit bundle (skips wealth summary / allocation charts). */
@@ -253,6 +256,8 @@ export function buildFastCanonicalFinancialMetrics(
     reservedLiquiditySar,
     emergencyFundFloorSar: 0,
     rewardsSar,
+    // Salary-invest is multi-month history — defer to extend / async path (no first-paint block).
+    salaryInvestment: null,
   };
 }
 
@@ -324,6 +329,7 @@ export function extendCanonicalFinancialMetrics(
       investmentsTotalSar,
       headlineExposureParts,
       investmentAllocation,
+      salaryInvestment: data ? computeSalaryInvestmentKpis(data, exchangeRate) : null,
     },
     computeLiquiditySlices(
       data,
@@ -346,6 +352,7 @@ export function mergeExtendedIntoDashboard(
     | 'investmentsTotalSar'
     | 'headlineExposureParts'
     | 'investmentAllocation'
+    | 'salaryInvestment'
   >,
   liquidity?: AvailableLiquiditySnapshot & { rewardsSar: number },
 ): CanonicalFinancialMetrics {
@@ -374,6 +381,7 @@ export function mergeExtendedIntoDashboard(
     reservedLiquiditySar,
     emergencyFundFloorSar,
     rewardsSar: liquidity?.rewardsSar ?? 0,
+    salaryInvestment: extended.salaryInvestment,
   };
 }
 
@@ -486,5 +494,6 @@ export function computeCanonicalFinancialMetrics(
     reservedLiquiditySar: liquidity.reservedLiquiditySar,
     emergencyFundFloorSar: liquidity.emergencyFundFloorSar,
     rewardsSar: liquidity.rewardsSar,
+    salaryInvestment: data ? computeSalaryInvestmentKpis(data, exchangeRate) : null,
   };
 }

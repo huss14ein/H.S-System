@@ -41,6 +41,13 @@ This document reflects features and functionalities implemented in the codebase.
 - **Location:** `pages/InvestmentPlanView.tsx`
 - Monthly investment plan (private per user), planned trades, control tower with cross-engine alerts and constraints
 
+### Salary-To-Investment KPIs
+- **Location:** `services/salaryInvestmentKpis.ts`, `components/SalaryInvestmentSummaryCard.tsx`, `pages/Dashboard.tsx`, `pages/Investments.tsx`, `pages/Settings.tsx`
+- Financial-month salary received, broker funding from salary, capital deployed, funded-not-deployed, and salary invest-rate
+- Optional settings for monthly target, platform splits, asset-class targets, salary source hints, and alert lag days
+- Surfaces: Dashboard, Investments, Analysis, Forecast, Plan, Summary, Wealth Analytics, System Health, Notifications, Command Palette (deep-links), review pack / wealth summary HTML+JSON/CSV exports, AI grounding, and weekly digest (cash txs + settings)
+- Deep-links: `focus-salary-invest` (Dashboard/Investments), `focus-salary-investing` (Settings `#salary-investing-targets`)
+
 ---
 
 ## Financial Planning
@@ -113,6 +120,7 @@ This document reflects features and functionalities implemented in the codebase.
 ### Notifications
 - **Location:** `context/NotificationsContext.tsx`, `pages/Notifications.tsx`
 - Budget breach, goals near deadline, price alerts, planned trades triggered, expense spike
+- Salary-invest target gap and salary-funded cash not yet deployed
 - Admin: pending budget requests, pending shared-budget transaction approvals
 - User: budget request outcomes (approved/rejected)
 - Severity (urgent, warning, info), read state, cross-page links
@@ -120,6 +128,7 @@ This document reflects features and functionalities implemented in the codebase.
 ### Settings
 - **Location:** `pages/Settings.tsx`
 - Financial preferences, budget alerts, Wealth Ultra config, data management, export
+- Salary-to-investment target preferences with attribution hints and optional split targets
 
 ---
 
