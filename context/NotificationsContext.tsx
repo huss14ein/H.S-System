@@ -830,6 +830,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
     return list;
   }, [
+    // Gate rebuilds on the deferred fingerprint (not bare `data`) so hydrate/quote churn can defer.
     deferredNotificationsFingerprint,
     showHydrateBanner,
     lastUpdated,
@@ -844,7 +845,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     todosOpt?.todos,
     enhancementSignals.goalConflicts.length,
     enhancementSignals.budgetDrift.length,
-    data,
   ]);
 
   const priceTriggeredPlanNotifications = useMemo<AppNotification[]>(() => {

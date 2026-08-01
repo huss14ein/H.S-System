@@ -84,7 +84,7 @@ export function resolveHouseholdAutoSetup(args: {
 
   const fromVariance = suggestProfileFromIncomeVariance(args.monthlyActualIncome);
   const fromRisk = deriveEngineProfileFromRiskProfile(
-    'Moderate',
+    args.currentProfile,
     String(args.riskProfileRaw || ''),
   );
   let profile: HouseholdEngineProfile = args.currentProfile;

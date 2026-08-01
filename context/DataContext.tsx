@@ -2608,6 +2608,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       payload.goal_id =
         budget.goalId != null && String(budget.goalId).trim() !== '' ? budget.goalId : null;
       let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
+      /** Columns actually sent on the successful insert (may omit optional cols after legacy retry). */
+      let persistedPayload: Record<string, unknown> = payload;
       // Older DBs may lack optional columns — retry without the ones PostgREST rejects.
       if (error && /goal_id|destination_account_id|period|tier|PGRST204|schema cache|column/i.test(String(error.message ?? ''))) {
         const legacyPayload = { ...payload };
@@ -2618,6 +2620,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const retry = await db.from('budgets').insert(legacyPayload).select().single();
         newBudget = retry.data;
         error = retry.error;
+        persistedPayload = legacyPayload;
       }
       if (error) {
         console.error("Error adding budget:", error);
@@ -2627,15 +2630,30 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (newBudget) {
         const withPeriod = {
           ...newBudget,
-          period: (budget as Budget).period,
-          tier: (budget as Budget).tier,
-          destinationAccountId: (newBudget as any).destination_account_id ?? undefined,
-          goalId: (newBudget as any).goal_id ?? (budget as Budget).goalId ?? undefined,
+          period: 'period' in persistedPayload ? (budget as Budget).period : (newBudget as any).period,
+          tier: 'tier' in persistedPayload ? (budget as Budget).tier : (newBudget as any).tier,
+          destinationAccountId:
+            (newBudget as any).destination_account_id
+            ?? ('destination_account_id' in persistedPayload ? budget.destinationAccountId : undefined),
+          // Only fall back to client goalId when goal_id was actually persisted.
+          goalId:
+            (newBudget as any).goal_id
+            ?? ('goal_id' in persistedPayload ? (budget as Budget).goalId : undefined)
+            ?? undefined,
         };
-        if ((budget as Budget).period === 'yearly' || (budget as Budget).period === 'weekly' || (budget as Budget).period === 'daily') withPeriod.limit = budget.limit;
+        if (
+          'period' in persistedPayload &&
+          ((budget as Budget).period === 'yearly' || (budget as Budget).period === 'weekly' || (budget as Budget).period === 'daily')
+        ) {
+          withPeriod.limit = budget.limit;
+        }
         setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
         return true;
       }
+      toast(
+        'Budget may have been saved but could not be loaded. Refresh before retrying to avoid duplicates.',
+        'error',
+      );
       return false;
     };
     const updateBudget = async (budget: Budget): Promise<boolean> => {
