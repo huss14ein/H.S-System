@@ -1,8 +1,8 @@
 import React from 'react';
 
 /**
- * Market-hours quote polling runs in MarketSimulator (silent refresh).
- * Stale/missing quotes are also refreshed once after hydrate.
+ * Live quotes run only on user-initiated refresh (Header Sync / Investments Sync quotes).
+ * On hydrate: restore localStorage + DB holding prices + market_quote_cache — never auto-fetch APIs.
  */
 export const SystemActivityGuard: React.FC = () => null;
 

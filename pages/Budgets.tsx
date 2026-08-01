@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useContext, useEffect, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useContext, useEffect, useRef, useCallback, startTransition } from 'react';
 import BudgetCardShell from '../components/BudgetCardShell';
 import BudgetCardMetricsBlocks from '../components/BudgetCardMetricsBlocks';
 import HouseholdEngineSkeleton from '../components/HouseholdEngineSkeleton';
@@ -44,6 +44,7 @@ import {
     buildHouseholdEngineInputFromData,
     computeBulkAddLimitsForSelection,
     deriveEngineProfileFromRiskProfile,
+    resolveHouseholdPlanMonthIndex,
     HOUSEHOLD_ENGINE_PROFILES,
     HOUSEHOLD_ENGINE_SAMPLE_SCENARIOS,
     generateHouseholdBudgetCategories,
@@ -52,7 +53,8 @@ import {
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
-
+import { resolveHouseholdAutoSetup, buildHouseholdProfileSnapshot, persistHouseholdProfileSnapshot } from '../services/householdAutoSetup';
+import { toast } from '../context/ToastContext';
 /** Explanations for each budget category (KSA + generic). Used for InfoHint next to category names. */
 const BUDGET_CATEGORY_HINTS: Record<string, string> = {
     ...KSA_EXPENSE_CATEGORY_HINTS,
@@ -80,6 +82,9 @@ import {
     detectSpendingAnomaliesFromTransactions,
     detectSeasonality,
     effectiveMonthExpense,
+    effectiveMonthIncome,
+    selectHouseholdTrendMonths,
+    resolveHouseholdTrendsThroughMonth,
     type PredictiveForecast,
     type ScenarioAnalysis,
     type BudgetAnomaly,
@@ -96,6 +101,9 @@ import { useSelfLearning } from '../context/SelfLearningContext';
 import { toSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
+import { useDeferredIdleCompute } from '../hooks/useDeferredIdleCompute';
+import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
+import { yieldToMain } from '../utils/yieldToMain';
 import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
 import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
 import {
@@ -250,7 +258,7 @@ function sharedBudgetConsumedRpcArgsForRange(rangeStart: Date, rangeEnd: Date): 
 interface BudgetModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSave: (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => void;
+    onSave: (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => void | Promise<void>;
     budgetToEdit: Budget | null;
     currentMonth: number;
     currentYear: number;
@@ -324,15 +332,19 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
         );
         if (!ok) return;
 
-        onSave({
-            category,
-            limit: rawLimit,
-            month,
-            year,
-            period,
-            tier,
-            goalId: goalId.trim() ? goalId.trim() : undefined,
-        }, !!budgetToEdit);
+        try {
+            await onSave({
+                category,
+                limit: rawLimit,
+                month,
+                year,
+                period,
+                tier,
+                goalId: goalId.trim() ? goalId.trim() : undefined,
+            }, !!budgetToEdit);
+        } catch {
+            return;
+        }
         if (!budgetToEdit) {
             trackFormDefault('budget-add', 'limitPeriod', limitPeriod);
             trackFormDefault('budget-add', 'tier', tier);
@@ -508,6 +520,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [sharedTotalsSyncing, setSharedTotalsSyncing] = useState(false);
     const [sharedBudgetRpcUnavailable, setSharedBudgetRpcUnavailable] = useState(false);
     const [advancedHouseholdOpen, setAdvancedHouseholdOpen] = useState(false);
+    /** True once Autopilot or Advanced is opened (or Auto-setup runs) — keeps engine compute alive for KPI cards. */
+    const [householdEngineRequested, setHouseholdEngineRequested] = useState(false);
     const [householdEngineReady, setHouseholdEngineReady] = useState(false);
     const [recurringBillsOpen, setRecurringBillsOpen] = useState(false);
     const governanceSessionRef = React.useRef<string | null>(null);
@@ -616,6 +630,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const [selectedScenario, setSelectedScenario] = useState('custom');
     const [cashflowFocusTab, setCashflowFocusTab] = useState<'trends' | 'forecast' | 'scenarios' | 'seasonality'>('trends');
     const [selectedTrendMonthIdx, setSelectedTrendMonthIdx] = useState<number | null>(null);
+    /** Cap Trends to today's financial month so navigating ahead cannot show future salary-plan bars. */
+    const trendsThroughMonth = useMemo(
+        () => resolveHouseholdTrendsThroughMonth(currentYear, currentMonth, new Date(), monthStartDay),
+        [currentYear, currentMonth, monthStartDay],
+    );
+    React.useEffect(() => {
+        setSelectedTrendMonthIdx(null);
+    }, [currentYear, currentMonth, trendsThroughMonth]);
     const [predictiveForecasts, setPredictiveForecasts] = useState<PredictiveForecast[]>([]);
     const [scenarios, setScenarios] = useState<ScenarioAnalysis[]>([]);
     const [anomalies, setAnomalies] = useState<BudgetAnomaly[]>([]);
@@ -757,6 +779,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
     const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
     const [householdProfileCloudLoadedUserId, setHouseholdProfileCloudLoadedUserId] = useState<string | null>(null);
+    /** Bumped on Auto-setup / local persist so a late cloud fetch cannot overwrite fresher state. */
+    const householdProfileLocalEpochRef = useRef(0);
 
     React.useEffect(() => {
         try {
@@ -787,6 +811,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         }
         let isMounted = true;
         setHouseholdProfileCloudLoadedUserId(null);
+        const fetchEpoch = householdProfileLocalEpochRef.current;
         (async () => {
             try {
                 const { data, error } = await db
@@ -795,6 +820,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     .eq('user_id', userId)
                     .maybeSingle();
                 if (error || !data || !isMounted) return;
+                // Auto-setup (or later local edit) won the race — keep local/fresher snapshot.
+                if (householdProfileLocalEpochRef.current !== fetchEpoch) return;
                 const profile = (data as { profile?: any })?.profile;
                 if (!profile || typeof profile !== 'object') return;
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
@@ -805,6 +832,9 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 }
                 if (typeof profile?.expectedMonthlySalary === 'number' && profile.expectedMonthlySalary > 0) {
                     setExpectedMonthlySalary(profile.expectedMonthlySalary);
+                } else if (profile && Object.prototype.hasOwnProperty.call(profile, 'expectedMonthlySalary')) {
+                    // Explicit clear from Auto-setup snapshot
+                    setExpectedMonthlySalary('');
                 }
             } catch {
                 // Optional cloud sync path, safe to ignore when migration is not applied.
@@ -861,11 +891,29 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         householdProfileCloudLoadedUserId === auth.user.id;
 
     React.useEffect(() => {
-        if (advancedHouseholdOpen) setHouseholdEngineReady(true);
-    }, [advancedHouseholdOpen]);
+        if (!householdEngineRequested) {
+            setHouseholdEngineReady(false);
+            return;
+        }
+        let aborted = false;
+        const cancel = scheduleIdleWorkAsync(async () => {
+            await yieldToMain(0);
+            if (!aborted) startTransition(() => setHouseholdEngineReady(true));
+        }, 400);
+        return () => {
+            aborted = true;
+            cancel();
+        };
+    }, [householdEngineRequested]);
 
-    const householdBudgetEngine = useMemo(() => {
-        if (!householdEngineReady) return EMPTY_HOUSEHOLD_BUDGET_PLAN;
+    const {
+        value: householdBudgetEngine,
+        ready: householdEngineComputeReady,
+        error: householdEngineComputeError,
+    } = useDeferredIdleCompute({
+        enabled: householdEngineReady && householdCloudProfileReady,
+        empty: EMPTY_HOUSEHOLD_BUDGET_PLAN,
+        compute: () => {
         const transactions = getPersonalTransactions(engineData);
         const accounts = getPersonalAccounts(engineData);
         const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
@@ -895,11 +943,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 sarPerUsd,
                 uiExchangeRate: exchangeRate,
                 monthStartDay,
+                currentMonthIndex: resolveHouseholdPlanMonthIndex(currentYear, new Date(), monthStartDay),
             }
         );
-        const result = buildHouseholdBudgetPlan(input);
-        return result;
-    }, [
+        return buildHouseholdBudgetPlan(input);
+        },
+        deps: [
         engineData?.transactions,
         engineData?.accounts,
         engineData?.goals,
@@ -907,6 +956,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         sarPerUsd,
         exchangeRate,
         currentYear,
+        currentMonth,
         householdAdults,
         householdKids,
         householdOverrides,
@@ -914,7 +964,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         expectedMonthlySalary,
         monthStartDay,
         householdEngineReady,
-    ]);
+        householdCloudProfileReady,
+        ],
+        idleMs: 300,
+    });
 
     React.useEffect(() => {
         if (!advancedHouseholdOpen) {
@@ -968,12 +1021,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             transactions,
             accounts,
             currentYear,
-            exchangeRate,
+            sarPerUsd,
             monthStartDay,
         );
         const withData = monthlyIncome.filter((v: number) => v > 0);
         return withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
-    }, [data, currentYear, exchangeRate, monthStartDay]);
+    }, [data, currentYear, sarPerUsd, monthStartDay]);
 
     const householdEngineValidationWarnings = useMemo(() => {
         const w: string[] = [];
@@ -2149,6 +2202,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     };
 
     const criticalValidationCount = useMemo(() => householdBudgetEngine.months.reduce((sum, m) => sum + ((m.validationErrors?.length || 0) > 0 ? 1 : 0), 0), [householdBudgetEngine]);
+    const householdEngineLoaded =
+        householdEngineComputeReady &&
+        !householdEngineComputeError &&
+        (householdBudgetEngine.months?.length ?? 0) >= 12;
 
     /** Household owner can manage budgets; collaborators with category permissions use requests only. */
     const isCollaborator = governanceReady && !isAdmin && permittedCategories.length > 0;
@@ -2181,11 +2238,18 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         [handleOpenModal],
     );
 
-    const handleSaveBudget = (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => {
-        if (isEditing && budgetToEdit) {
-            updateBudget({ ...budgetToEdit, ...budget });
-        } else {
-            addBudget(budget, { confirmed: true });
+    const handleSaveBudget = async (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => {
+        try {
+            const ok = isEditing && budgetToEdit
+                ? await updateBudget({ ...budgetToEdit, ...budget })
+                : await addBudget(budget, { confirmed: true });
+            if (!ok) {
+                // Validation / guard / auth failure already toasted — keep modal open for retry
+                throw new Error('Budget save did not complete');
+            }
+        } catch (err) {
+            console.error('Save budget failed:', err);
+            throw err;
         }
     };
 
@@ -2251,7 +2315,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         }
     };
 
-    const handleSmartFillBudgets = () => {
+    const handleSmartFillBudgets = async () => {
         if (!canManageBudgets) return;
         const segments = buildSmartFillThreeFinancialMonthSegments(currentYear, currentMonth, monthStartDay);
         if (segments.length === 0) {
@@ -2289,21 +2353,37 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
 
         const CORE_CATEGORIES = ['Housing', 'Rent', 'Food', 'Transportation', 'Utilities', 'Health', 'Education'];
 
-        toCreate.forEach((s) => {
+        let created = 0;
+        let failed = 0;
+        for (const s of toCreate) {
             const tier: BudgetTier =
                 CORE_CATEGORIES.some((name) => s.category.toLowerCase().includes(name.toLowerCase())) ? 'Core' : 'Optional';
-            addBudget(
-                {
-                    category: s.category,
-                    limit: s.monthly,
-                    month: currentMonth,
-                    year: currentYear,
-                    period: 'monthly',
-                    tier,
-                } as any,
-                { confirmed: true },
+            try {
+                const ok = await addBudget(
+                    {
+                        category: s.category,
+                        limit: s.monthly,
+                        month: currentMonth,
+                        year: currentYear,
+                        period: 'monthly',
+                        tier,
+                    } as any,
+                    { confirmed: true },
+                );
+                if (ok) created += 1;
+                else failed += 1;
+            } catch {
+                failed += 1;
+            }
+        }
+        if (failed > 0) {
+            toast(
+                `Smart-fill created ${created} budget${created === 1 ? '' : 's'}; ${failed} failed (see earlier errors).`,
+                created > 0 ? 'warning' : 'error',
             );
-        });
+        } else if (created > 0) {
+            toast(`Smart-fill created ${created} budget${created === 1 ? '' : 's'}.`, 'success');
+        }
     };
 
     const handleSuggestBudgetAdjustments = async () => {
@@ -2335,10 +2415,34 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         setSuggestedAdjustments(proposals);
     };
 
-    const applySuggestedAdjustments = () => {
+    const applySuggestedAdjustments = async () => {
         if (!suggestedAdjustments) return;
         trackSuggestionFeedback('budget-suggested-adjustments', 'Budgets', true);
-        suggestedAdjustments.forEach(({ proposed }) => updateBudget(proposed));
+        let applied = 0;
+        let failed = 0;
+        const remaining: Array<{ orig: Budget; proposed: Budget }> = [];
+        for (const row of suggestedAdjustments) {
+            try {
+                const ok = await updateBudget(row.proposed);
+                if (ok) applied += 1;
+                else {
+                    failed += 1;
+                    remaining.push(row);
+                }
+            } catch (err) {
+                console.error('Suggested budget adjustment failed:', err);
+                failed += 1;
+                remaining.push(row);
+            }
+        }
+        if (failed > 0) {
+            toast(
+                `Applied ${applied} adjustment${applied === 1 ? '' : 's'}; ${failed} failed (see earlier errors).`,
+                applied > 0 ? 'warning' : 'error',
+            );
+            setSuggestedAdjustments(remaining);
+            return;
+        }
         setSuggestedAdjustments(null);
     };
 
@@ -2591,16 +2695,41 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     budgetAppliesToFinancialView(b, currentViewKey, monthStartDay, budgetView),
             );
             if (matchingBudgets.length > 0) {
-                matchingBudgets.forEach((b) => updateBudget({ ...b, limit: amount }));
+                try {
+                    for (const b of matchingBudgets) {
+                        const ok = await updateBudget({ ...b, limit: amount });
+                        if (!ok) {
+                            alert('Failed to update budget limit. Request was not finalized.');
+                            return;
+                        }
+                    }
+                } catch (err) {
+                    console.error('Finalize IncreaseLimit updateBudget failed:', err);
+                    alert('Failed to update budget limit. Request was not finalized.');
+                    return;
+                }
             } else if (targetCategory && auth?.user?.id) {
-                addBudget({
-                    category: targetCategory,
-                    limit: amount,
-                    month: currentMonth,
-                    year: currentYear,
-                    period: 'monthly',
-                    tier: 'Optional',
-                });
+                try {
+                    const ok = await addBudget(
+                        {
+                            category: targetCategory,
+                            limit: amount,
+                            month: currentMonth,
+                            year: currentYear,
+                            period: 'monthly',
+                            tier: 'Optional',
+                        },
+                        { confirmed: true },
+                    );
+                    if (!ok) {
+                        alert('Failed to create budget for this request. Request was not finalized.');
+                        return;
+                    }
+                } catch (err) {
+                    console.error('Finalize IncreaseLimit addBudget failed:', err);
+                    alert('Failed to create budget for this request. Request was not finalized.');
+                    return;
+                }
             }
         }
 
@@ -3180,15 +3309,25 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 collapsibleSummary="Expand to load year projection (deferred until opened)"
                 defaultExpanded={false}
                 onExpandedChange={(open) => {
-                    if (open) setHouseholdEngineReady(true);
+                    if (open) setHouseholdEngineRequested(true);
                 }}
             >
                 {(() => {
+                    const engineLoaded = householdEngineLoaded;
+                    const engineFailed = Boolean(householdEngineComputeError);
                     const engineIssues = criticalValidationCount;
                     const hasFxIssue = !Number.isFinite(sarPerUsd) || sarPerUsd <= 0;
                     const hasNoIncome = suggestedMonthlySalary <= 0 && !(typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0);
-                    const ready = !hasFxIssue && !hasNoIncome && engineIssues === 0;
-                    const statusTone = ready ? 'good' : engineIssues > 0 || hasFxIssue ? 'bad' : 'warn';
+                    const ready = engineLoaded && !hasFxIssue && !hasNoIncome && engineIssues === 0;
+                    const statusTone = engineFailed
+                        ? 'bad'
+                        : !engineLoaded
+                        ? 'warn'
+                        : ready
+                          ? 'good'
+                          : engineIssues > 0 || hasFxIssue
+                            ? 'bad'
+                            : 'warn';
                     const statusBg =
                         statusTone === 'good'
                             ? 'border-emerald-200 bg-emerald-50/60'
@@ -3207,6 +3346,15 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                     <CheckCircleIcon className="h-4 w-4" />
                                                     Ready
                                                 </span>
+                                            ) : engineFailed ? (
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-800">
+                                                    <ExclamationTriangleIcon className="h-4 w-4" />
+                                                    Projection failed
+                                                </span>
+                                            ) : !engineLoaded ? (
+                                                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700">
+                                                    Loading projection…
+                                                </span>
                                             ) : (
                                                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-900">
                                                     <ExclamationTriangleIcon className="h-4 w-4" />
@@ -3219,21 +3367,59 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             <InfoHint text="This panel is fully automated from Transactions, Accounts, Budgets, Goals, and your FX rate. You only adjust family size if it changed, and optionally override salary if your income is irregular." />
                                         </div>
                                         <p className="text-xs text-slate-700 mt-2 leading-relaxed">
-                                            Profile is auto-suggested from your risk settings; salary defaults to what your income history shows. Fixing the items below makes all projections and suggested budgets more accurate.
+                                            Profile is auto-suggested from income variance and risk settings. Auto-setup clears a manual salary override and resets monthly overrides so projections match your ledger.
                                         </p>
+                                        {engineFailed && (
+                                            <p className="text-xs text-rose-800 mt-2">
+                                                Could not build the year projection. Check transactions, FX, and try expanding this panel again.
+                                            </p>
+                                        )}
                                     </div>
 
                                     <div className="flex flex-wrap items-center gap-2 shrink-0">
                                         <button
                                             type="button"
-                                            onClick={() => {
-                                                const suggestedProfile = (householdBudgetEngine as unknown as { suggestedProfile?: string }).suggestedProfile;
-                                                if (suggestedProfile && suggestedProfile !== engineProfile) setEngineProfile(suggestedProfile as HouseholdEngineProfile);
-                                                if (!(typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0) && suggestedMonthlySalary > 0) {
-                                                    setExpectedMonthlySalary(suggestedMonthlySalary);
+                                            onClick={async () => {
+                                                const transactions = getPersonalTransactions(engineData ?? data);
+                                                const accounts = getPersonalAccounts(engineData ?? data);
+                                                const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
+                                                    engineData ?? data ?? null,
+                                                    transactions,
+                                                    accounts,
+                                                    currentYear,
+                                                    sarPerUsd,
+                                                    monthStartDay,
+                                                );
+                                                const setup = resolveHouseholdAutoSetup({
+                                                    currentProfile: engineProfile,
+                                                    riskProfileRaw: String((data as any)?.settings?.riskProfile || ''),
+                                                    monthlyActualIncome: monthlyIncome,
+                                                    suggestedMonthlySalary,
+                                                    adults: householdAdults,
+                                                    kids: householdKids,
+                                                });
+                                                const snapshot = buildHouseholdProfileSnapshot(setup, householdOverrides);
+                                                householdProfileLocalEpochRef.current += 1;
+                                                setEngineProfile(setup.profile as HouseholdEngineProfile);
+                                                setExpectedMonthlySalary(setup.expectedMonthlySalary);
+                                                setHouseholdAdults(setup.adults);
+                                                setHouseholdKids(setup.kids);
+                                                if (setup.clearOverrides) setHouseholdOverrides([]);
+                                                if (setup.bulkAddSalary !== '') setBulkAddSalary(setup.bulkAddSalary);
+                                                setBulkAddTargetMonth(currentMonth);
+                                                setBulkAddTargetYear(currentYear);
+                                                setHouseholdEngineRequested(true);
+                                                try {
+                                                    await persistHouseholdProfileSnapshot({
+                                                        storageKey: householdProfileStorageKey,
+                                                        snapshot,
+                                                        supabase,
+                                                        userId: auth?.user?.id,
+                                                    });
+                                                } catch {
+                                                    /* toast still shown */
                                                 }
-                                                setHouseholdAdults((prev) => Math.max(1, Number(prev) || 1));
-                                                setHouseholdKids((prev) => Math.max(0, Number(prev) || 0));
+                                                toast(setup.messages.join(' · ') || 'Auto-setup applied.', 'success');
                                             }}
                                             className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-extrabold text-white hover:bg-slate-800"
                                         >
@@ -3280,24 +3466,46 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     </div>
                                     <div className="rounded-xl border border-white/60 bg-white/70 p-3">
                                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Projected year-end liquid</p>
-                                        <p className={`mt-1 text-lg font-extrabold tabular-nums ${householdBudgetEngine.balanceProjection.projectedYearEndLiquid >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
-                                            {formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}
-                                        </p>
-                                        <p className="text-[11px] text-slate-500 mt-1">Checking + savings + investment cash</p>
+                                        {engineLoaded ? (
+                                            <>
+                                                <p className={`mt-1 text-lg font-extrabold tabular-nums ${householdBudgetEngine.balanceProjection.projectedYearEndLiquid >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+                                                    {formatCurrencyString(householdBudgetEngine.balanceProjection.projectedYearEndLiquid, { digits: 0 })}
+                                                </p>
+                                                <p className="text-[11px] text-slate-500 mt-1">
+                                                    {householdBudgetEngine.balanceProjection.planYearFullyElapsed
+                                                        ? `Year-start ${formatCurrencyString(householdBudgetEngine.balanceProjection.openingLiquid ?? 0, { digits: 0 })} (reconstructed)`
+                                                        : `Now ${formatCurrencyString(householdBudgetEngine.balanceProjection.openingLiquid ?? 0, { digits: 0 })} + remaining months`}
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <p className="mt-1 text-sm font-semibold text-slate-500">Loading…</p>
+                                        )}
                                     </div>
                                     <div className="rounded-xl border border-white/60 bg-white/70 p-3">
-                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Actual annual net</p>
-                                        <p className={`mt-1 text-lg font-extrabold tabular-nums ${householdBudgetEngine.plannedVsActual.actualNet >= 0 ? 'text-sky-900' : 'text-rose-800'}`}>
-                                            {formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}
-                                        </p>
-                                        <p className="text-[11px] text-slate-500 mt-1">Income − expense (actual)</p>
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">YTD actual net</p>
+                                        {engineLoaded ? (
+                                            <>
+                                                <p className={`mt-1 text-lg font-extrabold tabular-nums ${householdBudgetEngine.plannedVsActual.actualNet >= 0 ? 'text-sky-900' : 'text-rose-800'}`}>
+                                                    {formatCurrencyString(householdBudgetEngine.plannedVsActual.actualNet, { digits: 0 })}
+                                                </p>
+                                                <p className="text-[11px] text-slate-500 mt-1">Ledger income − expense this year</p>
+                                            </>
+                                        ) : (
+                                            <p className="mt-1 text-sm font-semibold text-slate-500">Loading…</p>
+                                        )}
                                     </div>
                                     <div className="rounded-xl border border-white/60 bg-white/70 p-3">
                                         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Issues</p>
-                                        <p className={`mt-1 text-lg font-extrabold tabular-nums ${engineIssues === 0 && !hasFxIssue ? 'text-emerald-800' : 'text-amber-900'}`}>
-                                            {engineIssues}{hasFxIssue ? ' + FX' : ''}
-                                        </p>
-                                        <p className="text-[11px] text-slate-500 mt-1">Months with invalid cashflow / settings</p>
+                                        {engineLoaded ? (
+                                            <>
+                                                <p className={`mt-1 text-lg font-extrabold tabular-nums ${engineIssues === 0 && !hasFxIssue ? 'text-emerald-800' : 'text-amber-900'}`}>
+                                                    {engineIssues}{hasFxIssue ? ' + FX' : ''}
+                                                </p>
+                                                <p className="text-[11px] text-slate-500 mt-1">Months with invalid cashflow / settings</p>
+                                            </>
+                                        ) : (
+                                            <p className="mt-1 text-sm font-semibold text-slate-500">Loading…</p>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -3361,7 +3569,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <strong className="text-slate-900">Actual income &amp; spending</strong> come from your transactions, converted to SAR the same way as Summary and Plan (per account currency).
                     </li>
                     <li>
-                        <strong className="text-slate-900">Liquid starting point</strong> uses checking, savings, and investment cash buckets — USD balances are converted at your SAR/USD rate.
+                        <strong className="text-slate-900">Liquid starting point</strong> uses checking + savings balances plus investable cash on investment platforms (not full brokerage holdings). Year-end projection adds only remaining months — past cashflow is already in those balances.
                     </li>
                     <li>
                         <strong className="text-slate-900">Goals</strong> use resolved “saved so far” amounts when possible (same as the Goals page).
@@ -3379,7 +3587,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 collapsibleSummary="Overrides, bulk add, and diagnostics"
                 defaultExpanded={false}
                 onExpandedChange={(open) => {
-                    if (open) setAdvancedHouseholdOpen(true);
+                    if (open) {
+                        setAdvancedHouseholdOpen(true);
+                        setHouseholdEngineRequested(true);
+                    } else {
+                        setAdvancedHouseholdOpen(false);
+                    }
                 }}
             >
                 <div className="flex items-center justify-between mb-2">
@@ -3409,8 +3622,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             ))}
                         </select>
                         <p className="text-xs text-slate-500 mt-1 max-w-[200px]">{HOUSEHOLD_ENGINE_PROFILES[engineProfile]?.description ?? ''}</p>
-                        {(householdBudgetEngine as unknown as { suggestedProfile?: string }).suggestedProfile && (householdBudgetEngine as unknown as { suggestedProfile: string }).suggestedProfile !== engineProfile && (
-                            <p className="text-xs text-amber-700 mt-1">Suggested: {(householdBudgetEngine as unknown as { suggestedProfile: string }).suggestedProfile} (income variance)</p>
+                        {householdBudgetEngine.suggestedProfile && householdBudgetEngine.suggestedProfile !== engineProfile && (
+                            <p className="text-xs text-amber-700 mt-1">Suggested: {householdBudgetEngine.suggestedProfile} (income variance)</p>
                         )}
                     </div>
                     <div>
@@ -3438,6 +3651,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {!householdEngineLoaded ? (
+                        <>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2 lg:col-span-4">
+                                <p className="text-xs font-semibold text-slate-600">Loading projection…</p>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Advanced summaries appear after the household engine finishes (same path as Autopilot).
+                                </p>
+                            </div>
+                        </>
+                    ) : (
+                        <>
                     <div
                         className={`rounded-lg border p-3 ${
                             householdBudgetEngine.plannedVsActual.plannedNet >= 0
@@ -3461,7 +3685,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                 : 'border-rose-200 bg-rose-50/80'
                         }`}
                     >
-                        <p className="text-xs text-slate-600">Actual annual net</p>
+                        <p className="text-xs text-slate-600">YTD actual net</p>
                         <p
                             className={`font-bold tabular-nums ${
                                 householdBudgetEngine.plannedVsActual.actualNet >= 0 ? 'text-sky-900' : 'text-rose-800'
@@ -3478,8 +3702,10 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         <p className="text-xs text-slate-600">Auto-routed goal</p>
                         <p className="font-bold text-indigo-700">{householdBudgetEngine.months.find((m) => m.routedGoalName)?.routedGoalName || 'None'}</p>
                     </div>
+                        </>
+                    )}
                 </div>
-                {householdBudgetEngine.recommendations.length > 0 && (
+                {householdEngineLoaded && householdBudgetEngine.recommendations.length > 0 && (
                     <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
                         <p className="text-xs font-semibold text-slate-600 mb-2">Recommendations</p>
                         <ul className="text-sm text-slate-700 list-disc pl-5 space-y-1">
@@ -3487,7 +3713,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         </ul>
                     </div>
                 )}
-                {criticalValidationCount > 0 && (
+                {householdEngineLoaded && criticalValidationCount > 0 && (
                     <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                         <p className="text-xs font-semibold text-amber-800">Issues in {criticalValidationCount} month(s)</p>
                         <ul className="mt-1 list-disc pl-5 text-xs text-amber-800 space-y-0.5">
@@ -3652,22 +3878,31 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                             const existingBudgets = (data?.budgets ?? []).filter((b) =>
                                                 budgetAppliesToFinancialView(b, bulkTargetKey, monthStartDay, 'Monthly'),
                                             );
-                                            let created = 0, updated = 0;
+                                            let created = 0, updated = 0, failed = 0;
                                             try {
                                                 for (const cat of categories) {
                                                     const existing = existingBudgets.find((b) => b.category === cat.category);
                                                     if (existing) {
-                                                        await updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
-                                                        updated++;
+                                                        const ok = await updateBudget({ ...existing, limit: cat.limit, period: cat.period, tier: cat.tier });
+                                                        if (ok) updated++;
+                                                        else failed++;
                                                     } else {
-                                                        await addBudget({ category: cat.category, limit: cat.limit, month: bulkAddTargetMonth, year: bulkAddTargetYear, period: cat.period, tier: cat.tier });
-                                                        created++;
+                                                        const ok = await addBudget(
+                                                            { category: cat.category, limit: cat.limit, month: bulkAddTargetMonth, year: bulkAddTargetYear, period: cat.period, tier: cat.tier },
+                                                            { confirmed: true },
+                                                        );
+                                                        if (ok) created++;
+                                                        else failed++;
                                                     }
                                                 }
-                                                alert(`Bulk add: ${created} created, ${updated} updated for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}.`);
+                                                if (failed > 0) {
+                                                    alert(`Bulk add: ${created} created, ${updated} updated, ${failed} failed for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}.`);
+                                                } else {
+                                                    alert(`Bulk add: ${created} created, ${updated} updated for ${MONTHS[bulkAddTargetMonth - 1]} ${bulkAddTargetYear}.`);
+                                                }
                                             } catch (err) {
                                                 console.error('Bulk add budgets failed:', err);
-                                                alert(`Some budgets could not be saved. ${created} created, ${updated} updated. Check console for details.`);
+                                                alert(`Some budgets could not be saved. ${created} created, ${updated} updated, ${failed} failed. Check console for details.`);
                                             }
                                         }}
                                         className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -3859,13 +4094,17 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     </div>
                 )}
 
-                {/* Trends (improved + clickable) */}
-                {cashflowFocusTab === 'trends' && householdBudgetEngine.months.length >= 3 && (
+                {/* Trends (rolling through current financial month — no future clones) */}
+                {cashflowFocusTab === 'trends' &&
+                    householdEngineLoaded &&
+                    selectHouseholdTrendMonths(householdBudgetEngine.months, trendsThroughMonth, 6).length >= 1 && (
                     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                         <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                             <div>
                                 <p className="text-sm font-bold text-slate-900">Trends (last 6 months)</p>
-                                <p className="text-xs text-slate-600 mt-0.5">Click a month to see the breakdown.</p>
+                                <p className="text-xs text-slate-600 mt-0.5">
+                                    Through {MONTHS[(Math.max(1, trendsThroughMonth) - 1) % 12]} {currentYear}. Click a month for the breakdown. Ledger actuals only (future months excluded).
+                                </p>
                             </div>
                             <button
                                 type="button"
@@ -3877,12 +4116,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         </div>
 
                         {(() => {
-                            const last6 = householdBudgetEngine.months.slice(-6);
-                            const incomes = last6.map((m) => Math.max(0, Number(m.incomeActual) > 0 ? Number(m.incomeActual) : Number(m.incomePlanned) || 0));
+                            const last6 = selectHouseholdTrendMonths(householdBudgetEngine.months, trendsThroughMonth, 6);
+                            const incomes = last6.map((m) => Math.max(0, effectiveMonthIncome(m)));
                             const expenses = last6.map((m) => Math.max(0, effectiveMonthExpense(m)));
                             const maxV = Math.max(1, ...incomes, ...expenses);
+                            const colCount = Math.min(6, Math.max(1, last6.length));
                             return (
-                                <div className="grid grid-cols-6 gap-2 items-end">
+                                <div className="grid gap-2 items-end" style={{ gridTemplateColumns: `repeat(${colCount}, minmax(0, 1fr))` }}>
                                     {last6.map((month, idx) => {
                                         const income = incomes[idx] ?? 0;
                                         const expense = expenses[idx] ?? 0;
@@ -3891,7 +4131,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                         const selected = selectedTrendMonthIdx === idx;
                                     return (
                                             <button
-                                                key={`trend-${idx}`}
+                                                key={`trend-${currentYear}-${monthNum}`}
                                                 type="button"
                                                 onClick={() => setSelectedTrendMonthIdx(idx)}
                                                 className={`rounded-xl border px-2 py-2 text-left transition-colors ${
@@ -3919,10 +4159,11 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         })()}
 
                         {selectedTrendMonthIdx != null && (() => {
-                            const month = householdBudgetEngine.months.slice(-6)[selectedTrendMonthIdx];
+                            const last6 = selectHouseholdTrendMonths(householdBudgetEngine.months, trendsThroughMonth, 6);
+                            const month = last6[selectedTrendMonthIdx];
                             if (!month) return null;
                             const monthNum = month.month ?? (month.monthIndex ?? 0) + 1;
-                            const income = Math.max(0, Number(month.incomeActual) > 0 ? Number(month.incomeActual) : Number(month.incomePlanned) || 0);
+                            const income = Math.max(0, effectiveMonthIncome(month));
                             const expense = Math.max(0, effectiveMonthExpense(month));
                             const net = income - expense;
                             const monthYear: number = Number((month as any).year) || currentYear;
@@ -3951,7 +4192,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     <div className="flex flex-wrap items-start justify-between gap-2">
                                         <div>
                                             <p className="text-sm font-bold text-slate-900">{MONTHS[(monthNum - 1) % 12]} snapshot</p>
-                                            <p className="text-xs text-slate-600 mt-0.5">Actual-first; planned used only when actual is missing.</p>
+                                            <p className="text-xs text-slate-600 mt-0.5">Actual-first; planned income used only when actual is missing. Expenses are ledger-only.</p>
                                 </div>
                                         <span className={`text-xs font-extrabold tabular-nums ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                             Net {net >= 0 ? '+' : ''}{formatCurrencyString(net, { digits: 0 })}

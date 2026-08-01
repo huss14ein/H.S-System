@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, startTransition } from 'react';
+import { usePerformanceOptional } from './PerformanceContext';
 import { DataContext } from './DataContext';
 import { useCurrency } from './CurrencyContext';
 import { useMarketPrices } from './MarketDataContext';
@@ -72,8 +73,15 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
   const getAvailableCashForAccount = ctx?.getAvailableCashForAccount;
   const { exchangeRate } = useCurrency();
   const { simulatedPrices } = useMarketPrices();
+  const perf = usePerformanceOptional();
+  const quoteDebounceMs =
+    perf?.performanceMode === 'low' || perf?.isSlowDevice
+      ? 600
+      : perf?.performanceMode === 'high'
+        ? 150
+        : 250;
   /** Responsive KPI recompute — single debounce aligned with live quote ticks. */
-  const kpiQuotePrices = useDebouncedValue(simulatedPrices, 250);
+  const kpiQuotePrices = useDebouncedValue(simulatedPrices, quoteDebounceMs);
   /** Fast-tier KPIs use live session quotes once financial data has hydrated — not only phase-2 async. */
   const metricsData = data && financialDataHasHydrated(data) ? data : null;
   useHydrateSarPerUsdDailySeries(metricsData, exchangeRate);

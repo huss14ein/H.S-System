@@ -9,7 +9,7 @@ import {
 import { scaleQuoteRowForSplit, scaleQuotesForCorporateAction, splitQuoteAdjustRatio } from '../services/corporateActionQuoteAdjust';
 import { quoteRefreshCooldownRemainingMs } from '../services/quoteRefreshCooldown';
 import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
-import { kickQuoteRefreshNow, registerQuoteCacheSessionSync } from '../utils/quoteRefreshBridge';
+import { kickQuoteRefreshNow, registerQuoteCacheSessionSync, clearPendingLiveFetchSymbols } from '../utils/quoteRefreshBridge';
 import { registerCorporateActionQuoteAdjust } from '../utils/corporateActionQuoteBridge';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
@@ -235,11 +235,13 @@ export const MarketDataProvider: React.FC<{ children: ReactNode }> = ({ children
         quoteRefreshAbortRef.current = true;
         refreshQueueRef.current = [];
         manualRefreshSessionRef.current = false;
+        clearPendingLiveFetchSymbols();
         finishQuotesRefresh();
     }, [finishQuotesRefresh]);
 
     const refreshPrices = useCallback(async (options?: { forceFetch?: boolean }) => {
-        const force = options?.forceFetch === true;
+        // Manual Sync always hits the network — never a silent TTL-only pass.
+        const force = options?.forceFetch !== false;
         quoteRefreshAbortRef.current = false;
         setQuotesRefreshUIScope({ mode: 'all' });
         setIsRefreshing(true);

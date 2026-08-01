@@ -15,6 +15,9 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { fetchLiveGoldPriceSarPerGram } from '../utils/commodityLiveValue';
+import { applyManualCommodityQuotes } from '../services/applyManualCommodityQuotes';
+import { supabase } from '../services/supabaseClient';
+import { MarketDataContext } from '../context/MarketDataContext';
 import { summarizeZakatableCommoditiesForZakat, summarizeZakatableInvestmentsForZakat, summarizeZakatableSukukPositionsForZakat } from '../services/zakatInvestmentValuation';
 import { summarizeZakatableCashForZakat } from '../services/zakatCashValuation';
 import { computeDeductibleLiabilities } from '../services/zakatLiabilityMath';
@@ -80,6 +83,7 @@ interface ZakatProps {
 
 const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
     const { data, addZakatPayment, updateSettings } = useContext(DataContext)!;
+    const market = useContext(MarketDataContext);
     const sarPerUsd = useCanonicalSpotFx();
     const { formatCurrencyString } = useFormatCurrency();
     
@@ -207,6 +211,11 @@ const Zakat: React.FC<ZakatProps> = ({ setActivePage }) => {
             }
             setLocalGoldPrice(String(live.price));
             await updateSettings({ goldPrice: live.price });
+            applyManualCommodityQuotes({
+                prices: [{ symbol: 'XAU_GRAM_24K', price: live.price }],
+                setSimulatedPrices: market?.setSimulatedPrices,
+                db: supabase as any,
+            });
             setGoldLiveNotice({
                 type: 'success',
                 text: `Updated to live spot (24K, SAR/gram) using your USD→SAR rate (${sarPerUsd.toFixed(4)}). You can still edit manually.`,

@@ -120,11 +120,16 @@ describe('deploy completion — Wealth Analytics + production hosts', () => {
     expect(read('components/AuthenticatedAppShell.tsx')).toContain('prefetchCommonPagesIdle(), 6000');
   });
 
-  it('live prices: manual refresh only; cache restore on hydrate', () => {
+  it('live prices: manual refresh only; cache + DB restore on hydrate', () => {
     expect(read('components/MarketSimulator.tsx')).toContain('computeRestoreCachedQuotesPatch');
+    expect(read('components/MarketSimulator.tsx')).toContain('seedQuoteCacheFromMarketQuoteDb');
+    expect(read('components/MarketSimulator.tsx')).toContain('upsertMarketQuotesToDb');
+    expect(read('components/MarketSimulator.tsx')).not.toContain('didScheduleStaleRefreshRef');
+    expect(read('components/MarketSimulator.tsx')).not.toContain('MARKET_SESSION_POLL_MS');
     expect(read('components/MarketSimulator.tsx')).not.toMatch(/didInitialPricePassRef/);
     expect(read('context/MarketDataContext.tsx')).toContain('scope.manual !== true');
     expect(read('services/cachedQuoteRestore.ts')).toContain('computeRestoreCachedQuotesPatch');
+    expect(read('services/marketQuoteDbCache.ts')).toContain('upsertMarketQuotesToDb');
   });
 
   it('net worth trend forward-fills missing snapshot days', () => {

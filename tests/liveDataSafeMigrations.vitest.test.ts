@@ -23,6 +23,7 @@ const REQUIRED_INVESTMENT_MIGRATIONS = [
   '20260715122000_backfill_investment_transactions_portfolio_id.sql',
   '20260722120000_holdings_unique_per_portfolio_symbol.sql',
   '20260725120000_holdings_market_price_persistence.sql',
+  '20260802120000_market_quote_cache.sql',
   '20260726120000_reconciliation_adjustment_engine.sql',
   '20260726140000_corporate_action_stock_dividend.sql',
 ];
@@ -72,6 +73,13 @@ describe('required investment migrations are safe on live data', () => {
     expect(sql).toContain('add column if not exists current_price numeric null');
     expect(sql).toContain('add column if not exists price_updated_at timestamptz null');
     expect(sql).toContain('h.user_id = auth.uid()');
+  });
+
+  it('market_quote_cache migration is additive with latest-wins upsert', () => {
+    const sql = read('supabase/migrations/20260802120000_market_quote_cache.sql');
+    expect(sql).toContain('create table if not exists public.market_quote_cache');
+    expect(sql).toContain('upsert_market_quote_cache');
+    expect(sql).toContain('c.fetched_at <= excluded.fetched_at');
   });
 
   it('the destructive rebuild script is documented as never required for live data', () => {

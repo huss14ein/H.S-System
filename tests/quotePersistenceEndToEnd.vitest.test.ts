@@ -26,10 +26,12 @@ describe('quote persistence E2E', () => {
 
   it('commodity fetches persist through MarketSimulator', () => {
     const sim = read('components/MarketSimulator.tsx');
-    expect(sim).toContain('persistCommodityQuotePrices');
+    expect(sim).toContain('applyManualCommodityQuotes');
+    expect(sim).toContain('upsertMarketQuotesToDb');
     expect(sim).toContain('applyStoredQuoteFallback');
     expect(sim).toContain('computeRestoreCachedQuotesPatch');
     expect(sim).toContain('loadQuoteCacheRows()');
+    expect(read('services/applyManualCommodityQuotes.ts')).toContain('persistCommodityQuotePrices');
   });
 
   it('MarketDataProvider hydrates session prices from localStorage cache', () => {

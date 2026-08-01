@@ -20,7 +20,7 @@ function corsHeaders(event: HandlerEvent): Record<string, string> {
 }
 
 const SAHMK_BASE = 'https://app.sahmk.sa/api/v1';
-const CACHE_429_TTL_MS = 20_000;
+const CACHE_429_TTL_MS = 10 * 60 * 1000; // match client SAHMK cooldown — stop proxy thrash
 const CACHE_5XX_TTL_MS = 10_000;
 
 /** Allow Tadawul / Nomu symbol codes (numeric or alnum, no injection). */

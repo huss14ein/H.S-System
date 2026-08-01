@@ -36,6 +36,9 @@ export const usePerformance = () => {
   return context;
 };
 
+/** Optional — returns null outside PerformanceProvider (shell-adaptive debounce). */
+export const usePerformanceOptional = () => React.useContext(PerformanceContext);
+
 interface PerformanceProviderProps {
   children: ReactNode;
 }

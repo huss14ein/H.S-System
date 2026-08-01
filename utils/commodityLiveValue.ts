@@ -5,6 +5,7 @@ import { roundMoney } from './money';
 /**
  * Resolves total SAR current value from live quotes (Finnhub metals + Binance crypto fallback).
  * Not used for commodity name "Other".
+ * Returns unitPrice so callers can persist into the shared quote cache / session map (canonical KPI SOT).
  */
 export async function fetchLiveCommodityValueSar(params: {
   symbol: string;
@@ -13,7 +14,10 @@ export async function fetchLiveCommodityValueSar(params: {
   goldKarat?: CommodityHolding['goldKarat'];
   /** SAR per 1 USD; should match `resolveSarPerUsd` so metal/crypto values align with the rest of the app. */
   sarPerUsd?: number;
-}): Promise<{ ok: true; currentValue: number } | { ok: false; message: string }> {
+}): Promise<
+  | { ok: true; currentValue: number; unitPrice: number; symbol: string }
+  | { ok: false; message: string }
+> {
   const { symbol, name, quantity, goldKarat, sarPerUsd } = params;
   const { prices } = await getAICommodityPrices([{ symbol, name, goldKarat }], { sarPerUsd });
   const p = prices.find((pr) => (pr.symbol || '').toUpperCase() === symbol.toUpperCase());
@@ -24,7 +28,12 @@ export async function fetchLiveCommodityValueSar(params: {
         'Could not fetch a live price. Gold/silver try CoinGecko fallback after Finnhub; ensure network access. For Bitcoin, Binance is used if Finnhub is unavailable. Then try again.',
     };
   }
-  return { ok: true, currentValue: roundMoney(p.price * quantity) };
+  return {
+    ok: true,
+    currentValue: roundMoney(p.price * quantity),
+    unitPrice: p.price,
+    symbol: p.symbol || symbol,
+  };
 }
 
 /** Spot 24K gold in SAR per gram (Finnhub OANDA XAU/USD × app FX ÷ troy oz). */

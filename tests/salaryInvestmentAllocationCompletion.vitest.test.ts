@@ -31,7 +31,7 @@ describe('salary investment allocation completion wiring', () => {
     expect(read('pages/Accounts.tsx')).toContain('Salary receiving');
     expect(read('pages/Transactions.tsx')).toMatch(/[Ss]alary/);
     expect(read('pages/Budgets.tsx')).toContain('salary-to-investment KPIs');
-    expect(read('context/NotificationsContext.tsx')).toContain('salaryInvestmentCanonical');
+    expect(read('context/NotificationsContext.tsx')).toContain('computeSalaryInvestmentKpis(data, sarPerUsd)');
     expect(read('context/NotificationsContext.tsx')).toContain("safePageAction('Settings', 'focus-salary-investing')");
     expect(read('components/CommandPalette.tsx')).toContain("triggerPageAction('Settings', 'focus-salary-investing')");
     expect(read('components/CommandPalette.tsx')).toContain("triggerPageAction('Dashboard', 'focus-salary-invest')");

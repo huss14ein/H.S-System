@@ -13,7 +13,7 @@ declare
     'recurring_transactions', 'investment_portfolios', 'holdings', 'investment_transactions',
     'watchlist', 'settings', 'zakat_payments', 'price_alerts', 'commodity_holdings',
     'planned_trades', 'investment_plan', 'portfolio_universe', 'status_change_log',
-    'execution_logs', 'budget_requests'
+    'execution_logs', 'budget_requests', 'market_quote_cache'
   ];
 begin
   foreach t in array tables_with_user_id

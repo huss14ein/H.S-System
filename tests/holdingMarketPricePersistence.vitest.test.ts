@@ -206,12 +206,13 @@ describe('persisted holding price seeds the quote path', () => {
     expect(result.rows.AAPL?.price).toBe(210);
   });
 
-  it('hydrate restore seeds from persisted prices before reading the cache', () => {
+  it('hydrate restore seeds from persisted prices + DB quote cache before session apply', () => {
     const simulator = read('components/MarketSimulator.tsx');
     expect(simulator).toContain(
-      'const seed = seedQuoteCacheFromPersistedHoldingPrices(getPersonalInvestments(data))',
+      'seedQuoteCacheFromPersistedHoldingPrices(getPersonalInvestments(data))',
     );
-    expect(simulator).toContain('computeRestoreCachedQuotesPatch(data, sarPerUsd, seed.rows)');
-    expect(simulator).toContain('sessionTimestampsForTrackedSymbols(tracked, seed.rows)');
+    expect(simulator).toContain('seedQuoteCacheFromMarketQuoteDb');
+    expect(simulator).toContain('computeRestoreCachedQuotesPatch(data, sarPerUsd, rows)');
+    expect(simulator).toContain('sessionTimestampsForTrackedSymbols(tracked, rows)');
   });
 });

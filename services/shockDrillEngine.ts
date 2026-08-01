@@ -1,8 +1,10 @@
 import type { FinancialData } from '../types';
-import { resolveSarPerUsd } from '../utils/currencyMath';
-import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
-import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
 import { runWealthUltraEngine } from '../wealth-ultra';
+import {
+  buildHouseholdEngineInputFromFinancialData,
+  buildHouseholdPlanFromFinancialData,
+} from './householdEngineFromData';
+import { buildHouseholdBudgetPlan } from './householdBudgetEngine';
 
 export type ShockTemplateId = 'job_loss' | 'medical_spike' | 'rate_spike' | 'market_crash';
 
@@ -35,32 +37,16 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
   if (!template) return null;
 
   const year = new Date().getFullYear();
-  const tx = getPersonalTransactions(data);
-  const accounts = getPersonalAccounts(data);
-  const goals = data.goals ?? [];
-  const sarPerUsd = resolveSarPerUsd(data, undefined);
+  const input = buildHouseholdEngineInputFromFinancialData(data, { year });
+  if (!input) return null;
 
-  const input = buildHouseholdEngineInputFromData(
-    tx as any[],
-    accounts as any[],
-    goals as any[],
-    {
-      year,
-      expectedMonthlySalary: undefined,
-      adults: 2,
-      kids: 0,
-      profile: 'Moderate',
-      monthlyOverrides: [],
-      financialData: data,
-      sarPerUsd,
-      uiExchangeRate: sarPerUsd,
-    }
-  );
-  const baseHousehold = buildHouseholdBudgetPlan(input);
+  const baseHousehold = buildHouseholdPlanFromFinancialData(data, { year });
+  if (!baseHousehold) return null;
+
   const shockedHousehold = buildHouseholdBudgetPlan({
     ...input,
-    monthlySalaryPlan: input.monthlySalaryPlan.map(v => v * (1 + template.incomeShockPct / 100)),
-    monthlyActualExpense: (input.monthlyActualExpense ?? []).map(v => v * (1 + template.expenseShockPct / 100)),
+    monthlySalaryPlan: input.monthlySalaryPlan.map((v) => v * (1 + template.incomeShockPct / 100)),
+    monthlyActualExpense: (input.monthlyActualExpense ?? []).map((v) => v * (1 + template.expenseShockPct / 100)),
   });
 
   const baseOpening = baseHousehold.balanceProjection.openingLiquid ?? baseHousehold.balanceProjection.projectedYearEndLiquid ?? 0;
@@ -103,4 +89,3 @@ export function runShockDrill(data: FinancialData | null | undefined, templateId
     combinedRiskNote,
   };
 }
-

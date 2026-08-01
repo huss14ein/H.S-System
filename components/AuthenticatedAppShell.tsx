@@ -28,6 +28,7 @@ import { CanonicalFinancialMetricsProvider } from '../context/CanonicalFinancial
 import { AnalyticsWorkspaceProvider } from '../context/AnalyticsWorkspaceContext';
 import { MetricPassportProvider } from '../context/MetricPassportContext';
 import { LanguageProvider } from '../context/LanguageContext';
+import { PerformanceProvider } from '../context/PerformanceContext';
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Wealth Analytics', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
@@ -293,6 +294,7 @@ const AuthenticatedAppShell: React.FC = () => {
               <CurrencyProvider>
                 <ExchangeRateSync />
                 <MarketDataProvider>
+                  <PerformanceProvider>
                   <CanonicalFinancialMetricsProvider>
                   <MetricPassportProvider>
                   <AnalyticsWorkspaceProvider>
@@ -331,6 +333,7 @@ const AuthenticatedAppShell: React.FC = () => {
                   </AnalyticsWorkspaceProvider>
                   </MetricPassportProvider>
                   </CanonicalFinancialMetricsProvider>
+                  </PerformanceProvider>
                 </MarketDataProvider>
               </CurrencyProvider>
             </DataProvider>

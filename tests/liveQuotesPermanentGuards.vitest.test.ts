@@ -8,6 +8,7 @@ import {
   subscribeQuoteRefreshCooldownEnd,
   startQuoteRefreshCooldown,
   resetQuoteRefreshCooldownListenersForTests,
+  resetQuoteRefreshCooldownForTests,
 } from '../services/quoteRefreshCooldown';
 import { liveFetchTimeoutMs } from '../services/quoteLiveFetchCoordinator';
 
@@ -17,13 +18,14 @@ describe('live quotes permanent E2E guards', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     resetQuoteRefreshCooldownListenersForTests();
-    startQuoteRefreshCooldown(0);
+    resetQuoteRefreshCooldownForTests();
     vi.setSystemTime(new Date('2026-06-18T12:00:00Z'));
   });
 
   afterEach(() => {
     vi.useRealTimers();
     resetQuoteRefreshCooldownListenersForTests();
+    resetQuoteRefreshCooldownForTests();
   });
 
   it('cooldown end notifies all subscribers (UI + MarketSimulator drain)', () => {
@@ -89,13 +91,32 @@ describe('live quotes permanent E2E guards', () => {
     expect(read('components/analytics/QuotesAsOfBadge.tsx')).not.toContain('!isLive');
   });
 
-  it('stale bootstrap includes watchlist symbols', () => {
-    expect(read('components/MarketSimulator.tsx')).toContain('watchSymbols');
+  it('hydrate restores DB quote cache (no auto network for watchlist)', () => {
+    expect(read('components/MarketSimulator.tsx')).toContain('seedQuoteCacheFromMarketQuoteDb');
+    expect(read('components/MarketSimulator.tsx')).not.toContain('watchSymbols');
+    expect(read('components/MarketSimulator.tsx')).not.toContain('didScheduleStaleRefreshRef');
   });
 
   it('pending overflow survives cooldown without premature finishQuotesRefresh', () => {
     const sim = read('components/MarketSimulator.tsx');
-    expect(sim).toMatch(/pendingSymbols && after[\s\S]{0,400}bumpPriceRefresh/);
-    expect(sim).not.toMatch(/pendingSymbols && after[\s\S]{0,120}finishQuotesRefresh\(\)/);
+    // After a tick, leftover symbols continue via bump — never finish while pending unless cancelled or cooling down.
+    expect(sim).toMatch(/pendingSymbols && after[\s\S]{0,800}bumpPriceRefresh/);
+    expect(sim).toMatch(
+      /pendingSymbols && after[\s\S]{0,200}isQuoteRefreshCancelled\(\)[\s\S]{0,200}finishQuotesRefresh\(\)/,
+    );
+    expect(sim).not.toMatch(
+      /else if \(pendingSymbols && after\) \{\s*after\.finishQuotesRefresh\(\)/,
+    );
+    // Cooldown: clear Updating… while keeping pending for subscribeQuoteRefreshCooldownEnd.
+    expect(sim).toMatch(
+      /else if \(!isQuoteRefreshInCooldown\(\)\)[\s\S]{0,400}else \{\s*\/\/ Keep pending for cooldown-end drain[\s\S]{0,200}finishQuotesRefresh\(\)/,
+    );
+  });
+
+  it('manual forceFetch never invents RNG prices (cooldown uses cache)', () => {
+    const sim = read('components/MarketSimulator.tsx');
+    expect(sim).toContain('const allowSimulate = !isManualForceFetch');
+    expect(sim).toContain('const allowCacheFallback = !isManualForceFetch || rateLimited');
+    expect(sim).toContain('if (!allowSimulate) continue');
   });
 });

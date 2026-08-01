@@ -18,6 +18,8 @@ import { CubeIcon } from '../components/icons/CubeIcon';
 import { BanknotesIcon } from '../components/icons/BanknotesIcon';
 import { SparklesIcon } from '../components/icons/SparklesIcon';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
+import { applyManualCommodityQuotes } from '../services/applyManualCommodityQuotes';
+import { supabase } from '../services/supabaseClient';
 import { safeExternalHref } from '../utils/safeExternalUrl';
 import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
@@ -31,6 +33,7 @@ import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import RevaluationModal from '../components/reconciliation/RevaluationModal';
 import { toast } from '../context/ToastContext';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
+import { MarketDataContext } from '../context/MarketDataContext';
 import { useExtendedCanonicalMetrics, pickCommoditiesValueSar } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { financialMonthIsoKey, financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
@@ -244,6 +247,7 @@ const AssetCardComponent: React.FC<{
 // --- Commodity Components ---
 const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: (holding: Omit<CommodityHolding, 'id' | 'user_id'> | CommodityHolding) => Promise<void>; holdingToEdit: CommodityHolding | null; goals: Goal[]; sarPerUsd: number; }> = ({ isOpen, onClose, onSave, holdingToEdit, goals, sarPerUsd }) => {
     const { formatCurrencyString } = useFormatCurrency();
+    const market = useContext(MarketDataContext);
     const confirmAction = useConfirmAction();
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
@@ -350,6 +354,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
 
         try {
             setIsSubmitting(true);
+            let pendingLiveQuote: { symbol: string; price: number } | null = null;
             if (name !== 'Other') {
                 try {
                     const live = await fetchLiveCommodityValueSar({
@@ -364,6 +369,7 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
                         return;
                     }
                     parsedCurrentValue = live.currentValue;
+                    pendingLiveQuote = { symbol: live.symbol, price: live.unitPrice };
                 } catch (fetchErr) {
                     setFormError(formatAiError(fetchErr));
                     return;
@@ -383,6 +389,14 @@ const CommodityHoldingModal: React.FC<{ isOpen: boolean; onClose: () => void; on
             if (!ok) return;
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
+            // Persist quote SOT only after the holding save succeeds — failed saves must not drift KPIs.
+            if (pendingLiveQuote) {
+                applyManualCommodityQuotes({
+                    prices: [pendingLiveQuote],
+                    setSimulatedPrices: market?.setSimulatedPrices,
+                    db: supabase as any,
+                });
+            }
             onClose();
         } catch (error) {
             const message = formatUnknownError(error);
@@ -602,6 +616,7 @@ interface AssetsProps { pageAction?: string | null; clearPageAction?: () => void
 
 const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const { data, addAsset, updateAsset, deleteAsset, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, applyReconciliationAdjustment } = useContext(DataContext)!;
+    const market = useContext(MarketDataContext);
     const auth = useContext(AuthContext);
     const canRevalue = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { isAiAvailable, aiHealthChecked } = useAI();
@@ -715,6 +730,11 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
                 if (updates.length > 0) {
                     await batchUpdateCommodityHoldingValues(updates);
                     setLastCommodityRefreshAt(new Date().toISOString());
+                    applyManualCommodityQuotes({
+                        prices,
+                        setSimulatedPrices: market?.setSimulatedPrices,
+                        db: supabase as any,
+                    });
                 }
             }
         } catch (error) {

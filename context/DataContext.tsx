@@ -244,8 +244,8 @@ interface DataContextType {
   addLiability: (liability: Liability, opts?: RecordWriteOptions) => Promise<void>;
   updateLiability: (liability: Liability) => Promise<void>;
   deleteLiability: (liabilityId: string) => Promise<void>;
-  addBudget: (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
-  updateBudget: (budget: Budget) => Promise<void>;
+  addBudget: (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<boolean>;
+  updateBudget: (budget: Budget) => Promise<boolean>;
   deleteBudget: (category: string, month: number, year: number) => Promise<void>;
   copyBudgetsFromPreviousMonth: (targetYear: number, targetMonth: number) => Promise<void>;
   addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
@@ -2571,38 +2571,57 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     // --- Budgets ---
-    const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
-      if(!supabase) return;
+    const addBudget = async (budget: Omit<Budget, 'id' | 'user_id'>, opts?: RecordWriteOptions): Promise<boolean> => {
+      if(!supabase) return false;
       if (isReconciliationLedgerCategory(budget.category)) {
         toast(
           'Reconciliation Adjustment / Opening Balance cannot be budget categories. Those rows are excluded from cashflow and budgets by design.',
           'error',
         );
-        return;
+        return false;
       }
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: (budget as Budget).period });
-      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
       const budgetOk = await guardRecordWrite(opts, summarizeBudgetForConfirm({
         category: budget.category,
         limit: budget.limit,
         month: budget.month,
         year: budget.year,
       }));
-      if (!budgetOk) return;
+      if (!budgetOk) return false;
+      if (!auth?.user?.id) {
+        toast('You must be signed in to add a budget.', 'error');
+        return false;
+      }
       const db = supabase;
-      const payload: Record<string, unknown> = { ...withUser(budget) as Record<string, unknown> };
+      /** Only DB columns — never spread camelCase client fields (goalId, destinationAccountId) into insert. */
+      const payload: Record<string, unknown> = {
+        user_id: auth.user.id,
+        category: budget.category,
+        month: budget.month,
+        year: budget.year,
+        limit: budget.limit,
+      };
+      if ((budget as Budget).period) payload.period = (budget as Budget).period;
+      if ((budget as Budget).tier) payload.tier = (budget as Budget).tier;
       if (budget.destinationAccountId != null) payload.destination_account_id = budget.destinationAccountId;
-      if (budget.goalId != null && String(budget.goalId).trim() !== '') payload.goal_id = budget.goalId;
-      else payload.goal_id = null;
+      payload.goal_id =
+        budget.goalId != null && String(budget.goalId).trim() !== '' ? budget.goalId : null;
       let { data: newBudget, error } = await db.from('budgets').insert(payload).select().single();
-      // Retry once with same payload. Do not convert yearly limit to monthly or reload will show wrong value (DB would store monthly amount with period=yearly).
-      if (error && (payload as any).period) {
-        const retry = await db.from('budgets').insert(payload).select().single();
+      // Older DBs may lack optional columns — retry without the ones PostgREST rejects.
+      if (error && /goal_id|destination_account_id|period|tier|PGRST204|schema cache|column/i.test(String(error.message ?? ''))) {
+        const legacyPayload = { ...payload };
+        if (/goal_id/i.test(String(error.message ?? ''))) delete legacyPayload.goal_id;
+        if (/destination_account_id/i.test(String(error.message ?? ''))) delete legacyPayload.destination_account_id;
+        if (/period/i.test(String(error.message ?? ''))) delete legacyPayload.period;
+        if (/tier/i.test(String(error.message ?? ''))) delete legacyPayload.tier;
+        const retry = await db.from('budgets').insert(legacyPayload).select().single();
         newBudget = retry.data;
         error = retry.error;
       }
       if (error) {
         console.error("Error adding budget:", error);
+        toast(`Could not add budget: ${formatDbError(error)}`, 'error');
         throw error;
       }
       if (newBudget) {
@@ -2615,19 +2634,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         };
         if ((budget as Budget).period === 'yearly' || (budget as Budget).period === 'weekly' || (budget as Budget).period === 'daily') withPeriod.limit = budget.limit;
         setData(prev => ({ ...prev, budgets: [...prev.budgets, withPeriod] }));
+        return true;
       }
+      return false;
     };
-    const updateBudget = async (budget: Budget) => {
-      if (!supabase || !auth?.user) return;
+    const updateBudget = async (budget: Budget): Promise<boolean> => {
+      if (!supabase || !auth?.user) {
+        toast('You must be signed in to update a budget.', 'error');
+        return false;
+      }
       if (isReconciliationLedgerCategory(budget.category)) {
         toast(
           'Reconciliation Adjustment / Opening Balance cannot be budget categories.',
           'error',
         );
-        return;
+        return false;
       }
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: budget.period });
-      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return; }
+      if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
       const db = supabase;
       const { category, month, year, limit, period, tier, destinationAccountId, goalId } = budget;
       const payload: Record<string, unknown> = {
@@ -2643,7 +2667,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         .match({ user_id: auth.user.id, category, month, year });
       if (error) {
         console.error('Error updating budget:', error);
-        return;
+        toast(`Could not update budget: ${formatDbError(error)}`, 'error');
+        throw error;
       }
       setData((prev) => ({
         ...prev,
@@ -2653,6 +2678,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             : b
         ),
       }));
+      return true;
     };
     const deleteBudget = async (category: string, month: number, year: number) => {
       if(!supabase || !auth?.user) return;
@@ -2682,21 +2708,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         const budgetsToInsert = sourceBudgets
             .filter((b: any) => !existingTargetCategories.has(b.category))
-            .map((b: any) => {
-                const { id, user_id, ...rest } = b;
-                return {
-                    ...rest,
-                    month: targetMonth,
-                    year: targetYear,
-                    period: b.period ?? 'monthly',
-                    destination_account_id: b.destination_account_id ?? undefined,
-                    goal_id: b.goal_id ?? b.goalId ?? null,
-                };
-            });
+            .map((b: any) => ({
+                user_id: auth.user!.id,
+                category: b.category,
+                month: targetMonth,
+                year: targetYear,
+                limit: b.limit,
+                period: b.period ?? 'monthly',
+                tier: b.tier ?? 'Optional',
+                destination_account_id: b.destination_account_id ?? b.destinationAccountId ?? null,
+                goal_id: b.goal_id ?? b.goalId ?? null,
+            }));
 
         if (budgetsToInsert.length === 0) { toast("All budgets from last month already exist for the selected month.", 'info'); return; }
 
-        const { data: insertedData, error: insertError } = await supabase.from('budgets').insert(budgetsToInsert.map(b => withUser(b))).select();
+        const { data: insertedData, error: insertError } = await supabase.from('budgets').insert(budgetsToInsert).select();
         if (insertError) { console.error("Error copying budgets:", insertError); toast("Failed to copy budgets.", 'error'); }
         else {
             const normalized = (insertedData || []).map((b: any) => ({

@@ -60,6 +60,7 @@ Optionally run **`migrations/add_users_approved_metadata.sql`** afterward for a 
 | **`migrations/20260715122000_backfill_investment_transactions_portfolio_id.sql`** | Optional but recommended: stamp `portfolio_id` on legacy txs when the account has **exactly one** portfolio. |
 | **`migrations/20260722120000_holdings_unique_per_portfolio_symbol.sql`** | **Required to stop ghost shares after Record Trade:** dedupe duplicate holdings (exact ledger-net match, else newest id — never sum), then unique index on `(user_id, portfolio_id, upper(symbol))`. |
 | **`migrations/20260725120000_holdings_market_price_persistence.sql`** | **Required to persist trusted API marks:** adds `current_price` / `price_updated_at` and one scoped batch RPC that updates market fields only (never quantity or average cost). |
+| **`migrations/20260802120000_market_quote_cache.sql`** | **Required for manual-only live quotes:** per-user `market_quote_cache` + `upsert_market_quote_cache` so Header/Investments Sync prices survive new devices without auto-polling APIs. |
 | `fix_investment_account_fk.sql` | Backfill and FK for investment_transactions.account_id. |
 | `rls_policies_optional.sql` | Row Level Security policies for investment_* tables (if using Supabase Auth). |
 | `rls_all_user_tables.sql` | **Production:** RLS for all user-scoped tables (accounts, assets, transactions, budgets, goals, etc.). Run after base tables exist. |
@@ -113,6 +114,7 @@ and RPCs. None drops a table, truncates, or removes a column.
 | `20260715122000_backfill_investment_transactions_portfolio_id.sql` | Stamps `portfolio_id` on legacy rows only where the account has exactly one portfolio. |
 | `20260722120000_holdings_unique_per_portfolio_symbol.sql` | Removes **duplicate** holdings rows for the same `(user, portfolio, symbol)`, then adds the unique index. Archives every removed row first (see below). |
 | `20260725120000_holdings_market_price_persistence.sql` | Adds `current_price` / `price_updated_at` and a batch RPC that writes market fields only. |
+| `20260802120000_market_quote_cache.sql` | Per-user quote cache for manual Sync (equities + commodities); latest-wins upsert RPC. |
 | `20260726120000_reconciliation_adjustment_engine.sql` | **Adjustment & Reconciliation Engine:** append-only `reconciliation_adjustments` / `reconciliation_runs` / `reconciliation_audit_events` / `net_worth_snapshot_revisions`, plus `preview`/`apply`/`reverse` cash reconcile RPCs. Additive only. |
 | `20260726140000_corporate_action_stock_dividend.sql` | Widen `corporate_action_events.action_type` CHECK to include `stock_dividend` (bonus shares). Additive constraint widen only. |
 | `20260726180000_rewards_domain.sql` | **Rewards / points / cashback ledger:** `rewards_accounts` / `rewards_transactions` / `rewards_tx_links` / `rewards_lots` with idempotency + RLS. Manual balances only (no live loyalty APIs). Additive only. |

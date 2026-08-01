@@ -22,6 +22,7 @@ const steps = [
       'tests/statementProcessingPersist.vitest.test.ts',
       'tests/netWorthSnapshotThrottle.vitest.test.ts',
       'tests/systemWideLagCompletion.vitest.test.ts',
+      'tests/interactiveResponsivenessCompletion.vitest.test.ts',
       'tests/notificationsReadState.vitest.test.ts',
       'tests/finnhubProfileCache.vitest.test.ts',
       'tests/fxMapMemoryCache.vitest.test.ts',
@@ -44,6 +45,10 @@ const steps = [
       'tests/quotePersistenceEndToEnd.vitest.test.ts',
       'tests/quotePriceCache.vitest.test.ts',
       'tests/cachedQuoteRestore.vitest.test.ts',
+      'tests/sahmkRateLimitCompletion.vitest.test.ts',
+      'tests/quoteRefreshCooldown.vitest.test.ts',
+      'tests/manualLiveQuotesDbPersistence.vitest.test.ts',
+      'tests/holdingMarketPricePersistence.vitest.test.ts',
     ],
   },
   {

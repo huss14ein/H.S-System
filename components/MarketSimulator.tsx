@@ -13,16 +13,13 @@ import {
 import {
     cacheRowsToSimulatedMap,
     loadQuoteCacheRows,
-    persistCommodityQuotePrices,
     buildDisplayMapFromCachedRows,
     resolveSymbolsToLiveFetch,
-    symbolsNeedingLiveFetch,
 } from '../services/quotePriceCache';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { getRefreshableHoldingQuoteSymbolsFromPortfolios } from '../services/quoteRefreshSymbols';
 import { isTadawulQuoteSymbol } from '../services/marketQuoteRouting';
-import { isAnyEquityMarketRegularSessionOpen } from '../services/marketSessionLocal';
 import { sanitizeLiveQuoteRow } from '../services/tadawulQuoteSanity';
 import {
     buildCommodityHoldingValueUpdatesFromTrustedSnapshot,
@@ -35,6 +32,7 @@ import {
     isRateLimitError,
     startQuoteRefreshCooldown,
     subscribeQuoteRefreshCooldownEnd,
+    SAHMK_RATE_LIMIT_COOLDOWN_MS,
 } from '../services/quoteRefreshCooldown';
 import { isBackgroundWorkPaused, backgroundWorkPauseRemainingMs } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
@@ -42,16 +40,21 @@ import { yieldToMain } from '../utils/yieldToMain';
 import { computeRestoreCachedQuotesPatch, collectTrackedQuoteSymbols, sessionTimestampsForTrackedSymbols, rehydrateSessionPricesFromQuoteCache, latestQuoteCacheTimestamp, symbolTimestampsFromCacheRows } from '../services/cachedQuoteRestore';
 import type { CachedQuoteRow } from '../services/quotePriceCache';
 import { seedQuoteCacheFromPersistedHoldingPrices } from '../services/persistedHoldingQuoteSeed';
+import {
+    seedQuoteCacheFromMarketQuoteDb,
+    upsertMarketQuotesToDb,
+} from '../services/marketQuoteDbCache';
 import { getPersonalInvestments } from '../utils/wealthScope';
-import { registerQuoteRefreshKick } from '../utils/quoteRefreshBridge';
+import { registerQuoteRefreshKick, registerClearPendingLiveFetch } from '../utils/quoteRefreshBridge';
 import { nextQuotesPriceSourceAfterTick, quotesPriceSourceAfterCacheRehydrate } from '../services/quoteSessionStatus';
+import { AuthContext } from '../context/AuthContext';
+import { supabase } from '../services/supabaseClient';
+import { applyManualCommodityQuotes } from '../services/applyManualCommodityQuotes';
 
-const MAX_LIVE_FETCH_PER_TICK = 25;
+/** Cap per tick — large books continue via queued scopes after a *manual* refresh. */
+const MAX_LIVE_FETCH_PER_TICK = 12;
 const PARTIAL_LIVE_RATIO = 0.8;
 const INTER_SCOPE_DELAY_MS = 250;
-/** During market hours, poll stale quotes via idle work (no header spinner, no nav cancel). */
-const MARKET_SESSION_POLL_MS = 5 * 60 * 1000;
-const MARKET_SESSION_POLL_INITIAL_MS = 60_000;
 /** Clear stuck "Updating…" if pause/retry never drains the queue. */
 const STUCK_REFRESH_GUARD_MS = 35_000;
 const COMMODITY_FETCH_TIMEOUT_MS = 25_000;
@@ -94,18 +97,18 @@ const applyStoredQuoteFallback = (
 const MarketSimulator: React.FC = () => {
     const dataContext = useContext(DataContext);
     const marketContext = useContext(MarketDataContext);
+    const auth = useContext(AuthContext);
     const sarPerUsd = useCanonicalSpotFx();
 
-    const contextRef = useRef({ dataContext, marketContext, sarPerUsd });
-    contextRef.current = { dataContext, marketContext, sarPerUsd };
+    const contextRef = useRef({ dataContext, marketContext, sarPerUsd, auth });
+    contextRef.current = { dataContext, marketContext, sarPerUsd, auth };
 
     const previousPricesRef = useRef<Record<string, number>>({});
     const didBootstrapSessionCacheRef = useRef(false);
     const didAlignHoldingsFromCacheRef = useRef(false);
     const tickInFlightRef = useRef(false);
-    /** Symbols left after per-tick cap — drained via queued refresh scopes. */
+    /** Symbols left after per-tick cap — drained via queued refresh scopes (manual refresh only). */
     const pendingLiveFetchSymbolsRef = useRef<string[]>([]);
-    const didScheduleStaleRefreshRef = useRef(false);
     const refreshRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingRefreshWhileInFlightRef = useRef(false);
 
@@ -128,19 +131,25 @@ const MarketSimulator: React.FC = () => {
         }, 0);
     }, [marketContext]);
 
-    /** After hydrate, align holding marks with persisted quotes — no live API fetch. */
+    /** After hydrate, restore quotes from DB + local cache — never auto-hit live APIs. */
     useEffect(() => {
-        const { data, showHydrateBanner, batchUpdateCommodityHoldingValues } = dataContext ?? {};
+        const { data, showHydrateBanner } = dataContext ?? {};
         if (!data || showHydrateBanner || didAlignHoldingsFromCacheRef.current) return;
 
         let cancelled = false;
         const cancelIdle = scheduleIdleWorkAsync(async () => {
             await waitUntilBackgroundWorkResumed();
             if (cancelled || didAlignHoldingsFromCacheRef.current) return;
-            // Prices persisted on holdings are the durable carrier of the last trusted quote:
-            // seed them first so a new device / cleared storage still shows real prices.
-            const seed = seedQuoteCacheFromPersistedHoldingPrices(getPersonalInvestments(data));
-            const patch = computeRestoreCachedQuotesPatch(data, sarPerUsd, seed.rows);
+            // 1) Holdings.current_price from Supabase → localStorage
+            let rows = seedQuoteCacheFromPersistedHoldingPrices(getPersonalInvestments(data)).rows;
+            // 2) market_quote_cache (watchlist / prior manual syncs) → localStorage
+            const userId = contextRef.current.auth?.user?.id;
+            if (supabase && userId) {
+                const fromDb = await seedQuoteCacheFromMarketQuoteDb(supabase as any, userId);
+                if (!cancelled && fromDb.changed) rows = fromDb.rows;
+            }
+            if (cancelled) return;
+            const patch = computeRestoreCachedQuotesPatch(data, sarPerUsd, rows);
             if (!patch.hasCache) {
                 didAlignHoldingsFromCacheRef.current = true;
                 return;
@@ -173,13 +182,10 @@ const MarketSimulator: React.FC = () => {
                     marketContext.setLastUpdated(patch.lastUpdated);
                 }
                 const tracked = data ? collectTrackedQuoteSymbols(data) : Object.keys(patch.trusted);
-                marketContext?.mergeSymbolQuoteTimestamps(sessionTimestampsForTrackedSymbols(tracked, seed.rows));
+                marketContext?.mergeSymbolQuoteTimestamps(sessionTimestampsForTrackedSymbols(tracked, rows));
             });
-            // Holding notionals are updated only from manual/live sync ticks — not cache hydrate
-            // (avoids stale Tadawul cache overwriting fresh SAHMK quotes).
-            if (patch.commodityUpdates.length > 0 && batchUpdateCommodityHoldingValues) {
-                batchUpdateCommodityHoldingValues(patch.commodityUpdates);
-            }
+            // Holding notionals are updated only from manual live sync ticks — not cache hydrate.
+            // Session simulatedPrices (above) is enough for canonical KPI read of commodities.
             didAlignHoldingsFromCacheRef.current = true;
         }, 1500);
 
@@ -187,91 +193,18 @@ const MarketSimulator: React.FC = () => {
             cancelled = true;
             cancelIdle();
         };
-    }, [dataContext?.data, dataContext?.showHydrateBanner, sarPerUsd, marketContext]);
+    }, [dataContext?.data, dataContext?.showHydrateBanner, sarPerUsd, marketContext, auth?.user?.id]);
 
-    /** One-shot after hydrate: refresh symbols with stale/missing cache (no interval polling). */
-    useEffect(() => {
-        const { data, showHydrateBanner } = dataContext ?? {};
-        if (!data || showHydrateBanner || !marketContext?.bumpPriceRefresh) return;
-        if (didScheduleStaleRefreshRef.current) return;
-
-        let cancelled = false;
-        const cancelIdle = scheduleIdleWorkAsync(async () => {
-            await waitUntilBackgroundWorkResumed();
-            if (cancelled || didScheduleStaleRefreshRef.current) return;
-
-            const allInvestments = ((data as { personalInvestments?: InvestmentPortfolio[] }).personalInvestments ??
-                data.investments ??
-                []) as InvestmentPortfolio[];
-            const holdingSymbols = getRefreshableHoldingQuoteSymbolsFromPortfolios(allInvestments);
-            const watchSymbols = (data.watchlist ?? [])
-                .map((w) => w.symbol)
-                .filter((s): s is string => Boolean(s));
-            const symbolsToCheck = Array.from(new Set([...holdingSymbols, ...watchSymbols]));
-            if (symbolsToCheck.length === 0) {
-                didScheduleStaleRefreshRef.current = true;
-                return;
-            }
-
-            const stale = symbolsNeedingLiveFetch(symbolsToCheck, loadQuoteCacheRows());
-            if (stale.length === 0) {
-                didScheduleStaleRefreshRef.current = true;
-                return;
-            }
-
-            didScheduleStaleRefreshRef.current = true;
-            marketContext.bumpPriceRefresh({
-                kind: 'symbols',
-                symbols: stale,
-                manual: true,
-                forceFetch: true,
-                silent: true,
-            });
-        }, 2500);
-
-        return () => {
-            cancelled = true;
-            cancelIdle();
-        };
-    }, [dataContext?.data, dataContext?.showHydrateBanner, marketContext?.bumpPriceRefresh]);
-
-    /** Market-hours session poll — stale symbols only, idle-scheduled, skipped while tab hidden or nav paused. */
-    useEffect(() => {
-        const { data, showHydrateBanner } = dataContext ?? {};
-        const bump = marketContext?.bumpPriceRefresh;
-        if (!data || showHydrateBanner || !bump) return;
-
-        let cancelled = false;
-        let interval: ReturnType<typeof setInterval> | undefined;
-
-        const poll = () => {
-            if (cancelled || isBackgroundWorkPaused()) return;
-            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-            if (!isAnyEquityMarketRegularSessionOpen()) return;
-            bump({ kind: 'all', manual: true, forceFetch: false, silent: true });
-        };
-
-        const schedulePoll = () => scheduleIdleWorkAsync(() => poll(), 0);
-
-        const initialTimer = setTimeout(() => {
-            void schedulePoll();
-            interval = setInterval(() => {
-                void schedulePoll();
-            }, MARKET_SESSION_POLL_MS);
-        }, MARKET_SESSION_POLL_INITIAL_MS);
-
-        return () => {
-            cancelled = true;
-            clearTimeout(initialTimer);
-            if (interval) clearInterval(interval);
-        };
-    }, [dataContext?.data, dataContext?.showHydrateBanner, marketContext?.bumpPriceRefresh]);
-
-    /** Resume pending symbol batches after provider cooldown (manual or silent overflow). */
+    /** Resume pending symbol batches after provider cooldown (continuation of a *manual* refresh). */
     useEffect(() => {
         const bump = marketContext?.bumpPriceRefresh;
         if (!bump) return;
         return subscribeQuoteRefreshCooldownEnd(() => {
+            const ctx = contextRef.current.marketContext;
+            if (!ctx || ctx.isQuoteRefreshCancelled()) {
+                pendingLiveFetchSymbolsRef.current = [];
+                return;
+            }
             const pending = pendingLiveFetchSymbolsRef.current;
             if (pending.length === 0) return;
             pendingLiveFetchSymbolsRef.current = [];
@@ -431,6 +364,7 @@ const MarketSimulator: React.FC = () => {
 
             {
                 try {
+                    await yieldToMain(0);
                     let cacheRows = loadQuoteCacheRows();
                     const cacheSim = cacheRowsToSimulatedMap(cacheRows);
                     const cacheForEquity: Record<string, LiveQuoteRow> = {};
@@ -451,24 +385,35 @@ const MarketSimulator: React.FC = () => {
                     pendingLiveFetchSymbolsRef.current = [];
                     const toFetch = mergedFetch.slice(0, MAX_LIVE_FETCH_PER_TICK);
                     pendingLiveFetchSymbolsRef.current = mergedFetch.slice(MAX_LIVE_FETCH_PER_TICK);
-                    const rateLimited =
-                        isQuoteRefreshInCooldown() && !(priceScope.manual === true && forceFetch);
-                    if (rateLimited && forceFetch && toFetch.length > 0) {
+                    // Never bypass rate-limit cooldown — silent bootstrap + manual forceFetch used to
+                    // punch through and re-hammer SAHMK (429 storms + multi-second main-thread hangs).
+                    const rateLimited = isQuoteRefreshInCooldown();
+                    if (rateLimited && toFetch.length > 0) {
                         pendingLiveFetchSymbolsRef.current = Array.from(
                             new Set([...pendingLiveFetchSymbolsRef.current, ...toFetch]),
                         );
                     }
+                    const isManualForceFetch = forceFetch && priceScope.manual === true;
+                    // Manual Sync must never invent RNG prices. During cooldown, prefer cache over gaps.
+                    const allowCacheFallback = !isManualForceFetch || rateLimited;
+                    const allowSimulate = !isManualForceFetch;
 
                     /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
                     const equityFetchPromise: Promise<Record<string, LiveQuoteRow>> =
                         uniqueSymbols.length > 0 && toFetch.length > 0 && !rateLimited
                             ? getLivePricesDeduped(toFetch, { forceFetch }).catch((err) => {
-                                  if (isRateLimitError(err)) startQuoteRefreshCooldown();
+                                  if (isRateLimitError(err)) {
+                                      const msg = err instanceof Error ? err.message : String(err ?? '');
+                                      startQuoteRefreshCooldown(
+                                          /SAHMK/i.test(msg) ? SAHMK_RATE_LIMIT_COOLDOWN_MS : 45_000,
+                                      );
+                                  }
                                   throw err;
                               })
                             : Promise.resolve({} as Record<string, LiveQuoteRow>);
+                    const skipCommodityForRateLimit = rateLimited && priceScope.silent === true;
                     const commodityFetchPromise =
-                        !scopeIsSymbolsOnly && allCommodities.length > 0
+                        !scopeIsSymbolsOnly && allCommodities.length > 0 && !skipCommodityForRateLimit
                             ? withFetchTimeout(
                                   getAICommodityPrices(allCommodities, { sarPerUsd }),
                                   COMMODITY_FETCH_TIMEOUT_MS,
@@ -489,8 +434,10 @@ const MarketSimulator: React.FC = () => {
                     if (equitySettled.status === 'fulfilled') {
                         rawApi = equitySettled.value;
                         cacheRows = loadQuoteCacheRows();
-                    } else {
+                    } else if (!isRateLimitError(equitySettled.reason)) {
                         console.error('Equity live price fetch failed:', equitySettled.reason);
+                    } else {
+                        console.warn('Equity live price fetch rate-limited — using cache');
                     }
 
                     const commodityData =
@@ -507,21 +454,27 @@ const MarketSimulator: React.FC = () => {
                         mergedEquity = { ...mergedEquity, ...apiExpanded };
                         if (Object.keys(sanitizedApi).length > 0) {
                             networkFetchedThisTick = true;
+                            // Durable DB cache — survives cleared localStorage / new device (manual fetch only).
+                            void upsertMarketQuotesToDb(supabase as any, sanitizedApi);
                         }
                     }
 
                     newPrices = { ...mergedEquity };
 
                     if (commodityData.prices.length > 0) {
-                        cacheRows = persistCommodityQuotePrices(cacheRows, commodityData.prices);
-                    }
-                    commodityData.prices.forEach((cp) => {
-                        const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
-                        const change = cp.price - oldPrice;
-                        const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
-                        newPrices[cp.symbol] = { price: cp.price, change, changePercent };
-                    });
-                    if (commodityData.prices.length > 0) {
+                        cacheRows = applyManualCommodityQuotes({
+                            prices: commodityData.prices,
+                            priorCacheRows: cacheRows,
+                            db: supabase as any,
+                            // Session map is applied via newPrices below (same tick).
+                        });
+                        for (const cp of commodityData.prices) {
+                            if (!cp?.symbol || !(Number(cp.price) > 0)) continue;
+                            const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
+                            const change = cp.price - oldPrice;
+                            const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
+                            newPrices[cp.symbol] = { price: cp.price, change, changePercent };
+                        }
                         networkFetchedThisTick = true;
                     }
 
@@ -529,13 +482,13 @@ const MarketSimulator: React.FC = () => {
                     trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
 
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
-                    const allowCacheFallback = !(forceFetch && priceScope.manual === true);
                     let anyEquitySimulated = false;
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
                         if (allowCacheFallback && applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
+                        if (!allowSimulate) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
                     }
@@ -567,14 +520,18 @@ const MarketSimulator: React.FC = () => {
                         if (allCommodities.length > 0) {
                             const commodityData = await getAICommodityPrices(allCommodities, { sarPerUsd });
                             if (commodityData.prices.length > 0) {
-                                cacheRows = persistCommodityQuotePrices(cacheRows, commodityData.prices);
+                                cacheRows = applyManualCommodityQuotes({
+                                    prices: commodityData.prices,
+                                    priorCacheRows: cacheRows,
+                                    db: supabase as any,
+                                });
+                                commodityData.prices.forEach((cp) => {
+                                    const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
+                                    const change = cp.price - oldPrice;
+                                    const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
+                                    newPrices[cp.symbol] = { price: cp.price, change, changePercent };
+                                });
                             }
-                            commodityData.prices.forEach((cp) => {
-                                const oldPrice = currentSimulatedPrices[cp.symbol]?.price || cp.price;
-                                const change = cp.price - oldPrice;
-                                const changePercent = oldPrice > 0 ? (change / oldPrice) * 100 : 0;
-                                newPrices[cp.symbol] = { price: cp.price, change, changePercent };
-                            });
                         }
                     } catch (commodityErr) {
                         console.error('Commodity price fetch failed during fallback:', commodityErr);
@@ -584,13 +541,16 @@ const MarketSimulator: React.FC = () => {
                     trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
 
                     const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
-                    const allowCacheFallback = !(forceFetch && priceScope.manual === true);
+                    const isManualForceFetch = forceFetch && priceScope.manual === true;
+                    const allowCacheFallback = true; // catch path: cache before any RNG
+                    const allowSimulate = !isManualForceFetch;
                     let anyEquitySimulated = false;
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
                         if (allowCacheFallback && applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
+                        if (!allowSimulate) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
                     }
@@ -624,7 +584,8 @@ const MarketSimulator: React.FC = () => {
                 trustedQuoteSnapshot = { ...newPrices };
                 trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
                 liveStatus = Object.keys(fromCache).length > 0;
-                if (!liveStatus) {
+                const allowSimulateEmpty = !(forceFetch && priceScope.manual === true);
+                if (!liveStatus && allowSimulateEmpty) {
                     Array.from(new Set([...uniqueSymbols, ...commoditySymbols])).forEach((symbol) => {
                         if (applyStoredQuoteFallback(symbol, newPrices, cacheRows)) return;
                         if (isTadawulQuoteSymbol(symbol)) return;
@@ -808,7 +769,8 @@ const MarketSimulator: React.FC = () => {
                 pendingLiveFetchSymbolsRef.current.length > 0 &&
                 !isQuoteRefreshInCooldown() &&
                 marketContext &&
-                priceScope.manual === true
+                priceScope.manual === true &&
+                !marketContext.isQuoteRefreshCancelled()
             ) {
                 const pending = [...pendingLiveFetchSymbolsRef.current];
                 pendingLiveFetchSymbolsRef.current = [];
@@ -848,10 +810,16 @@ const MarketSimulator: React.FC = () => {
                 if (after?.hasQueuedPriceRefresh()) {
                     after.notifyQueuedPriceRefresh();
                 } else if (pendingSymbols && after) {
-                    if (!isQuoteRefreshInCooldown()) {
+                    if (after.isQuoteRefreshCancelled()) {
+                        pendingLiveFetchSymbolsRef.current = [];
+                        after.finishQuotesRefresh();
+                    } else if (!isQuoteRefreshInCooldown()) {
                         const pending = [...pendingLiveFetchSymbolsRef.current];
                         pendingLiveFetchSymbolsRef.current = [];
                         after.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: true, manual: true, silent: true });
+                    } else {
+                        // Keep pending for cooldown-end drain; clear Updating… so the UI is not stuck for minutes.
+                        after.finishQuotesRefresh();
                     }
                 } else {
                     after?.finishQuotesRefresh();
@@ -883,7 +851,13 @@ const MarketSimulator: React.FC = () => {
             ctx.notifyQueuedPriceRefresh();
         };
         registerQuoteRefreshKick(kick);
-        return () => registerQuoteRefreshKick(null);
+        registerClearPendingLiveFetch(() => {
+            pendingLiveFetchSymbolsRef.current = [];
+        });
+        return () => {
+            registerQuoteRefreshKick(null);
+            registerClearPendingLiveFetch(null);
+        };
     }, []);
 
     return null;

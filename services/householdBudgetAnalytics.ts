@@ -9,6 +9,7 @@ import { toSAR } from '../utils/currencyMath';
 import {
   clampMonthStartDay,
   financialMonthColumnIndexForDate,
+  financialMonthKey,
 } from '../utils/financialMonth';
 
 /** Bucket keys that are savings / investments — not consumption outflows. */
@@ -34,17 +35,70 @@ export function sumNonSavingsBucketOutflow(buckets: Record<string, unknown> | un
 }
 
 /**
- * Expense for analytics: prefer transaction-based actuals; otherwise planned; otherwise sum of non-savings buckets
- * (household engine always fills buckets even when `expenseActual` is 0).
+ * Expense for analytics / Trends: ledger actuals only.
+ * Do not fall back to modeled buckets or salary-scaled plans — that made empty months identical.
  */
 export function effectiveMonthExpense(month: HouseholdMonthPlan): number {
   const expAct = Number(month.expenseActual);
   if (Number.isFinite(expAct) && expAct > 0) return expAct;
   const totAct = Number(month.totalActualOutflow);
   if (Number.isFinite(totAct) && totAct > 0) return totAct;
+  return 0;
+}
+
+/**
+ * Expense for Forecast / Scenarios / Seasonality: ledger first, then modeled plan buckets.
+ * Empty future months still need a planned baseline so projections are not near-zero.
+ */
+export function effectiveMonthExpenseForProjection(month: HouseholdMonthPlan): number {
+  const ledger = effectiveMonthExpense(month);
+  if (ledger > 0) return ledger;
   const planned = Number(month.expensePlanned);
   if (Number.isFinite(planned) && planned > 0) return planned;
-  return sumNonSavingsBucketOutflow(month.buckets as Record<string, unknown>);
+  return sumNonSavingsBucketOutflow(month.buckets);
+}
+
+/** Income for Trends: actual txs first; salary plan only when actual is missing. */
+export function effectiveMonthIncome(month: HouseholdMonthPlan): number {
+  const act = Number(month.incomeActual);
+  if (Number.isFinite(act) && act > 0) return act;
+  return Math.max(0, Number(month.incomePlanned) || 0);
+}
+
+/**
+ * Cap Trends “through” month so navigator advances past today cannot include future months.
+ * Past plan years: allow navigator month (all months are historical). Future years: 0 (empty).
+ */
+export function resolveHouseholdTrendsThroughMonth(
+  planYear: number,
+  navigatorMonth: number,
+  ref: Date = new Date(),
+  monthStartDay: number = 1,
+): number {
+  const today = financialMonthKey(ref, monthStartDay);
+  const nav = Math.max(1, Math.min(12, Math.round(Number(navigatorMonth) || 1)));
+  if (planYear > today.year) return 0;
+  if (planYear < today.year) return nav;
+  return Math.min(nav, today.month);
+}
+
+/**
+ * Rolling Trends window through the current financial month (excludes future months).
+ * Engine months are Jan–Dec of the plan year; `currentMonth` is 1–12.
+ */
+export function selectHouseholdTrendMonths<T extends { month?: number; monthIndex?: number }>(
+  months: T[],
+  currentMonth: number,
+  count = 6,
+): T[] {
+  const through = Math.max(0, Math.min(12, Math.round(Number(currentMonth) || 0)));
+  if (through < 1) return [];
+  const elapsed = (months ?? []).filter((m) => {
+    const n = Number(m.month ?? (m.monthIndex != null ? Number(m.monthIndex) + 1 : NaN));
+    return Number.isFinite(n) && n >= 1 && n <= through;
+  });
+  const n = Math.max(1, Math.min(12, Math.round(Number(count) || 6)));
+  return elapsed.slice(-n);
 }
 
 export interface SpendingTrend {
@@ -144,7 +198,7 @@ export function predictFutureMonths(
     // Use a wider sample for stability: last 6 months (or fewer if not available).
     const recentMonths = months.slice(-Math.min(6, months.length));
     const incomeValues = recentMonths.map((m) => Math.max(0, Number(m.incomeActual) > 0 ? Number(m.incomeActual) : Number(m.incomePlanned) || 0));
-    const expenseValues = recentMonths.map((m) => Math.max(0, effectiveMonthExpense(m)));
+    const expenseValues = recentMonths.map((m) => Math.max(0, effectiveMonthExpenseForProjection(m)));
 
     const avgIncome = incomeValues.reduce((s, v) => s + v, 0) / Math.max(1, incomeValues.length);
     const avgExpense = expenseValues.reduce((s, v) => s + v, 0) / Math.max(1, expenseValues.length);
@@ -228,7 +282,7 @@ export function analyzeScenario(
 
   const avgMonthlySalary =
     months.reduce((sum, m) => sum + (m.incomeActual > 0 ? m.incomeActual : m.incomePlanned), 0) / numMonths;
-  const avgMonthlyExpense = months.reduce((sum, m) => sum + effectiveMonthExpense(m), 0) / numMonths;
+  const avgMonthlyExpense = months.reduce((sum, m) => sum + effectiveMonthExpenseForProjection(m), 0) / numMonths;
 
   const newAvgSalary = avgMonthlySalary + monthlySalaryChange;
   const newAvgExpense = avgMonthlyExpense + monthlyExpenseChange;
@@ -511,7 +565,7 @@ export function detectSeasonality(
       byMonth[monthNum] = [];
     }
 
-    const expense = effectiveMonthExpense(month);
+    const expense = effectiveMonthExpenseForProjection(month);
     byMonth[monthNum].push(expense);
     
     // Track by category (exclude savings/investing buckets so output reflects real spending).
@@ -531,7 +585,7 @@ export function detectSeasonality(
   // Calculate overall monthly averages
   const monthlyAverages: Record<number, number> = {};
   const overallAverage =
-    months.reduce((sum, m) => sum + effectiveMonthExpense(m), 0) / months.length;
+    months.reduce((sum, m) => sum + effectiveMonthExpenseForProjection(m), 0) / months.length;
   
   Object.keys(byMonth).forEach(monthStr => {
     const monthNum = Number(monthStr);

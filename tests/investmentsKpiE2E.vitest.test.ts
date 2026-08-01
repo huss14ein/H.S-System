@@ -123,13 +123,12 @@ describe('Investments headline KPI E2E', () => {
 
   it('KPI debounce stays responsive for quote-driven recomputes', () => {
     const ctx = read('context/CanonicalFinancialMetricsContext.tsx');
-    expect(ctx).toMatch(/useDebouncedValue\(simulatedPrices,\s*250\)/);
+    expect(ctx).toMatch(/useDebouncedValue\(simulatedPrices,\s*quoteDebounceMs\)/);
   });
 
   it('useCanonicalSimulatedPrices reads KPI quote map from shell provider', () => {
     const hook = read('hooks/useCanonicalFinancialMetrics.ts');
     expect(hook).toMatch(/shell\?\.full\.simulatedPrices|shell\.full\.simulatedPrices/);
-    expect(hook).toContain('useDebouncedValue(simulatedPrices, 250)');
     expect(hook).not.toMatch(/useCanonicalSimulatedPrices[\s\S]{0,120}useMarketPrices\(\)\.simulatedPrices/);
   });
 

@@ -1,14 +1,16 @@
 import type { FinancialData } from '../types';
 import { resolveSarPerUsd } from '../utils/currencyMath';
+import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import {
   accumulateHouseholdYearCashflowSar,
-  buildHouseholdBudgetPlan,
-  buildHouseholdEngineInputFromData,
-  type HouseholdEngineResult,
+  type HouseholdBudgetPlanResult,
   type HouseholdEngineProfile,
   type HouseholdMonthlyOverride,
 } from './householdBudgetEngine';
+import { buildHouseholdPlanFromFinancialData } from './householdEngineFromData';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+
+export type HouseholdEngineResult = HouseholdBudgetPlanResult;
 
 export interface CashflowStressSignals {
   level: 'low' | 'medium' | 'high';
@@ -24,7 +26,7 @@ export interface CashflowStressSignals {
 export function deriveCashflowStressSummary(result: HouseholdEngineResult): CashflowStressSignals {
   const months = result.months ?? [];
   const affordabilityPressureMonths = months.filter((m) =>
-    m.warnings.some((w) => w.toLowerCase().includes('affordability pressure'))
+    m.warnings.some((w) => w.toLowerCase().includes('affordability pressure')),
   ).length;
   const negativePlannedNetMonths = months.filter((m) => (m.plannedNet ?? 0) < 0).length;
   const projectedYearEndDelta =
@@ -95,48 +97,40 @@ export function computeHouseholdStressFromData(
     profile?: HouseholdEngineProfile;
     expectedMonthlySalary?: number;
     overrides?: HouseholdMonthlyOverride[];
-  }
+  },
 ): CashflowStressSignals | null {
   if (!data) return null;
 
   const year = options?.year ?? new Date().getFullYear();
-  const adults = options?.adults ?? 2;
-  const kids = options?.kids ?? 0;
-  const profile = options?.profile ?? 'Moderate';
-  const overrides = options?.overrides ?? [];
-
+  const monthStartDay = resolveMonthStartDayFromData(data);
+  const sarPerUsd = resolveSarPerUsd(data, undefined);
   const transactions = getPersonalTransactions(data);
   const accounts = getPersonalAccounts(data);
-
-  const sarPerUsd = resolveSarPerUsd(data, undefined);
-  const { monthlyIncome } = accumulateHouseholdYearCashflowSar(data, transactions, accounts, year, sarPerUsd);
+  const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
+    data,
+    transactions,
+    accounts,
+    year,
+    sarPerUsd,
+    monthStartDay,
+  );
   const incomeWithData = monthlyIncome.filter((v: number) => v > 0);
   const inferredAvg =
     incomeWithData.length > 0 ? incomeWithData.reduce((a: number, b: number) => a + b, 0) / incomeWithData.length : 0;
 
-  const input = buildHouseholdEngineInputFromData(
-    transactions as Array<{ date: string; type?: string; amount?: number }>,
-    accounts as Array<{ type?: string; balance?: number }>,
-    (data.goals ?? []) as any[],
-    {
-      year,
-      expectedMonthlySalary:
-        options?.expectedMonthlySalary && options.expectedMonthlySalary > 0
-          ? options.expectedMonthlySalary
-          : inferredAvg > 0
+  const result = buildHouseholdPlanFromFinancialData(data, {
+    year,
+    expectedMonthlySalary:
+      options?.expectedMonthlySalary && options.expectedMonthlySalary > 0
+        ? options.expectedMonthlySalary
+        : inferredAvg > 0
           ? inferredAvg
           : undefined,
-      adults,
-      kids,
-      profile,
-      monthlyOverrides: overrides,
-      financialData: data,
-      sarPerUsd,
-      uiExchangeRate: sarPerUsd,
-    }
-  );
-
-  const result = buildHouseholdBudgetPlan(input);
+    adults: options?.adults ?? 2,
+    kids: options?.kids ?? 0,
+    profile: options?.profile,
+    monthlyOverrides: options?.overrides ?? [],
+  });
+  if (!result) return null;
   return deriveCashflowStressSummary(result);
 }
-

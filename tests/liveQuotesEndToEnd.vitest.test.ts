@@ -16,18 +16,24 @@ describe('live quotes E2E wiring', () => {
     expect(ctx).toContain('setRefreshTrigger((prev) => prev + 1)');
   });
 
-  it('MarketSimulator: stale bootstrap, pause retry, in-flight coalesce, urgent apply', () => {
+  it('MarketSimulator: cache restore, pause retry, in-flight coalesce — no auto network', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('waitUntilBackgroundWorkResumed');
     expect(sim).toContain('pendingRefreshWhileInFlightRef');
     expect(sim).toContain('scheduleRefreshRetry');
     expect(sim).toContain('urgentApply');
-    expect(sim).toContain('MAX_LIVE_FETCH_PER_TICK = 25');
+    expect(sim).toContain('MAX_LIVE_FETCH_PER_TICK = 12');
+    expect(sim).toContain('const rateLimited = isQuoteRefreshInCooldown()');
+    expect(sim).not.toContain('!(priceScope.manual === true && forceFetch)');
+    expect(sim).toContain('SAHMK_RATE_LIMIT_COOLDOWN_MS');
+    expect(sim).toContain('skipCommodityForRateLimit');
+    expect(sim).toContain('allowSimulate = !isManualForceFetch');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current = []');
-    expect(sim).toContain('isAnyEquityMarketRegularSessionOpen');
-    expect(sim).toContain('silent: true');
-    expect(sim).toContain('visibilityState');
-    expect(sim).toContain('forceFetch: false');
+    expect(sim).not.toContain('didScheduleStaleRefreshRef');
+    expect(sim).not.toContain('isAnyEquityMarketRegularSessionOpen');
+    expect(sim).not.toContain('MARKET_SESSION_POLL_MS');
+    expect(sim).toContain('seedQuoteCacheFromMarketQuoteDb');
+    expect(sim).toContain('upsertMarketQuotesToDb');
     expect(sim).toContain('bumpPriceRefresh(priceScope)');
     expect(sim).toContain('nextQuotesPriceSourceAfterTick');
   });
@@ -43,9 +49,10 @@ describe('live quotes E2E wiring', () => {
   });
 
   it('quote hooks split live cells vs KPI-aligned canonical map', () => {
-    const canonicalHook = read('hooks/useCanonicalFinancialMetrics.ts');
-    expect(canonicalHook).toMatch(/shell\?\.full\.simulatedPrices|shell\.full\.simulatedPrices/);
-    expect(canonicalHook).toContain('useDebouncedValue(simulatedPrices, 250)');
+    const canonicalCtx = read('context/CanonicalFinancialMetricsContext.tsx');
+    expect(canonicalCtx).toMatch(/useDebouncedValue\(simulatedPrices,\s*quoteDebounceMs\)/);
+    expect(canonicalCtx).toContain('usePerformanceOptional');
+    expect(read('hooks/useCanonicalFinancialMetrics.ts')).toMatch(/shell\?\.full\.simulatedPrices|shell\.full\.simulatedPrices/);
     expect(read('hooks/useLiveQuotePrices.ts')).toContain('useMarketPrices');
     expect(read('pages/Investments.tsx')).toContain('useMarketPrices()');
     expect(read('pages/Investments.tsx')).toContain('kpiQuotePrices');
@@ -53,11 +60,13 @@ describe('live quotes E2E wiring', () => {
 
   it('every successful fetch persists to quote cache', () => {
     const sim = read('components/MarketSimulator.tsx');
-    expect(sim).toContain('persistCommodityQuotePrices');
+    expect(sim).toContain('applyManualCommodityQuotes');
+    expect(sim).toContain('upsertMarketQuotesToDb');
     expect(sim).toContain('applyStoredQuoteFallback');
     expect(sim).toContain('getLivePricesDeduped(toFetch, { forceFetch })');
     expect(read('services/quoteLiveFetchCoordinator.ts')).toContain('persistSanitizedLiveQuotes');
     expect(read('services/quoteLiveFetchCoordinator.ts')).toContain('forceFetch');
+    expect(read('services/applyManualCommodityQuotes.ts')).toContain('persistCommodityQuotePrices');
     expect(read('context/MarketDataContext.tsx')).toContain('loadQuoteCacheRows');
   });
 

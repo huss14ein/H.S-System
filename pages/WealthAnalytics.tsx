@@ -1,6 +1,7 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState, Suspense, lazy } from 'react';
 import PageLayout from '../components/PageLayout';
 import PageLanguageToggle from '../components/PageLanguageToggle';
+import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
@@ -23,10 +24,18 @@ import AnalyticsVisitDeltaChips from '../components/analytics/AnalyticsVisitDelt
 import { useAnalyticsWorkspace } from '../context/AnalyticsWorkspaceContext';
 import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
 import { detectBudgetDrift } from '../services/budgetDrift';
-import OverviewZone from '../components/analytics/zones/OverviewZone';
-import WealthZone from '../components/analytics/zones/WealthZone';
-import InvestmentsZone from '../components/analytics/zones/InvestmentsZone';
-import CashSpendZone from '../components/analytics/zones/CashSpendZone';
+const OverviewZone = lazy(() => import('../components/analytics/zones/OverviewZone'));
+const WealthZone = lazy(() => import('../components/analytics/zones/WealthZone'));
+const InvestmentsZone = lazy(() => import('../components/analytics/zones/InvestmentsZone'));
+const CashSpendZone = lazy(() => import('../components/analytics/zones/CashSpendZone'));
+
+function ZoneSuspense({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={<SectionLoadingPlaceholder minHeight="16rem" labelKey="sectionLoading" />}>
+      {children}
+    </Suspense>
+  );
+}
 import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
 import {
   buildVisitSnapshotFromModel,
@@ -188,6 +197,7 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
             <WealthAnalyticsZoneTabs className="mb-2" />
 
             {wealthZone === 'overview' && (
+              <ZoneSuspense>
               <OverviewZone
                 netWorthDisplay={maskBalance(formatCurrencyString(netWorth ?? 0, { digits: 0 }))}
                 netWorthSar={netWorth ?? 0}
@@ -222,9 +232,11 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                 visitDelta={visitDelta}
                 budgetDriftRows={budgetDriftRows}
               />
+              </ZoneSuspense>
             )}
 
             {wealthZone === 'wealth' && (
+              <ZoneSuspense>
               <WealthZone
                 dir={dir}
                 extendedReady={extendedReady}
@@ -248,9 +260,11 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                   triggerPageAction?.('Transactions', 'open-ledger');
                 }}
               />
+              </ZoneSuspense>
             )}
 
             {wealthZone === 'investments' && (
+              <ZoneSuspense>
               <InvestmentsZone
                 data={data}
                 personalInvestments={personalInvestments}
@@ -268,9 +282,11 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                 portfolioPeriodPnL={portfolioPeriodPnL}
                 t={t}
               />
+              </ZoneSuspense>
             )}
 
             {wealthZone === 'cash' && (
+              <ZoneSuspense>
               <CashSpendZone
                 data={data}
                 personalTransactions={personalTransactions}
@@ -285,6 +301,7 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                 setActivePage={setActivePage}
                 triggerPageAction={triggerPageAction}
               />
+              </ZoneSuspense>
             )}
         </div>
 

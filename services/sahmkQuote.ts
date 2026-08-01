@@ -5,12 +5,24 @@
 
 import { fetchSahmkQuote } from './sahmkClient';
 import { normalizeTadawulUnitPriceSAR } from './tadawulQuoteSanity';
+import {
+  isQuoteRefreshInCooldown,
+  startQuoteRefreshCooldown,
+  SAHMK_RATE_LIMIT_COOLDOWN_MS,
+} from './quoteRefreshCooldown';
+import { buildRateLimitBatchError } from './quoteProviderRateLimit';
 
 export type SahmkQuoteTick = { price: number; change: number; changePercent: number };
 
-const SINGLE_FLIGHT_TTL_MS = 12_000;
+const SUCCESS_CACHE_TTL_MS = 60_000;
+/** After a 429, do not hit the proxy again for this code until cooldown-ish TTL. */
+const RATE_LIMIT_CACHE_TTL_MS = SAHMK_RATE_LIMIT_COOLDOWN_MS;
+/** Free-tier budget: never blast more than this many distinct codes in one batch. */
+export const SAHMK_MAX_CODES_PER_BATCH = 5;
+const INTER_CODE_GAP_MS = 200;
+
 const inFlightByCode = new Map<string, Promise<SahmkQuoteTick | null>>();
-const cachedByCode = new Map<string, { at: number; tick: SahmkQuoteTick | null }>();
+const cachedByCode = new Map<string, { at: number; tick: SahmkQuoteTick | null; rateLimited?: boolean }>();
 
 /** Map `2222.SR` / bare `2222` / `REITF.SA` → code for `/quote/{code}/`. Letter tickers require a Saudi suffix to avoid US ticker collisions. */
 export function extractTadawulCodeForSahmk(symbol: string): string | null {
@@ -22,13 +34,28 @@ export function extractTadawulCodeForSahmk(symbol: string): string | null {
   return null;
 }
 
+function noteSahmkRateLimited(): void {
+  startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS);
+}
+
 async function fetchSahmkTickByCode(code: string): Promise<SahmkQuoteTick | null> {
   const c = code.trim().toUpperCase();
   if (!c) return null;
 
+  if (isQuoteRefreshInCooldown()) {
+    const cached = cachedByCode.get(c);
+    return cached?.tick ?? null;
+  }
+
   const now = Date.now();
   const cached = cachedByCode.get(c);
-  if (cached && now - cached.at <= SINGLE_FLIGHT_TTL_MS) return cached.tick;
+  if (cached) {
+    const ttl = cached.rateLimited ? RATE_LIMIT_CACHE_TTL_MS : SUCCESS_CACHE_TTL_MS;
+    if (now - cached.at <= ttl) {
+      if (cached.rateLimited) throw new Error('HTTP 429 Too Many Requests');
+      return cached.tick;
+    }
+  }
 
   const inflight = inFlightByCode.get(c);
   if (inflight) return inflight;
@@ -36,7 +63,8 @@ async function fetchSahmkTickByCode(code: string): Promise<SahmkQuoteTick | null
   const p = (async (): Promise<SahmkQuoteTick | null> => {
     const res = await fetchSahmkQuote(c);
     if (res.status === 429) {
-      // Let callers trigger cooldown/backoff by matching on message.
+      cachedByCode.set(c, { at: Date.now(), tick: null, rateLimited: true });
+      noteSahmkRateLimited();
       throw new Error('HTTP 429 Too Many Requests');
     }
     if (!res.ok) return null;
@@ -45,7 +73,7 @@ async function fetchSahmkTickByCode(code: string): Promise<SahmkQuoteTick | null
     return parseSahmkQuoteJson(json);
   })()
     .then((tick) => {
-      cachedByCode.set(c, { at: Date.now(), tick });
+      cachedByCode.set(c, { at: Date.now(), tick, rateLimited: false });
       return tick;
     })
     .finally(() => {
@@ -100,14 +128,38 @@ export async function getSahmkQuoteForSymbol(symbol: string): Promise<SahmkQuote
   }
 }
 
+function assignQuoteKeys(
+  out: Record<string, SahmkQuoteTick>,
+  displaySymbols: string[],
+  code: string,
+  quote: SahmkQuoteTick,
+): void {
+  for (const rawSymbol of displaySymbols) {
+    const rawUpper = (rawSymbol || '').trim().toUpperCase();
+    const fhTad = rawUpper.match(/^TADAWUL:([A-Z0-9]{1,8})$/);
+    const displayKey = fhTad ? `${fhTad[1]}.SR` : rawUpper;
+    const keys = new Set<string>(
+      [displayKey, rawUpper, `${code}.SR`, `${code}.SA`, `${code}.SE`, code].filter(Boolean),
+    );
+    const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
+    if (tad) {
+      keys.add(`${tad[1]}.SA`);
+      keys.add(`${tad[1]}.SE`);
+    }
+    for (const k of keys) out[k] = quote;
+  }
+}
+
 /**
  * Batch live map compatible with `getLivePrices` / Finnhub output keys.
- * Adds `.SR`, `.SA`, `.SE`, bare digits, and canonical `fromFinnhubSymbol(toFinnhubSymbol(s))`.
+ * Caps distinct SAHMK codes per call, aborts on first 429, and respects global cooldown.
  */
 export async function getSahmkLivePrices(
   symbols: string[],
 ): Promise<Record<string, SahmkQuoteTick>> {
   if (symbols.length === 0) return {};
+  if (isQuoteRefreshInCooldown()) return {};
+
   const out: Record<string, SahmkQuoteTick> = {};
 
   const codeToDisplaySymbols = new Map<string, string[]>();
@@ -119,40 +171,43 @@ export async function getSahmkLivePrices(
     codeToDisplaySymbols.set(code, list);
   }
 
-  let rateLimitHits = 0;
+  const codes = Array.from(codeToDisplaySymbols.keys()).slice(0, SAHMK_MAX_CODES_PER_BATCH);
+  let rateLimited = false;
 
-  for (const [code, displaySymbols] of codeToDisplaySymbols) {
+  for (let i = 0; i < codes.length; i++) {
+    if (isQuoteRefreshInCooldown()) break;
+    const code = codes[i]!;
+    const displaySymbols = codeToDisplaySymbols.get(code) ?? [];
     try {
       const quote = await fetchSahmkTickByCode(code);
       if (!quote) continue;
-
-      for (const rawSymbol of displaySymbols) {
-        const rawUpper = (rawSymbol || '').trim().toUpperCase();
-        const fhTad = rawUpper.match(/^TADAWUL:([A-Z0-9]{1,8})$/);
-        const displayKey = fhTad ? `${fhTad[1]}.SR` : rawUpper;
-        const keys = new Set<string>([displayKey, rawUpper, `${code}.SR`, `${code}.SA`, `${code}.SE`, code].filter(Boolean));
-        const tad = displayKey.match(/^([0-9]{4,6})\.SR$/);
-        if (tad) {
-          keys.add(`${tad[1]}.SA`);
-          keys.add(`${tad[1]}.SE`);
-        }
-        for (const k of keys) out[k] = quote;
-      }
+      assignQuoteKeys(out, displaySymbols, code, quote);
     } catch (err) {
       if (/429|rate.?limit|throttl|quota/i.test(err instanceof Error ? err.message : String(err ?? ''))) {
-        rateLimitHits += 1;
+        rateLimited = true;
+        // Stop immediately — continuing burns the free-tier daily budget.
+        break;
       }
     }
 
-    await new Promise((r) => setTimeout(r, 350));
+    if (i + 1 < codes.length) {
+      await new Promise((r) => setTimeout(r, INTER_CODE_GAP_MS));
+    }
   }
 
-  if (rateLimitHits > 0 && Object.keys(out).length === 0) {
-    throw new Error('SAHMK rate limit (429). Wait before retrying live quotes.');
+  if (rateLimited && Object.keys(out).length === 0) {
+    throw buildRateLimitBatchError('SAHMK');
   }
-  if (rateLimitHits >= 2) {
-    throw new Error('SAHMK rate limit (429). Wait before retrying live quotes.');
+  if (rateLimited) {
+    // Partial success — still enter cooldown so the rest of the book waits.
+    noteSahmkRateLimited();
   }
 
   return out;
+}
+
+/** Test helper */
+export function resetSahmkQuoteCacheForTests(): void {
+  inFlightByCode.clear();
+  cachedByCode.clear();
 }

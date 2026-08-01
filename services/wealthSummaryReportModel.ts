@@ -11,7 +11,7 @@ import type { Account, FinancialData, TradeCurrency, Transaction } from '../type
 import { computeEmergencyFundMetrics, type EmergencyFundMetrics } from '../hooks/useEmergencyFund';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { getPersonalInvestments, getPersonalSukukPositions, getPersonalWealthData } from '../utils/wealthScope';
-import { buildHouseholdBudgetPlan, buildHouseholdEngineInputFromData } from './householdBudgetEngine';
+import { buildHouseholdPlanFromFinancialData } from './householdEngineFromData';
 import { deriveCashflowStressSummary } from './householdBudgetStress';
 import { computeDisciplineScore, type DisciplineScoreSummary } from './disciplineScoreEngine';
 import { computeLiquidityRunwayFromData, type LiquidityRunwaySummary } from './liquidityRunwayEngine';
@@ -328,23 +328,16 @@ export function computeWealthSummaryReportModel(
     simulatedPrices,
   );
 
-  const householdInput = buildHouseholdEngineInputFromData(
-    getPersonalTransactions(data) as { date: string; type?: string; amount?: number }[],
-    getPersonalAccounts(data) as { type?: string; balance?: number }[],
-    (data.goals ?? []) as Parameters<typeof buildHouseholdEngineInputFromData>[2],
-    {
-      year: new Date().getFullYear(),
-      expectedMonthlySalary: undefined,
-      adults: 2,
-      kids: 0,
-      profile: (data.settings?.riskProfile as string) || 'Moderate',
-      monthlyOverrides: [],
-      financialData: data,
-      sarPerUsd,
-      uiExchangeRate,
-    }
-  );
-  const householdPlan = buildHouseholdBudgetPlan(householdInput);
+  const planYear = new Date().getFullYear();
+  const householdPlan = buildHouseholdPlanFromFinancialData(data, {
+    year: planYear,
+    uiExchangeRate,
+  }) ?? {
+    months: [],
+    plannedVsActual: { plannedNet: 0, actualNet: 0 },
+    balanceProjection: { projectedYearEndLiquid: 0 },
+    recommendations: [],
+  };
   const householdStress = deriveCashflowStressSummary(householdPlan) as CashflowStressSummary;
 
   const riskLane = computeRiskLaneFromData(data, emergencyFund.monthsCovered);

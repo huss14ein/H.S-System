@@ -1,11 +1,11 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef, useDeferredValue } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { AuthContext } from './AuthContext';
 import { Page, Transaction } from '../types';
 import { DataContext } from './DataContext';
 import { useMarketQuoteMeta } from '../hooks/useMarketQuoteMeta';
 import { useMarketDebouncedPrices } from '../hooks/useDebouncedMarketPrices';
-import { useCanonicalSpotFx, useCanonicalFinancialMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import {
   reconcileCashAccountBalance,
   reconcileCreditAccountBalance,
@@ -120,7 +120,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const auth = useContext(AuthContext);
   const todosOpt = useTodosOptional();
   const sarPerUsd = useCanonicalSpotFx();
-  const { salaryInvestment: salaryInvestmentCanonical } = useCanonicalFinancialMetrics();
   const { lastUpdated, isLive, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { debouncedPrices } = useMarketDebouncedPrices();
   const staleQuoteScanAtRef = useRef(0);
@@ -140,6 +139,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       data?.rewardsTransactions,
     ],
   );
+  const deferredNotificationsFingerprint = useDeferredValue(notificationsDataFingerprint);
   const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   /** After mark-all, suppress async enhancement-signal alerts briefly so the badge stays cleared. */
   const dismissGraceUntilRef = useRef(0);
@@ -274,8 +274,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       }
     });
 
-    const salaryInvestment =
-      salaryInvestmentCanonical ?? computeSalaryInvestmentKpis(data, sarPerUsd);
+    const salaryInvestment = computeSalaryInvestmentKpis(data, sarPerUsd);
     if (salaryInvestment?.hasSalarySignal) {
       const lagDays = Math.max(1, Number(salaryInvestment.settings?.investLagAlertDays) || 7);
       const monthProgressDays = Math.max(
@@ -831,13 +830,12 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
     return list;
   }, [
-    notificationsDataFingerprint,
+    deferredNotificationsFingerprint,
     showHydrateBanner,
     lastUpdated,
     isLive,
     symbolQuoteUpdatedAt,
     sarPerUsd,
-    salaryInvestmentCanonical,
     pendingBudgetRequestCount,
     pendingTransactionApprovalCount,
     isAdmin,
@@ -846,6 +844,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     todosOpt?.todos,
     enhancementSignals.goalConflicts.length,
     enhancementSignals.budgetDrift.length,
+    data,
   ]);
 
   const priceTriggeredPlanNotifications = useMemo<AppNotification[]>(() => {

@@ -18,6 +18,8 @@
     "verify:budgets-bulk": "vitest run tests/householdBulkLimits.vitest.test.ts",
     "verify:regressions": "vitest run tests/investmentSarFlowMetrics.vitest.test.ts tests/householdBulkLimits.vitest.test.ts tests/investmentPlanAllocations.vitest.test.ts tests/regressionUserFixes.vitest.test.ts",
     "verify:atomic-workflows": "node scripts/verify-atomic-workflows.js",
+    "verify:household-budget-e2e": "node scripts/verify-household-budget-e2e.mjs",
+    "verify:system-e2e": "npm run verify:household-budget-e2e && npm run verify:performance-recovery && npm run verify:atomic-workflows",
     "test:e2e": "playwright test",
     "verify:performance-recovery": "node scripts/verify-performance-recovery.mjs",
     "verify:ai-proxy-wiring": "vitest run tests/aiProxyCompletion.vitest.test.ts tests/corsAllowlist.vitest.test.ts tests/aiProxyEndpoints.vitest.test.ts",

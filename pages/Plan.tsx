@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useContext, useEffect, useRef, useCallback, startTransition } from 'react';
 import { Page, Account } from '../types';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
@@ -28,13 +28,21 @@ import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { CreditCardIcon } from '../components/icons/CreditCardIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
+import { SparklesIcon } from '../components/icons/SparklesIcon';
 import {
     accumulateHouseholdYearCashflowSar,
     buildHouseholdBudgetPlan,
     buildHouseholdEngineInputFromPlanData,
+    EMPTY_HOUSEHOLD_BUDGET_PLAN,
+    HOUSEHOLD_ENGINE_PROFILES,
     type HouseholdEngineProfile,
     type HouseholdMonthlyOverride,
 } from '../services/householdBudgetEngine';
+import { resolveHouseholdAutoSetup, buildHouseholdProfileSnapshot, persistHouseholdProfileSnapshot } from '../services/householdAutoSetup';
+import { useDeferredIdleCompute } from '../hooks/useDeferredIdleCompute';
+import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
+import { yieldToMain } from '../utils/yieldToMain';
+import { toast } from '../context/ToastContext';
 import { calculateDynamicBaselines, generatePredictiveSpend } from '../services/enhancedBudgetEngine';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import { getPersonalTransactions, getPersonalAccounts } from '../utils/wealthScope';
@@ -123,6 +131,8 @@ const AnnualFinancialPlan: React.FC<{
 
     const householdProfileStorageKey = useMemo(() => `household-profile:${auth?.user?.id ?? 'anon'}`, [auth?.user?.id]);
     const householdProfileCloudEnabled = Boolean(supabase && auth?.user?.id);
+    /** Bumped on Auto-setup so a late cloud fetch cannot overwrite fresher state. */
+    const householdProfileLocalEpochRef = useRef(0);
 
     useEffect(() => {
         try {
@@ -132,7 +142,7 @@ const AnnualFinancialPlan: React.FC<{
                 if (Number.isFinite(parsed?.adults)) setHouseholdAdults(Math.max(1, Math.round(parsed.adults)));
                 if (Number.isFinite(parsed?.kids)) setHouseholdKids(Math.max(0, Math.round(parsed.kids)));
                 if (Array.isArray(parsed?.overrides)) setHouseholdOverrides(parsed.overrides);
-                if (parsed?.profile && ['Conservative', 'Moderate', 'Growth'].includes(parsed.profile)) {
+                if (parsed?.profile && Object.prototype.hasOwnProperty.call(HOUSEHOLD_ENGINE_PROFILES, parsed.profile)) {
                     setEngineProfile(parsed.profile as HouseholdEngineProfile);
                 }
                 if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
@@ -151,6 +161,7 @@ const AnnualFinancialPlan: React.FC<{
         }
         let isMounted = true;
         setHouseholdProfileCloudLoadedUserId(null);
+        const fetchEpoch = householdProfileLocalEpochRef.current;
         (async () => {
             try {
                 const { data, error } = await db
@@ -159,16 +170,19 @@ const AnnualFinancialPlan: React.FC<{
                     .eq('user_id', userId)
                     .maybeSingle();
                 if (error || !data || !isMounted) return;
+                if (householdProfileLocalEpochRef.current !== fetchEpoch) return;
                 const profile = (data as { profile?: any })?.profile;
                 if (!profile || typeof profile !== 'object') return;
                 if (Number.isFinite(profile?.adults)) setHouseholdAdults(Math.max(1, Math.round(profile.adults)));
                 if (Number.isFinite(profile?.kids)) setHouseholdKids(Math.max(0, Math.round(profile.kids)));
                 if (Array.isArray(profile?.overrides)) setHouseholdOverrides(profile.overrides);
-                if (profile?.profile && ['Conservative', 'Moderate', 'Growth'].includes(profile.profile)) {
+                if (profile?.profile && Object.prototype.hasOwnProperty.call(HOUSEHOLD_ENGINE_PROFILES, profile.profile)) {
                     setEngineProfile(profile.profile as HouseholdEngineProfile);
                 }
                 if (typeof profile?.expectedMonthlySalary === 'number' && profile.expectedMonthlySalary > 0) {
                     setExpectedMonthlySalary(profile.expectedMonthlySalary);
+                } else if (profile && Object.prototype.hasOwnProperty.call(profile, 'expectedMonthlySalary')) {
+                    setExpectedMonthlySalary('');
                 }
             } catch {
                 // Optional cloud sync path, safe to ignore when migration is not applied.
@@ -547,7 +561,86 @@ const AnnualFinancialPlan: React.FC<{
         });
     }, [goalsResolved, totals?.projectedNet, data, sarPerUsd]);
 
-    const householdBudgetEngine = useMemo(() => {
+    const suggestedMonthlySalary = useMemo(() => {
+        const txs = getPersonalTransactions(engineData ?? data);
+        const acc = getPersonalAccounts(engineData ?? data);
+        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
+            engineData ?? data ?? null,
+            txs,
+            acc,
+            year,
+            sarPerUsd,
+            monthStartDay,
+        );
+        const withData = monthlyIncome.filter((v: number) => v > 0);
+        return withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
+    }, [engineData, data, year, sarPerUsd, monthStartDay]);
+
+    const runHouseholdAutoSetup = useCallback(async () => {
+        const txs = getPersonalTransactions(engineData ?? data);
+        const acc = getPersonalAccounts(engineData ?? data);
+        const { monthlyIncome } = accumulateHouseholdYearCashflowSar(
+            engineData ?? data ?? null,
+            txs,
+            acc,
+            year,
+            sarPerUsd,
+            monthStartDay,
+        );
+        const setup = resolveHouseholdAutoSetup({
+            currentProfile: engineProfile,
+            riskProfileRaw: String((data as any)?.settings?.riskProfile || ''),
+            monthlyActualIncome: monthlyIncome,
+            suggestedMonthlySalary,
+            adults: householdAdults,
+            kids: householdKids,
+        });
+        const snapshot = buildHouseholdProfileSnapshot(setup, householdOverrides);
+        householdProfileLocalEpochRef.current += 1;
+        setEngineProfile(setup.profile as HouseholdEngineProfile);
+        setExpectedMonthlySalary(setup.expectedMonthlySalary);
+        setHouseholdAdults(setup.adults);
+        setHouseholdKids(setup.kids);
+        if (setup.clearOverrides) setHouseholdOverrides([]);
+        await persistHouseholdProfileSnapshot({
+            storageKey: householdProfileStorageKey,
+            snapshot,
+            supabase,
+            userId: auth?.user?.id,
+        });
+        toast(setup.messages.join(' · ') || 'Auto-setup applied.', 'success');
+    }, [
+        engineData,
+        data,
+        year,
+        sarPerUsd,
+        monthStartDay,
+        engineProfile,
+        suggestedMonthlySalary,
+        householdAdults,
+        householdKids,
+        householdOverrides,
+        householdProfileStorageKey,
+        auth?.user?.id,
+    ]);
+
+    const [planHouseholdEngineReady, setPlanHouseholdEngineReady] = useState(false);
+    useEffect(() => {
+        let aborted = false;
+        const cancel = scheduleIdleWorkAsync(async () => {
+            await yieldToMain(0);
+            if (!aborted) startTransition(() => setPlanHouseholdEngineReady(true));
+        }, 450);
+        return () => {
+            aborted = true;
+            cancel();
+        };
+    }, []);
+
+    const { value: householdBudgetEngine } = useDeferredIdleCompute({
+        enabled: planHouseholdEngineReady,
+        empty: EMPTY_HOUSEHOLD_BUDGET_PLAN,
+        compute: () => {
         const monthlyIncomePlanned = MONTHS.map((_, i) => {
             const incomeRow = processedPlanData.find((r: PlanRow) => r.type === 'income');
             return Number(incomeRow?.monthly_planned?.[i] || 0);
@@ -562,7 +655,14 @@ const AnnualFinancialPlan: React.FC<{
 
         const txs = getPersonalTransactions(engineData ?? null);
         const acc = getPersonalAccounts(engineData ?? null);
-        const { monthlyIncome: incomeByMonthSar } = accumulateHouseholdYearCashflowSar(engineData ?? null, txs, acc, year, sarPerUsd);
+        const { monthlyIncome: incomeByMonthSar } = accumulateHouseholdYearCashflowSar(
+            engineData ?? null,
+            txs,
+            acc,
+            year,
+            sarPerUsd,
+            monthStartDay,
+        );
         const withData = incomeByMonthSar.filter((v: number) => v > 0);
         const suggested =
             withData.length > 0 ? Math.round(withData.reduce((a: number, b: number) => a + b, 0) / withData.length) : 0;
@@ -581,14 +681,20 @@ const AnnualFinancialPlan: React.FC<{
                 monthlyOverrides: householdOverrides,
                 financialData: engineData ?? null,
                 sarPerUsd,
+                year,
+                uiExchangeRate: sarPerUsd,
+                monthStartDay,
+                currentMonthIndex: currentFinancialMonthColumnEndIndex(year, new Date(), monthStartDay),
             }
         );
         return buildHouseholdBudgetPlan(input);
-    }, [
+        },
+        deps: [
         processedPlanData,
         accounts,
         goals,
         year,
+        monthStartDay,
         householdAdults,
         householdKids,
         householdOverrides,
@@ -596,7 +702,10 @@ const AnnualFinancialPlan: React.FC<{
         expectedMonthlySalary,
         engineData,
         sarPerUsd,
-    ]);
+        planHouseholdEngineReady,
+        ],
+        idleMs: 300,
+    });
 
     const { household: householdConstraints } = useFinancialEnginesIntegration();
     const dynamicBaselines = useMemo(() => calculateDynamicBaselines(transactions as any[], 6), [transactions]);
@@ -825,10 +934,20 @@ const AnnualFinancialPlan: React.FC<{
             {/* Dynamic baselines & predictive spend (household engine enhancement) */}
             {(dynamicBaselines.length > 0 || (householdConstraints?.cashflowStressSignals?.length ?? 0) > 0) && (
                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-1">
-                        Household intelligence
-                        <InfoHint text="Signals from the household budget engine: dynamic category baselines, predictive spend for the current month, and optional cashflow stress notes. Data comes from your transactions and budgets." />
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide flex items-center gap-1">
+                            Household intelligence
+                            <InfoHint text="Signals from the household budget engine: dynamic category baselines, predictive spend for the current month, and optional cashflow stress notes. Data comes from your transactions and budgets." />
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => void runHouseholdAutoSetup()}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800"
+                        >
+                            <SparklesIcon className="h-4 w-4" />
+                            Auto-setup
+                        </button>
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {dynamicBaselines.length > 0 && (
                             <div>

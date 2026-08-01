@@ -24,7 +24,12 @@ interface CommandPaletteProps {
     onOpenLiveAdvisor?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, triggerPageAction, onOpenLiveAdvisor }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = (props) => {
+    if (!props.isOpen) return null;
+    return <CommandPalettePanel {...props} />;
+};
+
+const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, triggerPageAction, onOpenLiveAdvisor }) => {
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;

@@ -11,7 +11,12 @@ import { getSahmkLivePrices } from './sahmkQuote';
 import { fetchGeminiProxyHealthStatus, getGeminiProxyEndpoints } from './aiProxyEndpoints';
 import { getAiProxyAuthorizationHeader } from './aiProxyAuth';
 import { isTadawulQuoteSymbol, isUsEquityQuoteSymbol, uniqueQuoteSymbols } from './marketQuoteRouting';
-import { isRateLimitError } from './quoteRefreshCooldown';
+import {
+    isRateLimitError,
+    isQuoteRefreshInCooldown,
+    startQuoteRefreshCooldown,
+    SAHMK_RATE_LIMIT_COOLDOWN_MS,
+} from './quoteRefreshCooldown';
 import {
     buildRateLimitBatchError,
     noteProviderRateLimitError,
@@ -3268,13 +3273,19 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
 
     const trySahmk = async (syms: string[] = tadawulSymbols) => {
         if (syms.length === 0) return {};
+        // Never hammer SAHMK while a prior 429 cooldown is active (free tier ~100/day).
+        if (isQuoteRefreshInCooldown()) return {};
         try {
             return await getSahmkLivePrices(syms);
         } catch (e) {
+            // Rate limit: enter long cooldown and return {} so Finnhub/Stooq results still apply.
+            // Throwing here previously aborted the whole batch and left the UI on a spinner hang.
+            if (isRateLimitError(e)) {
+                startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS);
+                console.warn('SAHMK rate limited — serving cache until cooldown ends');
+                return {};
+            }
             console.warn('SAHMK live prices skipped:', e);
-            // Bubble up rate-limit/quota so callers (MarketSimulator) can enter cooldown.
-            const msg = e instanceof Error ? e.message : String(e ?? '');
-            if (/429|rate.?limit|throttl|quota/i.test(msg)) throw e;
             return {};
         }
     };
@@ -3310,7 +3321,11 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
         if (Object.keys(merged).length > 0) return merged;
         throw new Error('No live prices from Finnhub (US), Stooq (US fallback), or SAHMK (Tadawul)');
     } catch (error) {
-        console.error("Error fetching live prices:", error);
+        if (isRateLimitError(error)) {
+            console.warn('Live prices rate-limited:', error);
+        } else {
+            console.error("Error fetching live prices:", error);
+        }
         throw error;
     }
 };

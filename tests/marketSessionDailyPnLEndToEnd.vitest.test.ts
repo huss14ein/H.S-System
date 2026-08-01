@@ -106,10 +106,12 @@ describe('market session daily P/L E2E', () => {
 });
 
 describe('live quotes E2E wiring', () => {
-  it('stale bootstrap + cooldown drain + header force refresh (desktop + mobile)', () => {
-    expect(read('components/MarketSimulator.tsx')).toContain('didScheduleStaleRefreshRef');
-    expect(read('components/MarketSimulator.tsx')).toContain('silent: true');
-    expect(read('components/MarketSimulator.tsx')).toContain('finishQuotesRefresh');
+  it('manual refresh + cooldown drain + header force refresh (desktop + mobile)', () => {
+    const sim = read('components/MarketSimulator.tsx');
+    expect(sim).not.toContain('didScheduleStaleRefreshRef');
+    expect(sim).toContain('upsertMarketQuotesToDb');
+    expect(sim).toContain('silent: true');
+    expect(sim).toContain('finishQuotesRefresh');
     expect(read('components/Header.tsx')).toMatch(/refreshPrices\(\{ forceFetch: true \}\)/g);
   });
 });

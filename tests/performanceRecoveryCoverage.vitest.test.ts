@@ -117,13 +117,16 @@ describe('performance recovery E2E wiring', () => {
     expect(read('hooks/useCanonicalFinancialMetrics.ts')).toContain('useCanonicalSimulatedPrices');
   });
 
-  it('MarketSimulator restores cache then one-shot stale live refresh', () => {
+  it('MarketSimulator restores cache + DB quotes; never auto-fetches live prices', () => {
     const src = read('components/MarketSimulator.tsx');
     expect(src).toContain('computeRestoreCachedQuotesPatch');
     expect(src).toContain('didBootstrapSessionCacheRef');
     expect(src).toContain('didAlignHoldingsFromCacheRef');
-    expect(src).toContain('didScheduleStaleRefreshRef');
-    expect(src).toContain('symbolsNeedingLiveFetch');
+    expect(src).toContain('seedQuoteCacheFromPersistedHoldingPrices');
+    expect(src).toContain('seedQuoteCacheFromMarketQuoteDb');
+    expect(src).not.toContain('didScheduleStaleRefreshRef');
+    expect(src).not.toContain('symbolsNeedingLiveFetch');
+    expect(src).not.toContain('MARKET_SESSION_POLL_MS');
     expect(src).not.toMatch(/didInitialPricePassRef/);
     expect(src).not.toMatch(/bumpPriceRefresh\(\s*\)/);
   });
@@ -206,7 +209,7 @@ describe('performance recovery E2E wiring', () => {
       /assignedBudgetMonthly > 0 \? assignedBudgetMonthly : assignedInvestmentMonthly/,
     );
     expect(read('pages/Investments.tsx')).toContain("unrealizedPnLBasis: 'net_capital'");
-    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(/useDebouncedValue\(simulatedPrices,\s*250\)/);
+    expect(read('context/CanonicalFinancialMetricsContext.tsx')).toMatch(/useDebouncedValue\(simulatedPrices,\s*quoteDebounceMs\)/);
     expect(read('services/monthlyInvestmentPlanProgress.ts')).toContain('aggregateMonthlyBudgetAcrossPortfolios');
     expect(read('components/Header.tsx')).toContain('computeMonthlyInvestmentPlanProgress');
     expect(read('pages/Budgets.tsx')).toContain('BudgetSharedRpcBanner');

@@ -38,9 +38,12 @@ describe('Investments hub completion (E2E)', () => {
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteChangeForDailyPnL');
   });
 
-  it('stale quote bootstrap after hydrate', () => {
-    expect(read('components/MarketSimulator.tsx')).toContain('didScheduleStaleRefreshRef');
-    expect(read('components/MarketSimulator.tsx')).toContain('symbolsNeedingLiveFetch');
+  it('live quotes: cache/DB restore only — no auto network after hydrate', () => {
+    const sim = read('components/MarketSimulator.tsx');
+    expect(sim).toContain('seedQuoteCacheFromPersistedHoldingPrices');
+    expect(sim).toContain('seedQuoteCacheFromMarketQuoteDb');
+    expect(sim).not.toContain('didScheduleStaleRefreshRef');
+    expect(sim).not.toContain('symbolsNeedingLiveFetch');
   });
 
   it('live price refresh: manual force queues through cooldown', () => {
@@ -80,7 +83,7 @@ describe('Investments hub completion (E2E)', () => {
   it('hydrate cache align does not persist stale rows into holding currentValue', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('computeRestoreCachedQuotesPatch');
-    expect(sim).toContain('Holding notionals are updated only from manual/live sync ticks');
+    expect(sim).toContain('Holding notionals are updated only from manual live sync ticks');
     expect(sim).not.toMatch(/patch\.equityUpdates[\s\S]{0,80}batchUpdateHoldingValues/);
   });
 

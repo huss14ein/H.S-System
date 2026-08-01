@@ -3,15 +3,15 @@ import Card from '../components/Card';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 
 const DraggableResizableGrid = lazy(() => import('../components/DraggableResizableGrid'));
+const CashflowChart = lazy(() => import('../components/charts/CashflowChart'));
+const NetWorthCockpit = lazy(() => import('../components/charts/NetWorthCockpit'));
+const PerformanceTreemap = lazy(() => import('../components/charts/PerformanceTreemap'));
 import { Transaction, Page, Account } from '../types';
-import CashflowChart from '../components/charts/CashflowChart';
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
-import NetWorthCockpit from '../components/charts/NetWorthCockpit';
 import { BuildingLibraryIcon } from '../components/icons/BuildingLibraryIcon';
 import { CalendarDaysIcon } from '../components/icons/CalendarDaysIcon';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
-import PerformanceTreemap from '../components/charts/PerformanceTreemap';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { ClipboardDocumentListIcon } from '../components/icons/ClipboardDocumentListIcon';
 import TransactionReviewModal from '../components/TransactionReviewModal';
@@ -811,6 +811,7 @@ const DashboardContent: React.FC<{
                 <div className="section-card flex flex-col min-h-[420px] overflow-hidden border-l-4 border-l-primary/30">
                     <h2 className="section-title text-base mb-2">Net worth</h2>
                     <div className="flex-1 min-h-0">
+                        <Suspense fallback={<SectionLoadingPlaceholder minHeight="360px" labelKey="sectionLoading" />}>
                         <NetWorthCockpit
                             title="Balance sheet"
                             metricsOverride={{
@@ -828,6 +829,7 @@ const DashboardContent: React.FC<{
                                 window.location.hash = 'data-reconciliation';
                             }}
                         />
+                        </Suspense>
                     </div>
                 </div>
             </section>
@@ -854,14 +856,22 @@ const DashboardContent: React.FC<{
                  <div className="section-card-hover flex flex-col min-h-[300px]" onClick={() => setActivePage('Transactions')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Transactions')}>
                     <h3 className="section-title">Monthly Cash Flow</h3>
                     <div className="flex-1 min-h-[280px] rounded-lg overflow-hidden" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                        <DeferredMount minHeight="280px" staggerIndex={1}>
+                        <Suspense fallback={<SectionLoadingPlaceholder minHeight="280px" />}>
                         <CashflowChart data={monthlyCashflowData} />
+                        </Suspense>
+                        </DeferredMount>
                     </div>
                  </div>
                  <div className="section-card-hover flex flex-col min-h-[320px]" onClick={() => setActivePage('Investments')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setActivePage('Investments')}>
                     <h3 className="section-title">Investment Allocation & Performance</h3>
                     <div className="flex-1 min-h-[300px] rounded-lg overflow-hidden w-full" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
                         {investmentTreemapData.length > 0 ? (
+                            <DeferredMount minHeight="300px" staggerIndex={2}>
+                            <Suspense fallback={<SectionLoadingPlaceholder minHeight="300px" />}>
                             <PerformanceTreemap data={investmentTreemapData} />
+                            </Suspense>
+                            </DeferredMount>
                         ) : (
                             <div className="empty-state h-full flex items-center justify-center">No investment data available.</div>
                         )}

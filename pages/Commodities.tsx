@@ -15,7 +15,10 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
+import { applyManualCommodityQuotes } from '../services/applyManualCommodityQuotes';
+import { supabase } from '../services/supabaseClient';
 import { useSelfLearning } from '../context/SelfLearningContext';
+import { MarketDataContext } from '../context/MarketDataContext';
 import { parseMoneyInput, roundQuantity } from '../utils/money';
 import { fetchLiveCommodityValueSar } from '../utils/commodityLiveValue';
 import { useExtendedCanonicalMetrics, pickCommoditiesValueSar, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
@@ -37,6 +40,7 @@ const CommodityHoldingModal: React.FC<{
 }> = ({ isOpen, onClose, onSave, holdingToEdit, sarPerUsd }) => {
     const { formatCurrencyString } = useFormatCurrency();
     const confirmAction = useConfirmAction();
+    const market = useContext(MarketDataContext);
     const [name, setName] = useState<CommodityHolding['name']>('Gold');
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState<CommodityHolding['unit']>('gram');
@@ -146,6 +150,7 @@ const CommodityHoldingModal: React.FC<{
 
         try {
             setIsSubmitting(true);
+            let pendingLiveQuote: { symbol: string; price: number } | null = null;
             if (name !== 'Other') {
                 try {
                     const live = await fetchLiveCommodityValueSar({
@@ -160,6 +165,7 @@ const CommodityHoldingModal: React.FC<{
                         return;
                     }
                     parsedCurrentValue = live.currentValue;
+                    pendingLiveQuote = { symbol: live.symbol, price: live.unitPrice };
                 } catch (fetchErr) {
                     setFormError(formatAiError(fetchErr));
                     return;
@@ -178,6 +184,14 @@ const CommodityHoldingModal: React.FC<{
             if (!ok) return;
             if (holdingToEdit) await onSave({ ...holdingToEdit, ...holdingData });
             else await onSave(holdingData);
+            // Persist quote SOT only after the holding save succeeds — failed saves must not drift KPIs.
+            if (pendingLiveQuote) {
+                applyManualCommodityQuotes({
+                    prices: [pendingLiveQuote],
+                    setSimulatedPrices: market?.setSimulatedPrices,
+                    db: supabase as any,
+                });
+            }
             onClose();
         } catch (error) {
             setFormError(formatUnknownError(error));
@@ -311,6 +325,7 @@ interface CommoditiesProps {
 
 const Commodities: React.FC<CommoditiesProps> = ({ setActivePage, pageAction, clearPageAction }) => {
     const { data, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, applyReconciliationAdjustment } = useContext(DataContext)!;
+    const market = useContext(MarketDataContext);
     const auth = useContext(AuthContext);
     const canRevalue = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { trackAction } = useSelfLearning();
@@ -400,6 +415,11 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage, pageAction, cl
                 
                 if (updates.length > 0) {
                     await batchUpdateCommodityHoldingValues(updates);
+                    applyManualCommodityQuotes({
+                        prices,
+                        setSimulatedPrices: market?.setSimulatedPrices,
+                        db: supabase as any,
+                    });
                     if (updates.length < holdingsForPrices.length) {
                         console.warn(`Updated ${updates.length} of ${holdingsForPrices.length} commodity prices.`);
                     }
