@@ -4025,6 +4025,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         },
     ) => {
         if (!auth?.user) return;
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const userId = auth.user.id;
         const snapshot = dataRef.current;
         const portfolio = (snapshot?.investments ?? []).find((p) => p.id === portfolioId);
         if (!portfolio) return;
@@ -4042,7 +4044,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             addHolding,
             deleteHolding,
             supabase,
-            userId: auth.user.id,
+            userId,
             holdingsBaselineMode: overrides.holdingsBaselineMode ?? 'replay_derived',
             holdingsReplayEvents: overrides.holdingsReplayEvents,
             symbols,
@@ -4064,6 +4066,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         symbols: string[];
     }) => {
         if (!auth?.user) return;
+        const userId = auth.user.id;
         const snapshot = dataRef.current;
         const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
         if (!portfolio) throw new Error('Portfolio not found');
@@ -4086,7 +4089,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
             },
             supabase,
-            userId: auth.user.id,
+            userId,
             onLotsUpdated: (updatedLots) => {
                 applyFinancialDataPatch((prev) => ({
                     ...prev,
@@ -4101,6 +4104,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const backfillRealizedPnLForAllPortfolios = async (): Promise<{ patchedSymbols: number }> => {
         if (!supabase || !auth?.user) return { patchedSymbols: 0 };
+        const db = supabase;
+        const userId = auth.user.id;
         const snap = dataRef.current;
         let patchedSymbols = 0;
         for (const portfolio of snap?.investments ?? []) {
@@ -4115,8 +4120,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
                         return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
                     },
-                    supabase,
-                    userId: auth.user.id,
+                    supabase: db,
+                    userId,
                     onLotsUpdated: (updatedLots) => {
                         applyFinancialDataPatch((prev) => ({
                             ...prev,
@@ -4150,6 +4155,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         linkedSymbol?: string;
     }) => {
         if (!supabase || !auth?.user) return;
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const db = supabase;
+        const userId = auth.user.id;
         if (corporateActionInFlightRef.current) {
             throw new Error('A corporate action is already in progress. Please wait.');
         }
@@ -4179,7 +4187,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             action: args.action,
             linkedSymbol: args.linkedSymbol,
         });
-        const row = withUser({
+        const row = {
             portfolio_id: payload.portfolio_id,
             action_type: payload.action_type,
             symbol: payload.symbol,
@@ -4193,8 +4201,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             metadata: payload.metadata ?? {},
             idempotency_key: payload.idempotency_key,
             status: payload.status ?? 'applied',
-        });
-        const { data: inserted, error } = await supabase.from('corporate_action_events').insert(row).select().single();
+            user_id: userId,
+        };
+        const { data: inserted, error } = await db.from('corporate_action_events').insert(row).select().single();
         if (error) {
             if (error.code === 'PGRST205') {
                 console.warn('corporate_action_events table missing — apply migration 20260706130000_corporate_actions_and_cost_lots.sql');
@@ -4276,13 +4285,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const removeCorporateActionCashDeposits = async (idempotencyKey: string) => {
         if (!supabase || !auth?.user) return;
+        const db = supabase;
+        const userId = auth.user.id;
         const keys = corporateActionCashDepositIdempotencyKeysForEvent(idempotencyKey);
         const snapshot = dataRef.current;
 
-        const { data: dbRows, error: fetchErr } = await supabase
+        const { data: dbRows, error: fetchErr } = await db
             .from('investment_transactions')
             .select('*')
-            .eq('user_id', auth.user.id)
+            .eq('user_id', userId)
             .eq('type', 'deposit')
             .in('idempotency_key', keys);
         if (fetchErr && fetchErr.code !== 'PGRST205') {
@@ -4302,10 +4313,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         for (const deposit of depositsById.values()) {
             if (!deposit.id) continue;
-            const { error } = await supabase
+            const { error } = await db
                 .from('investment_transactions')
                 .delete()
-                .match({ id: deposit.id, user_id: auth.user.id });
+                .match({ id: deposit.id, user_id: userId });
             if (error) {
                 console.warn('Corporate action deposit reversal failed:', error);
                 continue;
@@ -4324,6 +4335,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const reverseCorporateActionEvent = async (eventId: string) => {
         if (!supabase || !auth?.user) return;
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const db = supabase;
+        const userId = auth.user.id;
         if (corporateActionInFlightRef.current) {
             throw new Error('A corporate action is already in progress. Please wait.');
         }
@@ -4349,10 +4363,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Ledger-backed undo: mark original reversed and exclude from replay — do NOT insert an inverse event
         // (that would reverse-split an already-unsplit buy history).
         if (!manualOnly) {
-            const { error: markErr } = await supabase
+            const { error: markErr } = await db
                 .from('corporate_action_events')
                 .update({ status: 'reversed', reversed_by_event_id: null })
-                .match({ id: eventId, user_id: auth.user.id });
+                .match({ id: eventId, user_id: userId });
             if (markErr && markErr.code !== 'PGRST205') throw markErr;
 
             const mergedEvents = (snapshot?.corporateActionEvents ?? []).map((e) =>
@@ -4374,7 +4388,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 action: buildReverseCorporateAction(corporateActionFromEvent(ev)),
                 portfolioId: ev.portfolioId,
             });
-            await insertReconciliationAudit(supabase, auth.user.id, {
+            await insertReconciliationAudit(db, userId, {
                 kind: 'corporate_action',
                 mechanism: 'corporate_action_undo',
                 entityType: 'corporate_action',
@@ -4395,22 +4409,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             action: reverseAction,
             linkedSymbol: ev.linkedSymbol ?? undefined,
         });
-        const reverseRow = withUser({
+        const reverseRow = {
             ...payload,
             idempotency_key: `${payload.idempotency_key}|reverse|${eventId}`,
             status: 'applied',
-        });
-        const { data: inserted, error: insertErr } = await supabase
+            user_id: userId,
+        };
+        const { data: inserted, error: insertErr } = await db
             .from('corporate_action_events')
             .insert(reverseRow)
             .select()
             .single();
         if (insertErr && insertErr.code !== 'PGRST205' && insertErr.code !== '23505') throw insertErr;
 
-        const { error: markErr } = await supabase
+        const { error: markErr } = await db
             .from('corporate_action_events')
             .update({ status: 'reversed', reversed_by_event_id: inserted?.id ?? null })
-            .match({ id: eventId, user_id: auth.user.id });
+            .match({ id: eventId, user_id: userId });
         if (markErr && markErr.code !== 'PGRST205') throw markErr;
 
         const reversalEv = normalizeCorporateActionEventRow(
