@@ -33,7 +33,7 @@ describe('tradePatchAndQuoteSeedCompletion', () => {
     expect(block).toContain('await rebuildHoldingsFromLedgerForSymbols');
     // Rebuild must not live only inside the background lotSyncChain task.
     const rebuildIdx = block.indexOf('await rebuildHoldingsFromLedgerForSymbols');
-    const chainIdx = block.indexOf('lotSyncChainRef.current = lotSyncChainRef.current.then(runPostEditWork');
+    const chainIdx = block.indexOf('enqueueLotSyncWork(runPostEditWork)');
     expect(rebuildIdx).toBeGreaterThan(-1);
     expect(chainIdx).toBeGreaterThan(rebuildIdx);
     expect(block.slice(0, chainIdx)).toContain('await rebuildHoldingsFromLedgerForSymbols');
@@ -50,5 +50,17 @@ describe('tradePatchAndQuoteSeedCompletion', () => {
     expect(sim).not.toMatch(
       /if \(!data \|\| showHydrateBanner \|\| didAlignHoldingsFromCacheRef\.current\) return;/,
     );
+  });
+
+  it('applyFinancialDataPatch drops stale startTransition commits via epoch guard', () => {
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('dataPatchEpochRef');
+    expect(ctx).toContain('epoch === dataPatchEpochRef.current ? next : prev');
+    expect(ctx).toContain('enqueueLotSyncWork');
+    expect(ctx).toContain('await enqueueLotSyncWork(async () => {');
+    const sealStart = ctx.indexOf('const sealHoldingsBookAfterTrade = ');
+    const sealBody = ctx.slice(sealStart, sealStart + 700);
+    expect(sealBody).toContain('scheduleIdleWork(write, 0)');
+    expect(sealBody).not.toContain('4000');
   });
 });

@@ -358,7 +358,7 @@ describe('tradeHoldingsIsolation', () => {
     expect(buySellBlock).not.toContain('Promise.all([cashWrite, positionWrite])');
     const afterBlock = ctx.slice(buySellEnd, buySellEnd + 3500);
     expect(afterBlock).toContain('syncLotsAfterTrade');
-    expect(afterBlock).toContain('lotSyncChainRef');
+    expect(afterBlock).toContain('enqueueLotSyncWork(runLotSync)');
     expect(ctx).toContain('existingLots: (snapshot?.investmentCostLots');
     expect(buySellBlock).not.toContain('await yieldToMain()');
     expect(buySellBlock).not.toContain('persistHoldingsFromReplayMap');
@@ -368,10 +368,12 @@ describe('tradeHoldingsIsolation', () => {
     const ctx = read('context/DataContext.tsx');
     const sealStart = ctx.indexOf('const sealHoldingsBookAfterTrade = ');
     expect(sealStart).toBeGreaterThan(-1);
-    const sealBody = ctx.slice(sealStart, sealStart + 550);
+    const sealBody = ctx.slice(sealStart, sealStart + 650);
     expect(sealBody).toContain('bumpHoldingsBookGeneration');
     expect(sealBody).toContain('writeWorkspaceHydrateCache');
     expect(sealBody).toContain('defer');
+    expect(sealBody).toContain('scheduleIdleWork(write, 0)');
+    expect(sealBody).not.toContain('4000');
     expect(ctx).toContain('Skipping stale investments hydrate');
     expect(ctx).toContain('investmentsStale ? prev.investments');
   });

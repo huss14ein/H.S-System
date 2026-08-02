@@ -984,12 +984,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const uiAcksPersistChainRef = useRef(Promise.resolve());
     /** Serialize background cost-lot sync so overlapping trades cannot persist stale FIFO snapshots. */
     const lotSyncChainRef = useRef(Promise.resolve());
+    /** Monotonic epoch so stale startTransition setData cannot rewind React state or dataRef. */
+    const dataPatchEpochRef = useRef(0);
     /** Eagerly patch dataRef before setState so sequential awaits (recordTrade → holdings patch) see fresh state. */
     const applyFinancialDataPatch = (recipe: (prev: FinancialData) => FinancialData) => {
         const next = recipe(dataRef.current);
         dataRef.current = next;
+        const epoch = ++dataPatchEpochRef.current;
         startTransition(() => {
-            setData(next);
+            setData((prev) => (epoch === dataPatchEpochRef.current ? next : prev));
         });
     };
     /** Stable identity for context consumers (behavior only touches refs + setData). */
@@ -997,6 +1000,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         (recipe: (prev: FinancialData) => FinancialData) => applyFinancialDataPatch(recipe),
         [],
     );
+    /** Queue FIFO lot/holdings rebuild work so hydrate backfill cannot clobber in-flight trade lot persists. */
+    const enqueueLotSyncWork = (work: () => Promise<void>): Promise<void> => {
+        const run = async () => {
+            await work();
+        };
+        const queued = lotSyncChainRef.current.then(run, run);
+        lotSyncChainRef.current = queued;
+        return queued;
+    };
 
     /**
      * Optional "foundations" tables (period locks, household members/allocations, docs,
@@ -1042,8 +1054,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 writeWorkspaceHydrateCache(auth.user.id, dataRef.current);
             }
         };
+        // Defer only yields to the next idle/frame — never multi-second delay (reload would paint pre-trade KPIs).
         if (opts?.defer) {
-            scheduleIdleWork(write, 4000);
+            scheduleIdleWork(write, 0);
             return;
         }
         write();
@@ -4108,80 +4121,84 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         symbols: string[];
     }) => {
         if (!auth?.user) return;
-        const snapshot = dataRef.current;
-        const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
-        if (!portfolio) throw new Error('Portfolio not found');
-        const symbols = args.symbols.map((s) => String(s ?? '').trim().toUpperCase()).filter(Boolean);
-        if (symbols.length === 0) throw new Error('Select at least one symbol to rebuild.');
-        await rebuildHoldingsFromLedger({
-            portfolio,
-            investmentTransactions: filterTransactionsForPortfolio(
-                args.portfolioId,
-                snapshot?.investmentTransactions ?? [],
-            ),
-            corporateActionEvents: snapshot?.corporateActionEvents ?? [],
-            symbols,
-            existingLots: (snapshot?.investmentCostLots ?? []).filter((l) => l.portfolioId === args.portfolioId),
-            updateHolding,
-            addHolding,
-            deleteHolding,
-            resolveHolding: (sym) => {
-                const pf = (dataRef.current?.investments ?? []).find((p) => p.id === args.portfolioId);
-                return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
-            },
-            supabase,
-            userId: auth.user.id,
-            onLotsUpdated: (updatedLots) => {
-                applyFinancialDataPatch((prev) => ({
-                    ...prev,
-                    investmentCostLots: [
-                        ...updatedLots,
-                        ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== args.portfolioId),
-                    ],
-                }));
-            },
+        await enqueueLotSyncWork(async () => {
+            const snapshot = dataRef.current;
+            const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
+            if (!portfolio) throw new Error('Portfolio not found');
+            const symbols = args.symbols.map((s) => String(s ?? '').trim().toUpperCase()).filter(Boolean);
+            if (symbols.length === 0) throw new Error('Select at least one symbol to rebuild.');
+            await rebuildHoldingsFromLedger({
+                portfolio,
+                investmentTransactions: filterTransactionsForPortfolio(
+                    args.portfolioId,
+                    snapshot?.investmentTransactions ?? [],
+                ),
+                corporateActionEvents: snapshot?.corporateActionEvents ?? [],
+                symbols,
+                existingLots: (snapshot?.investmentCostLots ?? []).filter((l) => l.portfolioId === args.portfolioId),
+                updateHolding,
+                addHolding,
+                deleteHolding,
+                resolveHolding: (sym) => {
+                    const pf = (dataRef.current?.investments ?? []).find((p) => p.id === args.portfolioId);
+                    return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                },
+                supabase,
+                userId: auth.user.id,
+                onLotsUpdated: (updatedLots) => {
+                    applyFinancialDataPatch((prev) => ({
+                        ...prev,
+                        investmentCostLots: [
+                            ...updatedLots,
+                            ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== args.portfolioId),
+                        ],
+                    }));
+                },
+            });
         });
     };
 
     const backfillRealizedPnLForAllPortfolios = async (): Promise<{ patchedSymbols: number }> => {
         if (!supabase || !auth?.user) return { patchedSymbols: 0 };
-        const snap = dataRef.current;
         let patchedSymbols = 0;
-        for (const portfolio of snap?.investments ?? []) {
-            try {
-                const result = await backfillRealizedPnLForPortfolio({
-                    portfolio,
-                    investmentTransactions: snap?.investmentTransactions ?? [],
-                    corporateActionEvents: snap?.corporateActionEvents ?? [],
-                    updateHolding,
-                    addHolding,
-                    resolveHolding: (sym) => {
-                        const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
-                        return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
-                    },
-                    supabase,
-                    userId: auth.user.id,
-                    onLotsUpdated: (updatedLots) => {
-                        applyFinancialDataPatch((prev) => ({
-                            ...prev,
-                            investmentCostLots: [
-                                ...updatedLots,
-                                ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolio.id),
-                            ],
-                        }));
-                    },
-                });
-                patchedSymbols += result.patchedSymbols;
-            } catch (e) {
-                if (import.meta.env.DEV) {
-                    console.warn(`Realized P/L backfill skipped (${portfolio.name}):`, e);
+        await enqueueLotSyncWork(async () => {
+            const snap = dataRef.current;
+            for (const portfolio of snap?.investments ?? []) {
+                try {
+                    const result = await backfillRealizedPnLForPortfolio({
+                        portfolio,
+                        investmentTransactions: snap?.investmentTransactions ?? [],
+                        corporateActionEvents: snap?.corporateActionEvents ?? [],
+                        updateHolding,
+                        addHolding,
+                        resolveHolding: (sym) => {
+                            const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
+                            return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                        },
+                        supabase,
+                        userId: auth.user.id,
+                        onLotsUpdated: (updatedLots) => {
+                            applyFinancialDataPatch((prev) => ({
+                                ...prev,
+                                investmentCostLots: [
+                                    ...updatedLots,
+                                    ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolio.id),
+                                ],
+                            }));
+                        },
+                    });
+                    patchedSymbols += result.patchedSymbols;
+                } catch (e) {
+                    if (import.meta.env.DEV) {
+                        console.warn(`Realized P/L backfill skipped (${portfolio.name}):`, e);
+                    }
                 }
             }
-        }
-        if (patchedSymbols > 0) {
-            bumpHoldingsBookGeneration();
-            toast(`Synced realized P/L for ${patchedSymbols} symbol(s).`, 'success');
-        }
+            if (patchedSymbols > 0) {
+                bumpHoldingsBookGeneration();
+                toast(`Synced realized P/L for ${patchedSymbols} symbol(s).`, 'success');
+            }
+        });
         return { patchedSymbols };
     };
     backfillRealizedPnLForAllPortfoliosRef.current = backfillRealizedPnLForAllPortfolios;
@@ -5865,8 +5882,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         }
                     }
                 };
-                lotSyncChainRef.current = lotSyncChainRef.current.then(runLotSync, runLotSync);
-                void lotSyncChainRef.current;
+                void enqueueLotSyncWork(runLotSync);
             }
             sealHoldingsBookAfterTrade({ defer: true });
         } catch (error) {
@@ -6238,8 +6254,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 }
             }
         };
-        lotSyncChainRef.current = lotSyncChainRef.current.then(runPostEditWork, runPostEditWork);
-        void lotSyncChainRef.current;
+        void enqueueLotSyncWork(runPostEditWork);
     };
 
     const deleteInvestmentTransaction = async (transactionId: string, opts?: RecordWriteOptions) => {
