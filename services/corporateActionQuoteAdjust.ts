@@ -6,7 +6,7 @@ import type { CorporateAction } from './corporateActions';
 import { splitRatio } from './corporateActions';
 import { canonicalQuoteLookupKey } from './finnhubService';
 
-export type QuotePriceRow = { price: number; change: number; changePercent: number };
+export type QuotePriceRow = { price: number; change?: number; changePercent?: number };
 
 export function splitQuoteAdjustRatio(action: CorporateAction): number | null {
   if (action.type !== 'stock_split' && action.type !== 'reverse_stock_split') return null;
@@ -19,8 +19,8 @@ export function splitQuoteAdjustRatio(action: CorporateAction): number | null {
 export function scaleQuoteRowForSplit(row: QuotePriceRow, ratio: number): QuotePriceRow {
   if (!Number.isFinite(ratio) || ratio <= 0) return row;
   const price = row.price / ratio;
-  const change = row.change / ratio;
-  const changePercent = Number.isFinite(row.changePercent) ? row.changePercent : 0;
+  const change = (Number(row.change) || 0) / ratio;
+  const changePercent = Number.isFinite(row.changePercent) ? (row.changePercent as number) : 0;
   return { price, change, changePercent };
 }
 

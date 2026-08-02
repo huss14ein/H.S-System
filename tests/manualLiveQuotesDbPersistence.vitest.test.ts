@@ -79,6 +79,16 @@ describe('manualLiveQuotesDbPersistence', () => {
     }
   });
 
+  it('MarketDataContext session prices use SimulatedPriceMap (SOT with applyManualCommodityQuotes)', () => {
+    const ctx = read('context/MarketDataContext.tsx');
+    expect(ctx).toContain("import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics'");
+    expect(ctx).toContain('export type SimulatedPrices = SimulatedPriceMap');
+    expect(ctx).not.toMatch(/interface SimulatedPrices \{\s*\[symbol: string\]: \{ price: number; change: number/);
+    expect(read('services/applyManualCommodityQuotes.ts')).toContain(
+      'Dispatch<SetStateAction<SimulatedPriceMap>>',
+    );
+  });
+
   it('UNIFIED + README include market_quote_cache', () => {
     expect(read('supabase/UNIFIED_PRODUCTION_DB_SETUP.sql')).toContain('market_quote_cache');
     expect(read('supabase/UNIFIED_PRODUCTION_DB_SETUP.sql')).toContain('upsert_market_quote_cache');

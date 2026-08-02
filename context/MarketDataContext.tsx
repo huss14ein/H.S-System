@@ -12,10 +12,10 @@ import { mergePriceRefreshScope } from '../services/quoteRefreshQueue';
 import { kickQuoteRefreshNow, registerQuoteCacheSessionSync, clearPendingLiveFetchSymbols } from '../utils/quoteRefreshBridge';
 import { registerCorporateActionQuoteAdjust } from '../utils/corporateActionQuoteBridge';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
 
-interface SimulatedPrices {
-    [symbol: string]: { price: number; change: number; changePercent: number };
-}
+/** Session live/cached quotes — same shape as canonical KPI `SimulatedPriceMap`. */
+export type SimulatedPrices = SimulatedPriceMap;
 
 /** ISO timestamp when each symbol’s quote was last refreshed this session. */
 export type SymbolQuoteTimestamps = Record<string, string>;

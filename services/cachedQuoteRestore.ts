@@ -118,7 +118,7 @@ export function computeRestoreCachedQuotesPatch(
   };
 }
 
-export type SessionQuotePriceRow = { price: number; change: number; changePercent: number };
+export type SessionQuotePriceRow = { price: number; change?: number; changePercent?: number };
 
 /** Merge persisted quote rows into in-memory session prices (cross-tab / visibility sync). */
 export function rehydrateSessionPricesFromQuoteCache(
@@ -130,7 +130,7 @@ export function rehydrateSessionPricesFromQuoteCache(
   let changed = false;
   for (const [k, v] of Object.entries(mapped)) {
     if (!v?.price || v.price <= 0) continue;
-    const row = {
+    const row: SessionQuotePriceRow = {
       price: v.price,
       change: v.change ?? 0,
       changePercent: v.changePercent ?? 0,
@@ -139,8 +139,8 @@ export function rehydrateSessionPricesFromQuoteCache(
     if (
       !prevRow ||
       prevRow.price !== row.price ||
-      prevRow.change !== row.change ||
-      prevRow.changePercent !== row.changePercent
+      (prevRow.change ?? 0) !== (row.change ?? 0) ||
+      (prevRow.changePercent ?? 0) !== (row.changePercent ?? 0)
     ) {
       next[k] = row;
       changed = true;
