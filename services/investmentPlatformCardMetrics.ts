@@ -24,7 +24,8 @@ import {
 } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 
-export type SimulatedPriceMap = Record<string, { price: number; change?: number; changePercent?: number }>;
+export type SimulatedPriceRow = { price: number; change?: number; changePercent?: number };
+export type SimulatedPriceMap = Record<string, SimulatedPriceRow>;
 
 /** Resolve per-share day change from quote row (change or derived from changePercent). */
 export function resolveQuoteChangePerShare(

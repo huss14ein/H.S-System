@@ -18,6 +18,7 @@ import {
   filterNoOpHoldingValueUpdates,
   type HoldingMarketValueUpdate,
 } from './marketSimulatorHoldingPersist';
+import type { SimulatedPriceRow } from './investmentPlatformCardMetrics';
 
 export type CachedSymbolTimestamps = Record<string, string>;
 
@@ -118,7 +119,7 @@ export function computeRestoreCachedQuotesPatch(
   };
 }
 
-export type SessionQuotePriceRow = { price: number; change?: number; changePercent?: number };
+export type SessionQuotePriceRow = SimulatedPriceRow;
 
 /** Merge persisted quote rows into in-memory session prices (cross-tab / visibility sync). */
 export function rehydrateSessionPricesFromQuoteCache(

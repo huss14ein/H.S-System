@@ -72,10 +72,15 @@ describe('manualLiveQuotesDbPersistence', () => {
       expect(afterConfirm).toMatch(
         /if \(!ok\) return;[\s\S]{0,200}await onSave[\s\S]{0,200}applyManualCommodityQuotes/,
       );
+      // Guard against reintroducing persist-before-save (KPI drift on failed save).
+      expect(afterConfirm).not.toMatch(
+        /if \(!ok\) return;[\s\S]{0,120}applyManualCommodityQuotes[\s\S]{0,200}await onSave/,
+      );
       const beforeConfirm = src.slice(0, confirmIdx);
       const submitStart = beforeConfirm.lastIndexOf('const handleSubmit');
       const submitBlock = beforeConfirm.slice(submitStart);
       expect(submitBlock).not.toContain('applyManualCommodityQuotes');
+      expect(submitBlock).toContain('pendingLiveQuote');
     }
   });
 
@@ -87,6 +92,8 @@ describe('manualLiveQuotesDbPersistence', () => {
     expect(read('services/applyManualCommodityQuotes.ts')).toContain(
       'Dispatch<SetStateAction<SimulatedPriceMap>>',
     );
+    expect(read('services/cachedQuoteRestore.ts')).toContain('SessionQuotePriceRow = SimulatedPriceRow');
+    expect(read('services/corporateActionQuoteAdjust.ts')).toContain('QuotePriceRow = SimulatedPriceRow');
   });
 
   it('UNIFIED + README include market_quote_cache', () => {

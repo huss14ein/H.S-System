@@ -5,8 +5,9 @@
 import type { CorporateAction } from './corporateActions';
 import { splitRatio } from './corporateActions';
 import { canonicalQuoteLookupKey } from './finnhubService';
+import type { SimulatedPriceRow } from './investmentPlatformCardMetrics';
 
-export type QuotePriceRow = { price: number; change?: number; changePercent?: number };
+export type QuotePriceRow = SimulatedPriceRow;
 
 export function splitQuoteAdjustRatio(action: CorporateAction): number | null {
   if (action.type !== 'stock_split' && action.type !== 'reverse_stock_split') return null;
