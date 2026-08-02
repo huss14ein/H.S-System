@@ -75,6 +75,11 @@ import {
     parseCalendarDateLocal,
     addMonthsToKey,
 } from '../utils/financialMonth';
+import {
+    budgetCardCategoryNames,
+    coerceBudgetCategorySelection,
+    matchBudgetCardCategory,
+} from '../utils/budgetCardCategories';
 import { sortByNewestFirst } from '../utils/sortRecency';
 import { summarizeIncomeTaxonomy } from '../services/incomeTaxonomy';
 import { computeIncomeStability } from '../services/incomeStability';
@@ -118,14 +123,33 @@ const TransactionModal: React.FC<{
     onSave: (transaction: Omit<Transaction, 'id'> | Transaction) => void;
     onSaveAndTrade: (transaction: Omit<Transaction, 'id'>) => void;
     transactionToEdit: Transaction | null;
-    budgetCategories: string[],
     budgets: Budget[],
     allCategories: string[],
     accounts: Account[],
     existingTransactions: Transaction[],
     sarPerUsd: number;
     monthStartDay: number;
-}> = ({ isOpen, onClose, onSave, onSaveAndTrade, transactionToEdit, budgetCategories, budgets, allCategories, accounts, existingTransactions, sarPerUsd, monthStartDay }) => {
+    mappingUserRole: UserRole;
+    permittedBudgetCategories: string[];
+    sharedBudgetCategories: string[];
+    finalizedNewCategoryNames: string[];
+}> = ({
+    isOpen,
+    onClose,
+    onSave,
+    onSaveAndTrade,
+    transactionToEdit,
+    budgets,
+    allCategories,
+    accounts,
+    existingTransactions,
+    sarPerUsd,
+    monthStartDay,
+    mappingUserRole,
+    permittedBudgetCategories,
+    sharedBudgetCategories,
+    finalizedNewCategoryNames,
+}) => {
     const { data } = useContext(DataContext)!;
     const confirmAction = useConfirmAction();
     const { aiActionsEnabled } = useAI();
@@ -149,7 +173,7 @@ const TransactionModal: React.FC<{
     const debouncedAmount = useDebouncedValue(amount, 300);
     const [category, setCategory] = useState(allCategories[0] || '');
     const [subcategory, setSubcategory] = useState('');
-    const [budgetCategory, setBudgetCategory] = useState(budgetCategories[0] || '');
+    const [budgetCategory, setBudgetCategory] = useState('');
     const [type, setType] = useState<'income' | 'expense'>('expense');
     const [accountId, setAccountId] = useState('');
     const [transactionNature, setTransactionNature] = useState<'Fixed' | 'Variable'>('Variable');
@@ -162,6 +186,27 @@ const TransactionModal: React.FC<{
         { category: '', amount: '' },
         { category: '', amount: '' },
     ]);
+
+    const categoriesForTransactionDate = React.useCallback(
+        (ymd: string) =>
+            budgetCardCategoryNames({
+                budgets,
+                viewKey: financialMonthKey(parseCalendarDateLocal(ymd || new Date().toISOString().slice(0, 10)), monthStartDay),
+                monthStartDay,
+                userRole: mappingUserRole,
+                permittedCategories: permittedBudgetCategories,
+                sharedCategories: sharedBudgetCategories,
+                finalizedNewCategoryNames,
+            }),
+        [
+            budgets,
+            monthStartDay,
+            mappingUserRole,
+            permittedBudgetCategories,
+            sharedBudgetCategories,
+            finalizedNewCategoryNames,
+        ],
+    );
     const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
     const [aiSuggestionNote, setAiSuggestionNote] = useState<{ tone: 'info' | 'success' | 'warning'; text: string } | null>(null);
 
@@ -191,14 +236,16 @@ const TransactionModal: React.FC<{
 
     React.useEffect(() => {
         if (transactionToEdit) {
-            setDate(new Date(transactionToEdit.date).toISOString().split('T')[0]);
+            const editDate = new Date(transactionToEdit.date).toISOString().split('T')[0];
+            const cardCategories = categoriesForTransactionDate(editDate);
+            setDate(editDate);
             setDescription(transactionToEdit.description);
             setAmount(String(Math.abs(transactionToEdit.amount)));
             setCategory(transactionToEdit.type === 'income' && !incomeCategoryOptions.includes(transactionToEdit.category)
                 ? (incomeCategoryOptions[0] || 'Salary')
                 : transactionToEdit.category);
             setSubcategory(transactionToEdit.subcategory || '');
-            setBudgetCategory(transactionToEdit.budgetCategory || '');
+            setBudgetCategory(coerceBudgetCategorySelection(transactionToEdit.budgetCategory, cardCategories, true));
             setType(transactionToEdit.type);
             setAccountId(transactionToEdit.accountId);
             setTransactionNature(transactionToEdit.transactionNature || 'Variable');
@@ -209,24 +256,29 @@ const TransactionModal: React.FC<{
             if (sl && sl.length > 0) {
                 setUseSplitExpense(true);
                 setSplitRows(
-                    sl.map((x) => ({ category: x.category, amount: String(x.amount) })).concat({ category: '', amount: '' })
+                    sl.map((x) => ({
+                        category: coerceBudgetCategorySelection(x.category, cardCategories, true),
+                        amount: String(x.amount),
+                    })).concat({ category: '', amount: '' })
                 );
             } else {
                 setUseSplitExpense(false);
                 setSplitRows([
-                    { category: budgetCategories[0] || 'Food and Groceries', amount: '' },
-                    { category: budgetCategories[1] || 'Transportation', amount: '' },
+                    { category: cardCategories[0] || '', amount: '' },
+                    { category: cardCategories[1] || cardCategories[0] || '', amount: '' },
                 ]);
             }
         } else {
+            const today = new Date().toISOString().split('T')[0];
+            const cardCategories = categoriesForTransactionDate(today);
             const learnedAccount = getLearnedDefault('transaction-add', 'accountId') as string | undefined;
             const learnedType = getLearnedDefault('transaction-add', 'type') as 'income' | 'expense' | undefined;
             const learnedCategory = getLearnedDefault('transaction-add', 'category') as string | undefined;
             const learnedBudgetCat = getLearnedDefault('transaction-add', 'budgetCategory') as string | undefined;
             const validAccount = learnedAccount && accounts.some(a => a.id === learnedAccount) ? learnedAccount : accounts[0]?.id || '';
             const validCategory = learnedCategory && allCategories.includes(learnedCategory) ? learnedCategory : allCategories[0] || 'Groceries';
-            const validBudgetCat = learnedBudgetCat && budgetCategories.includes(learnedBudgetCat) ? learnedBudgetCat : budgetCategories[0] || '';
-            setDate(new Date().toISOString().split('T')[0]);
+            const validBudgetCat = coerceBudgetCategorySelection(learnedBudgetCat, cardCategories, true);
+            setDate(today);
             setDescription('');
             setAmount('');
             setCategory(validCategory);
@@ -240,12 +292,12 @@ const TransactionModal: React.FC<{
             setLinkInstallmentId('');
             setUseSplitExpense(false);
             setSplitRows([
-                { category: budgetCategories[0] || 'Food and Groceries', amount: '' },
-                { category: budgetCategories[1] || 'Transportation', amount: '' },
+                { category: cardCategories[0] || '', amount: '' },
+                { category: cardCategories[1] || cardCategories[0] || '', amount: '' },
             ]);
         }
         setAiSuggestionNote(null);
-    }, [transactionToEdit, isOpen, budgetCategories, allCategories, accounts, incomeCategoryOptions, getLearnedDefault]);
+    }, [transactionToEdit, isOpen, categoriesForTransactionDate, allCategories, accounts, incomeCategoryOptions, getLearnedDefault]);
 
     React.useEffect(() => {
         const loadInstallmentOptions = async () => {
@@ -293,6 +345,25 @@ const TransactionModal: React.FC<{
         const key = financialMonthKey(parsedDate, monthStartDay);
         return budgetsForFinancialMonthView(budgets, key, monthStartDay);
     }, [budgets, date, monthStartDay]);
+
+    /** Same category names as Budgets page cards for this transaction's financial month. */
+    const mappableBudgetCategories = useMemo(
+        () => categoriesForTransactionDate(date || new Date().toISOString().slice(0, 10)),
+        [categoriesForTransactionDate, date],
+    );
+
+    React.useEffect(() => {
+        if (!isOpen || type !== 'expense') return;
+        setBudgetCategory((prev) => coerceBudgetCategorySelection(prev, mappableBudgetCategories, true));
+        setSplitRows((rows) =>
+            rows.map((row) => ({
+                ...row,
+                category: row.category
+                    ? coerceBudgetCategorySelection(row.category, mappableBudgetCategories, true)
+                    : row.category,
+            })),
+        );
+    }, [isOpen, type, mappableBudgetCategories]);
 
     const transactionFinancialMonthBounds = useMemo(() => {
         const parsedDate = parseCalendarDateLocal(date || new Date().toISOString().slice(0, 10));
@@ -585,22 +656,10 @@ const TransactionModal: React.FC<{
         }
     };
 
-    /** Budget select only lists `budgetCategories`; never set state to a value not in that list. */
+    /** Budget select only lists Budgets-page card categories; never set state to a value not in that list. */
     const applyBudgetForSuggestedCategory = (suggestedCat: string) => {
-        if (budgetCategories.length === 0) {
-            setBudgetCategory('');
-            return;
-        }
-        if (budgetCategories.includes(suggestedCat)) {
-            setBudgetCategory(suggestedCat);
-            return;
-        }
-        const matching = budgetCategories.find(
-            (bc) =>
-                bc.toLowerCase().includes(suggestedCat.toLowerCase()) ||
-                suggestedCat.toLowerCase().includes(bc.toLowerCase())
-        );
-        if (matching) setBudgetCategory(matching);
+        const matched = matchBudgetCardCategory(suggestedCat, mappableBudgetCategories);
+        setBudgetCategory(matched ?? (mappableBudgetCategories[0] || ''));
     };
 
     const handleSuggestCategory = async () => {
@@ -608,7 +667,7 @@ const TransactionModal: React.FC<{
         setIsSuggestingCategory(true);
         setAiSuggestionNote(null);
         try {
-            const categoriesToUse = budgetCategories.length > 0 ? budgetCategories : allCategories;
+            const categoriesToUse = mappableBudgetCategories.length > 0 ? mappableBudgetCategories : allCategories;
             if (!aiActionsEnabled) {
                 const fallback = suggestCategoryLocally(description);
                 const matched = fallback ? matchToAllowedCategory(fallback, allCategories) : null;
@@ -759,13 +818,13 @@ const TransactionModal: React.FC<{
                                 id="budget-category"
                                 value={budgetCategory}
                                 onChange={(e) => setBudgetCategory(e.target.value)}
-                                required={budgetCategories.length > 0}
+                                required={mappableBudgetCategories.length > 0}
                                 className="w-full p-2 border border-gray-300 rounded-md"
                             >
                                 <option value="">
-                                    {budgetCategories.length > 0 ? 'Select budget category' : '— No budget categories —'}
+                                    {mappableBudgetCategories.length > 0 ? 'Select budget category' : '— No budget categories —'}
                                 </option>
-                                {budgetCategories.map((c) => (
+                                {mappableBudgetCategories.map((c) => (
                                     <option key={c} value={c}>
                                         {c}
                                     </option>
@@ -875,7 +934,7 @@ const TransactionModal: React.FC<{
                                                 }}
                                                 className="flex-1 min-w-[140px] p-2 border rounded-md text-sm"
                                             >
-                                                {budgetCategories.map((c) => (
+                                                {mappableBudgetCategories.map((c) => (
                                                     <option key={c} value={c}>
                                                         {c}
                                                     </option>
@@ -921,7 +980,7 @@ const TransactionModal: React.FC<{
                                     <button
                                         type="button"
                                         className="text-sm text-primary font-medium"
-                                        onClick={() => setSplitRows([...splitRows, { category: budgetCategories[0] || '', amount: '' }])}
+                                        onClick={() => setSplitRows([...splitRows, { category: mappableBudgetCategories[0] || '', amount: '' }])}
                                     >
                                         + Add split line
                                     </button>
@@ -932,13 +991,13 @@ const TransactionModal: React.FC<{
                                     type="button"
                                     className="text-sm text-primary font-medium"
                                     onClick={() => {
-                                        const firstCat = String(budgetCategory || '').trim() || (budgetCategories[0] || '');
+                                        const firstCat = String(budgetCategory || '').trim() || (mappableBudgetCategories[0] || '');
                                         const firstRemainingSar = Math.max(0, remainingByCategory.get(firstCat) ?? 0);
                                         const firstAmountInAccountCur = selectedAccountCurrency === 'SAR'
                                             ? firstRemainingSar
                                             : fromSAR(firstRemainingSar, selectedAccountCurrency, sarPerUsd);
                                         const secondAmount = Math.max(0, Math.abs(Number(amount) || 0) - firstAmountInAccountCur);
-                                        const fallbackSecond = budgetCategories.find((c) => c !== firstCat) || firstCat;
+                                        const fallbackSecond = mappableBudgetCategories.find((c) => c !== firstCat) || firstCat;
                                         setUseSplitExpense(true);
                                         setSplitRows([
                                             { category: firstCat, amount: firstAmountInAccountCur > 0 ? firstAmountInAccountCur.toFixed(2) : '' },
@@ -1659,12 +1718,34 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         (): string[] => Array.from(new Set(scopedCashTransactions.map((t) => t.category))),
         [scopedCashTransactions],
     );
+    const finalizedNewCategoryNames = useMemo(
+        () =>
+            (data?.budgetRequests ?? [])
+                .filter((r) => r.status === 'Finalized' && r.requestType === 'NewCategory')
+                .map((r) => String(r.categoryName || '').trim())
+                .filter(Boolean),
+        [data?.budgetRequests],
+    );
+    /** Same names as Budgets page cards for the current financial month (not all historical budget rows). */
     const budgetCategories = useMemo(() => {
-        const ownCategories = (data?.budgets ?? []).map(b => b.category);
-        if (userRole === 'Admin') return ownCategories;
-        const allowedSet = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
-        return Array.from(new Set([...ownCategories.filter(c => allowedSet.has(c)), ...sharedBudgetCategories]));
-    }, [data?.budgets, userRole, permittedBudgetCategories, sharedBudgetCategories]);
+        const viewKey = financialMonthKey(new Date(), monthStartDay);
+        return budgetCardCategoryNames({
+            budgets: data?.budgets ?? [],
+            viewKey,
+            monthStartDay,
+            userRole,
+            permittedCategories: permittedBudgetCategories,
+            sharedCategories: sharedBudgetCategories,
+            finalizedNewCategoryNames,
+        });
+    }, [
+        data?.budgets,
+        monthStartDay,
+        userRole,
+        permittedBudgetCategories,
+        sharedBudgetCategories,
+        finalizedNewCategoryNames,
+    ]);
 
     const transactionValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
@@ -2549,13 +2630,16 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 onSave={handleSaveTransaction}
                 onSaveAndTrade={handleSaveAndTrade}
                 transactionToEdit={transactionToEdit} 
-                budgetCategories={budgetCategories}
                 budgets={data?.budgets ?? []}
                 allCategories={allCategories}
                 accounts={availableAccounts}
                 existingTransactions={scopedCashTransactions}
                 sarPerUsd={sarPerUsd}
                 monthStartDay={monthStartDay}
+                mappingUserRole={userRole}
+                permittedBudgetCategories={permittedBudgetCategories}
+                sharedBudgetCategories={sharedBudgetCategories}
+                finalizedNewCategoryNames={finalizedNewCategoryNames}
             />
              <DeleteConfirmationModal
                 isOpen={!!itemToDelete}

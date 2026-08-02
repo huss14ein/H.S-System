@@ -22,6 +22,11 @@ import {
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
+import {
+  financialMonthKey,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+import { budgetCardCategoryNames } from '../utils/budgetCardCategories';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -78,10 +83,21 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   );
   const selectedAccountCurrency = selectedAccountObj?.currency === 'USD' ? 'USD' : 'SAR';
 
-  const budgetCategoryOptions = useMemo(
-    () => Array.from(new Set((data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [data?.budgets],
-  );
+  const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+  const budgetCategoryOptions = useMemo(() => {
+    const viewKey = financialMonthKey(new Date(), monthStartDay);
+    const finalizedNewCategoryNames = (data?.budgetRequests ?? [])
+      .filter((r) => r.status === 'Finalized' && r.requestType === 'NewCategory')
+      .map((r) => String(r.categoryName || '').trim())
+      .filter(Boolean);
+    return budgetCardCategoryNames({
+      budgets: data?.budgets ?? [],
+      viewKey,
+      monthStartDay,
+      userRole: 'Admin',
+      finalizedNewCategoryNames,
+    });
+  }, [data?.budgets, data?.budgetRequests, monthStartDay]);
   const transactionCategoryOptions = useMemo(() => {
     const existing = (data?.transactions ?? []).map((t) => String(t.category || '').trim()).filter(Boolean);
     const extracted = extractedTransactions.map((t) => String(t.category || '').trim()).filter(Boolean);
@@ -96,9 +112,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   }, [selectedAccountObj, activeTab]);
 
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
-    const budgetCategoryNames = Array.from(
-      new Set((data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean)),
-    );
+    const budgetCategoryNames = budgetCategoryOptions;
     const userHistory = data?.transactions ?? [];
     return rows.map((tx) => {
       const mapped = categorizeImportedTransaction(tx, { budgetCategoryNames, userHistory });
@@ -108,7 +122,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         budgetCategory: mapped.budgetCategory ?? tx.budgetCategory,
       };
     });
-  }, [data?.budgets, data?.transactions]);
+  }, [budgetCategoryOptions, data?.transactions]);
   const setupValidationWarnings = useMemo(() => {
     const warnings: string[] = [];
     if ((activeTab === 'bank' || activeTab === 'sms') && bankAccounts.length === 0) {
