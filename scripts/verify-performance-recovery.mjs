@@ -49,6 +49,7 @@ const steps = [
       'tests/quoteRefreshCooldown.vitest.test.ts',
       'tests/manualLiveQuotesDbPersistence.vitest.test.ts',
       'tests/simulatedPriceMapAndCommodityPersistCompletion.vitest.test.ts',
+      'tests/tradePatchAndQuoteSeedCompletion.vitest.test.ts',
       'tests/holdingMarketPricePersistence.vitest.test.ts',
     ],
   },

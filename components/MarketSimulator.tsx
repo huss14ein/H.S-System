@@ -106,6 +106,8 @@ const MarketSimulator: React.FC = () => {
     const previousPricesRef = useRef<Record<string, number>>({});
     const didBootstrapSessionCacheRef = useRef(false);
     const didAlignHoldingsFromCacheRef = useRef(false);
+    /** User id used for the last market_quote_cache seed — null means local-only (retry when auth ready). */
+    const lastQuoteDbSeedUserIdRef = useRef<string | null>(null);
     const tickInFlightRef = useRef(false);
     /** Symbols left after per-tick cap — drained via queued refresh scopes (manual refresh only). */
     const pendingLiveFetchSymbolsRef = useRef<string[]>([]);
@@ -134,16 +136,30 @@ const MarketSimulator: React.FC = () => {
     /** After hydrate, restore quotes from DB + local cache — never auto-hit live APIs. */
     useEffect(() => {
         const { data, showHydrateBanner } = dataContext ?? {};
-        if (!data || showHydrateBanner || didAlignHoldingsFromCacheRef.current) return;
+        const authUserId = auth?.user?.id ?? null;
+        if (!data || showHydrateBanner) return;
+        // Re-run when auth becomes ready so market_quote_cache can merge (local-only seed must not lock out DB).
+        if (
+            didAlignHoldingsFromCacheRef.current &&
+            lastQuoteDbSeedUserIdRef.current === authUserId
+        ) {
+            return;
+        }
 
         let cancelled = false;
         const cancelIdle = scheduleIdleWorkAsync(async () => {
             await waitUntilBackgroundWorkResumed();
-            if (cancelled || didAlignHoldingsFromCacheRef.current) return;
+            if (cancelled) return;
+            if (
+                didAlignHoldingsFromCacheRef.current &&
+                lastQuoteDbSeedUserIdRef.current === (contextRef.current.auth?.user?.id ?? null)
+            ) {
+                return;
+            }
             // 1) Holdings.current_price from Supabase → localStorage
             let rows = seedQuoteCacheFromPersistedHoldingPrices(getPersonalInvestments(data)).rows;
             // 2) market_quote_cache (watchlist / prior manual syncs) → localStorage
-            const userId = contextRef.current.auth?.user?.id;
+            const userId = contextRef.current.auth?.user?.id ?? null;
             if (supabase && userId) {
                 const fromDb = await seedQuoteCacheFromMarketQuoteDb(supabase as any, userId);
                 if (!cancelled && fromDb.changed) rows = fromDb.rows;
@@ -152,6 +168,7 @@ const MarketSimulator: React.FC = () => {
             const patch = computeRestoreCachedQuotesPatch(data, sarPerUsd, rows);
             if (!patch.hasCache) {
                 didAlignHoldingsFromCacheRef.current = true;
+                lastQuoteDbSeedUserIdRef.current = userId;
                 return;
             }
             applyPricesInBackground(() => {
@@ -187,6 +204,7 @@ const MarketSimulator: React.FC = () => {
             // Holding notionals are updated only from manual live sync ticks — not cache hydrate.
             // Session simulatedPrices (above) is enough for canonical KPI read of commodities.
             didAlignHoldingsFromCacheRef.current = true;
+            lastQuoteDbSeedUserIdRef.current = userId;
         }, 1500);
 
         return () => {

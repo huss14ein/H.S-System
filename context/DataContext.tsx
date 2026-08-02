@@ -5763,14 +5763,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             /**
              * Position book: incremental mutation of the traded symbol only.
-             * Cash + holding writes run in parallel after the ledger insert.
+             * Cash then holding writes are sequential so applyFinancialDataPatch cannot
+             * schedule a stale setData snapshot that drops the other slice from React state.
              * Never run portfolio-wide persistHoldingsFromReplayMap after buy/sell.
              */
             if (tradeData.type === 'buy' || tradeData.type === 'sell') {
-                const cashWrite = applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
+                await applyInvestmentAccountDeltaForTrade(accountIdForInsert, investmentBalanceDelta, {
                     includeTransaction: newTransaction ?? undefined,
                 });
-                const positionWrite = applyPositionDeltaForTrade({
+                const deltaResult = await applyPositionDeltaForTrade({
                     portfolioId: portfolio.id,
                     symbol: normalizedSymbol,
                     side: tradeData.type,
@@ -5787,7 +5788,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     addHolding,
                     deleteHolding,
                 });
-                const [, deltaResult] = await Promise.all([cashWrite, positionWrite]);
                 positionDeltaOut = deltaResult.positionDelta;
 
                 if (tradeData.type === 'buy') {
@@ -6158,19 +6158,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const portfolioIdForRebuild = normalized.portfolioId;
         const symbolForRebuild = normalized.symbol;
         const userIdForEdit = auth.user.id;
+        // Holdings qty/avgCost must be current before return — canonical KPIs read them immediately.
+        if (
+            isTradeEdit &&
+            portfolioIdForRebuild &&
+            symbolForRebuild &&
+            symbolForRebuild !== 'CASH'
+        ) {
+            await rebuildHoldingsFromLedgerForSymbols({
+                portfolioId: portfolioIdForRebuild,
+                symbols: [String(symbolForRebuild)],
+            });
+            sealHoldingsBookAfterTrade({ defer: true });
+        }
         const runPostEditWork = async () => {
             try {
-                if (
-                    isTradeEdit &&
-                    portfolioIdForRebuild &&
-                    symbolForRebuild &&
-                    symbolForRebuild !== 'CASH'
-                ) {
-                    await rebuildHoldingsFromLedgerForSymbols({
-                        portfolioId: portfolioIdForRebuild,
-                        symbols: [String(symbolForRebuild)],
-                    });
-                }
                 const editIdempotency = `inv-tx-edit|${tx.id}|${String(normalized.date).slice(0, 10)}|${total}|${Date.now()}`;
                 const { data: editAdj } = await insertReconciliationAdjustment(db, userIdForEdit, {
                     mechanism,
@@ -6224,12 +6226,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             : prev.reconciliationAuditEvents,
                     }));
                 }
-                sealHoldingsBookAfterTrade({ defer: true });
             } catch (postEditErr) {
-                console.warn('Background post-edit sync failed:', postEditErr);
+                console.warn('Background post-edit audit failed:', postEditErr);
                 try {
                     toast(
-                        `Trade saved, but holdings sync is still running (${formatUnknownError(postEditErr, 'sync failed')}). Refresh if quantities look stale.`,
+                        `Trade saved; reconciliation audit is still catching up (${formatUnknownError(postEditErr, 'audit failed')}).`,
                         'warning',
                     );
                 } catch {
