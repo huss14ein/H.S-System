@@ -66,6 +66,19 @@ describe('budgetCardCategoryNames', () => {
     expect(names).toEqual(['Pocket Money', 'Rent', 'Shared Health']);
     expect(names).not.toContain('Shopping');
   });
+
+  it('for Restricted role includes finalized NewCategory cards even when not in permitted list', () => {
+    const names = budgetCardCategoryNames({
+      budgets: [{ category: 'Rent', year: 2026, month: 8, period: 'monthly', limit: 5000 }],
+      viewKey,
+      monthStartDay: 1,
+      userRole: 'Restricted',
+      permittedCategories: ['Rent'],
+      sharedCategories: [],
+      finalizedNewCategoryNames: ['School Uniforms'],
+    });
+    expect(names).toEqual(['Rent', 'School Uniforms']);
+  });
 });
 
 describe('matchBudgetCardCategory', () => {

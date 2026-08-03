@@ -17,4 +17,13 @@ describe('budget card category surface coverage', () => {
     expect(read('pages/StatementUpload.tsx')).toContain('budgetCardCategoryNames');
     expect(read('pages/Dashboard.tsx')).toContain('budgetCardCategoryNames');
   });
+
+  it('Statement Upload and Dashboard pass mapping governance (not hardcoded Admin)', () => {
+    const statement = read('pages/StatementUpload.tsx');
+    const dashboard = read('pages/Dashboard.tsx');
+    expect(statement).toContain('useBudgetCardMappingGovernance');
+    expect(dashboard).toContain('useBudgetCardMappingGovernance');
+    expect(statement).not.toMatch(/userRole:\s*'Admin'/);
+    expect(dashboard).not.toMatch(/userRole:\s*'Admin'/);
+  });
 });

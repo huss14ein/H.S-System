@@ -72,6 +72,7 @@ import {
     financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
 import { budgetCardCategoryNames } from '../utils/budgetCardCategories';
+import { useBudgetCardMappingGovernance } from '../hooks/useBudgetCardMappingGovernance';
 import { buildPersonalInvestmentTreemapRows } from '../services/wealthSummaryReportModel';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
@@ -281,6 +282,11 @@ const DashboardContent: React.FC<{
     const kpisPending = Boolean(workingData && !kpiSnapshot);
     const liquidCashSarTop = kpiSnapshot?.liquidCashSar ?? 0;
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+    const {
+        userRole: budgetMappingUserRole,
+        permittedCategories: budgetMappingPermittedCategories,
+        sharedCategories: budgetMappingSharedCategories,
+    } = useBudgetCardMappingGovernance();
     const kpiDensity = 'compact' as const;
 
     useEffect(() => {
@@ -943,7 +949,9 @@ const DashboardContent: React.FC<{
                         budgets: data?.budgets ?? [],
                         viewKey: financialMonthKey(new Date(), monthStartDay),
                         monthStartDay,
-                        userRole: 'Admin',
+                        userRole: budgetMappingUserRole,
+                        permittedCategories: budgetMappingPermittedCategories,
+                        sharedCategories: budgetMappingSharedCategories,
                         finalizedNewCategoryNames: (data?.budgetRequests ?? [])
                             .filter((r) => r.status === 'Finalized' && r.requestType === 'NewCategory')
                             .map((r) => String(r.categoryName || '').trim())

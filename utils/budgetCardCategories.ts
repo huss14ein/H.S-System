@@ -69,10 +69,9 @@ export function budgetCardCategoryNames(args: BudgetCardCategoryOptionsArgs): st
     names.add(cat);
   }
 
+  // Match Budgets page: finalized NewCategory cards are shown without a permission gate.
   for (const cat of finalized) {
-    if (isAdmin || permitted.includes(cat) || shared.includes(cat) || permitted.length === 0) {
-      names.add(cat);
-    }
+    names.add(cat);
   }
 
   return Array.from(names).sort((a, b) => a.localeCompare(b));

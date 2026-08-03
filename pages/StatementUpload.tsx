@@ -27,6 +27,7 @@ import {
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
 import { budgetCardCategoryNames } from '../utils/budgetCardCategories';
+import { useBudgetCardMappingGovernance } from '../hooks/useBudgetCardMappingGovernance';
 
 interface StatementUploadProps {
   setActivePage?: (page: Page) => void;
@@ -84,6 +85,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   const selectedAccountCurrency = selectedAccountObj?.currency === 'USD' ? 'USD' : 'SAR';
 
   const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+  const {
+    userRole: budgetMappingUserRole,
+    permittedCategories: budgetMappingPermittedCategories,
+    sharedCategories: budgetMappingSharedCategories,
+  } = useBudgetCardMappingGovernance();
   const budgetCategoryOptions = useMemo(() => {
     const viewKey = financialMonthKey(new Date(), monthStartDay);
     const finalizedNewCategoryNames = (data?.budgetRequests ?? [])
@@ -94,10 +100,19 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       budgets: data?.budgets ?? [],
       viewKey,
       monthStartDay,
-      userRole: 'Admin',
+      userRole: budgetMappingUserRole,
+      permittedCategories: budgetMappingPermittedCategories,
+      sharedCategories: budgetMappingSharedCategories,
       finalizedNewCategoryNames,
     });
-  }, [data?.budgets, data?.budgetRequests, monthStartDay]);
+  }, [
+    data?.budgets,
+    data?.budgetRequests,
+    monthStartDay,
+    budgetMappingUserRole,
+    budgetMappingPermittedCategories,
+    budgetMappingSharedCategories,
+  ]);
   const transactionCategoryOptions = useMemo(() => {
     const existing = (data?.transactions ?? []).map((t) => String(t.category || '').trim()).filter(Boolean);
     const extracted = extractedTransactions.map((t) => String(t.category || '').trim()).filter(Boolean);
