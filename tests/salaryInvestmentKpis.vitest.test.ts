@@ -1,9 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeSalaryInvestmentKpis } from '../services/salaryInvestmentKpis';
 import { normalizeSalaryInvestmentTargets } from '../services/salaryInvestmentSettings';
 
 describe('salary investment KPIs', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('computes salary-funded deposits, deployment, idle broker cash, and history', () => {
+    // Fixtures are dated July 2026; freeze "now" so current financial month matches.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12, 0, 0));
     const data = {
       settings: {
         monthStartDay: 1,
@@ -75,6 +82,8 @@ describe('salary investment KPIs', () => {
   });
 
   it('proportional funded-not-deployed when mixed salary and non-salary deposits', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12, 0, 0));
     const data = {
       settings: {
         monthStartDay: 1,
@@ -117,6 +126,8 @@ describe('salary investment KPIs', () => {
   });
 
   it('does not treat broker platform id as cash funding fallback for unlinked deposits', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12, 0, 0));
     const data = {
       settings: { monthStartDay: 1 },
       accounts: [
