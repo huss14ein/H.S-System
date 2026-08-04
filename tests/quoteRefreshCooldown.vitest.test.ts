@@ -5,6 +5,7 @@ import {
   quoteRefreshCooldownRemainingMs,
   startQuoteRefreshCooldown,
   resetQuoteRefreshCooldownForTests,
+  subscribeQuoteRefreshCooldownEnd,
   SAHMK_RATE_LIMIT_COOLDOWN_MS,
 } from '../services/quoteRefreshCooldown';
 
@@ -40,6 +41,20 @@ describe('quoteRefreshCooldown', () => {
     expect(isQuoteRefreshInCooldown('sahmk')).toBe(true);
     expect(isQuoteRefreshInCooldown('default')).toBe(false);
     expect(isQuoteRefreshInCooldown()).toBe(true); // any
+  });
+
+  it('notifies when the earlier provider clears while another is still cooling', () => {
+    const onEnd = vi.fn();
+    subscribeQuoteRefreshCooldownEnd(onEnd);
+    startQuoteRefreshCooldown(10_000, 'default');
+    startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS, 'sahmk');
+    vi.advanceTimersByTime(10_500);
+    expect(onEnd).toHaveBeenCalledTimes(1);
+    expect(isQuoteRefreshInCooldown('default')).toBe(false);
+    expect(isQuoteRefreshInCooldown('sahmk')).toBe(true);
+    vi.advanceTimersByTime(SAHMK_RATE_LIMIT_COOLDOWN_MS);
+    expect(onEnd).toHaveBeenCalledTimes(2);
+    expect(isQuoteRefreshInCooldown()).toBe(false);
   });
 
   it('detects rate-limit style errors', () => {

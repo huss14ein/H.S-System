@@ -232,12 +232,18 @@ const MarketSimulator: React.FC = () => {
                 pendingLiveFetchSymbolsRef.current = [];
                 return;
             }
-            const pending = pendingLiveFetchSymbolsRef.current;
+            const pending = [...pendingLiveFetchSymbolsRef.current];
             if (pending.length === 0) return;
-            pendingLiveFetchSymbolsRef.current = [];
+            // Default still cooling → Finnhub path blocked; wait for next provider-end notify.
+            if (isQuoteRefreshInCooldown('default')) return;
+            const drainNow = isQuoteRefreshInCooldown('sahmk')
+                ? pending.filter((s) => !isTadawulQuoteSymbol(s))
+                : pending;
+            if (drainNow.length === 0) return;
+            pendingLiveFetchSymbolsRef.current = pending.filter((s) => !drainNow.includes(s));
             bump({
                 kind: 'symbols',
-                symbols: [...pending],
+                symbols: drainNow,
                 forceFetch: true,
                 manual: true,
                 silent: true,
@@ -415,7 +421,7 @@ const MarketSimulator: React.FC = () => {
                     const tadawulOnly =
                         mergedFetch.length > 0 && mergedFetch.every((s) => isTadawulQuoteSymbol(s));
                     const tickCap = tadawulOnly ? SAHMK_MAX_CODES_PER_BATCH : MAX_LIVE_FETCH_PER_TICK;
-                    const toFetch = mergedFetch.slice(0, tickCap);
+                    let toFetch = mergedFetch.slice(0, tickCap);
                     pendingLiveFetchSymbolsRef.current = mergedFetch.slice(tickCap);
                     // Finnhub/generic cooldown blocks the whole equity batch; SAHMK cooldown must not.
                     const rateLimited = isQuoteRefreshInCooldown('default');
@@ -424,14 +430,17 @@ const MarketSimulator: React.FC = () => {
                         pendingLiveFetchSymbolsRef.current = Array.from(
                             new Set([...pendingLiveFetchSymbolsRef.current, ...toFetch]),
                         );
+                        toFetch = [];
                     } else if (sahmkCooling && toFetch.length > 0) {
-                        // Keep Tadawul symbols queued while SAHMK alone is cooling — US providers still run.
+                        // Keep Tadawul queued while SAHMK cools — strip them from this tick so we
+                        // do not pay coordinator/merge overhead for an empty SAHMK short-circuit.
                         const tadawulPending = toFetch.filter((s) => isTadawulQuoteSymbol(s));
                         if (tadawulPending.length > 0) {
                             pendingLiveFetchSymbolsRef.current = Array.from(
                                 new Set([...pendingLiveFetchSymbolsRef.current, ...tadawulPending]),
                             );
                         }
+                        toFetch = toFetch.filter((s) => !isTadawulQuoteSymbol(s));
                     }
                     const isManualForceFetch = forceFetch && priceScope.manual === true;
                     // Manual Sync must never invent RNG prices.

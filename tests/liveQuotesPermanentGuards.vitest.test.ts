@@ -113,6 +113,15 @@ describe('live quotes permanent E2E guards', () => {
     expect(sim).toContain('subscribeQuoteRefreshCooldownEnd');
   });
 
+  it('strips Tadawul from toFetch while SAHMK cools (no empty coordinator work)', () => {
+    const sim = read('components/MarketSimulator.tsx');
+    expect(sim).toContain('toFetch = toFetch.filter((s) => !isTadawulQuoteSymbol(s))');
+    expect(sim).toContain("if (isQuoteRefreshInCooldown('default')) return");
+    expect(sim).toMatch(
+      /subscribeQuoteRefreshCooldownEnd\(\(\) => \{[\s\S]{0,800}isQuoteRefreshInCooldown\('sahmk'\)/,
+    );
+  });
+
   it('manual forceFetch never invents RNG prices (cooldown uses cache)', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('const allowSimulate = !isManualForceFetch');

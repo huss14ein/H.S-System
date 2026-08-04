@@ -23,6 +23,13 @@ function maxCooldownUntil(): number {
   return Math.max(cooldownUntilByProvider.default, cooldownUntilByProvider.sahmk);
 }
 
+/** Earliest active provider expiry — wake drains as soon as *any* provider clears. */
+function nextCooldownUntil(): number {
+  const now = Date.now();
+  const active = [cooldownUntilByProvider.default, cooldownUntilByProvider.sahmk].filter((t) => t > now);
+  return active.length === 0 ? 0 : Math.min(...active);
+}
+
 /**
  * @param provider Omit for “any provider cooling” (UI banners).
  *   Pass `'default'` to gate Finnhub/generic batches; `'sahmk'` for Tadawul-only.
@@ -66,10 +73,14 @@ function notifyCooldownEnd(): void {
 
 function scheduleCooldownEndNotify(): void {
   if (cooldownTimer) clearTimeout(cooldownTimer);
-  const delay = Math.max(0, maxCooldownUntil() - Date.now());
+  const nextUntil = nextCooldownUntil();
+  if (nextUntil <= 0) return;
+  const delay = Math.max(0, nextUntil - Date.now());
   cooldownTimer = setTimeout(() => {
     cooldownTimer = null;
-    if (Date.now() >= maxCooldownUntil()) notifyCooldownEnd();
+    // Fire on each provider clear so Finnhub can drain while SAHMK is still cooling.
+    notifyCooldownEnd();
+    if (nextCooldownUntil() > 0) scheduleCooldownEndNotify();
   }, delay);
 }
 
