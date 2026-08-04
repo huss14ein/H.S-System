@@ -116,7 +116,7 @@ describe('live quotes permanent E2E guards', () => {
   it('manual forceFetch never invents RNG prices (cooldown uses cache)', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('const allowSimulate = !isManualForceFetch');
-    expect(sim).toContain('const allowCacheFallback = !isManualForceFetch || rateLimited || sahmkCooling');
+    expect(sim).toContain('applyStoredQuoteFallback(symbol, newPrices, cacheRows)');
     expect(sim).toContain('if (!allowSimulate) continue');
   });
 });

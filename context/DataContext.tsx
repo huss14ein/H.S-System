@@ -4138,6 +4138,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         symbols: string[];
     }) => {
         if (!auth?.user) return;
+        const userId = auth.user.id;
         await enqueueLotSyncWork(async () => {
             const snapshot = dataRef.current;
             const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
@@ -4161,7 +4162,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
                 },
                 supabase,
-                userId: auth.user.id,
+                userId,
                 onLotsUpdated: (updatedLots) => {
                     applyFinancialDataPatch((prev) => ({
                         ...prev,
@@ -4177,6 +4178,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const backfillRealizedPnLForAllPortfolios = async (): Promise<{ patchedSymbols: number }> => {
         if (!supabase || !auth?.user) return { patchedSymbols: 0 };
+        const userId = auth.user.id;
         let patchedSymbols = 0;
         await enqueueLotSyncWork(async () => {
             const snap = dataRef.current;
@@ -4193,7 +4195,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
                         },
                         supabase,
-                        userId: auth.user.id,
+                        userId,
                         onLotsUpdated: (updatedLots) => {
                             applyFinancialDataPatch((prev) => ({
                                 ...prev,

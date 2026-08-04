@@ -434,8 +434,7 @@ const MarketSimulator: React.FC = () => {
                         }
                     }
                     const isManualForceFetch = forceFetch && priceScope.manual === true;
-                    // Manual Sync must never invent RNG prices. During cooldown, prefer cache over gaps.
-                    const allowCacheFallback = !isManualForceFetch || rateLimited || sahmkCooling;
+                    // Manual Sync must never invent RNG prices.
                     const allowSimulate = !isManualForceFetch;
 
                     /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
