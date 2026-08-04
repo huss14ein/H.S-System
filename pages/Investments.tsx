@@ -3519,6 +3519,8 @@ const PlatformCardInner: React.FC<{
                                                                   hSym,
                                                                   portfolioCurrency,
                                                                   sarPerUsd,
+                                                                  new Date(),
+                                                                  simulatedPrices as Record<string, unknown>,
                                                               )
                                                             : 0;
                                                     const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;

@@ -114,6 +114,27 @@ describe('system-wide quote + KPI E2E', () => {
     expect(effectiveHoldingValueInBookCurrency(h, 'SAR', prices, 3.75)).toBe(1200);
   });
 
+  it('live refresh expand (bare + .SR) must not treat Tadawul letters as USD', () => {
+    const h = {
+      symbol: 'REITF',
+      quantity: 100,
+      avgCost: 10,
+      currentValue: 1000,
+      holdingType: 'ticker' as const,
+      zakahClass: 'Zakatable' as const,
+      realizedPnL: 0,
+    };
+    // Same shape MarketSimulator paints after expandLiveQuotesForRequestedSymbols(['REITF.SR'], …).
+    const expanded = {
+      REITF: { price: 12, change: 0.05, changePercent: 0.4 },
+      'REITF.SR': { price: 12, change: 0.05, changePercent: 0.4 },
+      'REITF.SA': { price: 12, change: 0.05, changePercent: 0.4 },
+    };
+    expect(effectiveHoldingValueInBookCurrency(h, 'SAR', expanded, 3.75)).toBe(1200);
+    // Wrong USD path would yield 1200 * 3.75 = 4500.
+    expect(effectiveHoldingValueInBookCurrency(h, 'SAR', expanded, 3.75)).not.toBeCloseTo(4500, 0);
+  });
+
   it('headline KPI row matches platform rollup when using the same KPI quote map', () => {
     const portfolios: InvestmentPortfolio[] = [
       {

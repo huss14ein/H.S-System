@@ -151,6 +151,10 @@ export function inferInstrumentCurrencyFromSymbol(symbol: string): TradeCurrency
 /**
  * Instrument currency for a live quote row — uses map keys to distinguish Tadawul bare codes (REITF → REITF.SR)
  * from US tickers held in SAR books (AAPL priced in USD).
+ *
+ * After {@link expandLiveQuotesForRequestedSymbols}, both `REITF` and `REITF.SR` are present. The
+ * presence of a Tadawul suffix alias must win over the bare key, otherwise SAR quotes are treated
+ * as USD and Total Value / Gain / ROI / Daily P/L inflate by ~SAR-per-USD on live refresh.
  */
 export function resolveInstrumentCurrencyForQuote(
   symbol: string,
@@ -161,9 +165,8 @@ export function resolveInstrumentCurrencyForQuote(
   if (/(\.SR|\.SA|\.SE)$/i.test(s) || /^[0-9]{4,6}$/.test(s) || /^TADAWUL:/i.test(s)) return 'SAR';
   if (bookCurrency === 'SAR' && /^[A-Z]{3,6}$/.test(s) && !s.includes('.') && quoteMap) {
     const keys = Object.keys(quoteMap).map((k) => k.toUpperCase());
-    const hasDirect = keys.includes(s);
     const hasSuffixed = keys.some((k) => k === `${s}.SR` || k === `${s}.SA` || k === `${s}.SE`);
-    if (hasSuffixed && !hasDirect) return 'SAR';
+    if (hasSuffixed) return 'SAR';
   }
   return inferInstrumentCurrencyFromSymbol(symbol);
 }
@@ -224,8 +227,9 @@ export function quoteDailyPnLInBookCurrency(
   bookCurrency: TradeCurrency,
   sarPerUsd: number,
   asOf: Date = new Date(),
+  quoteMap?: Record<string, unknown>,
 ): number {
-  const inst = inferInstrumentCurrencyFromSymbol(symbol);
+  const inst = resolveInstrumentCurrencyForQuote(symbol, bookCurrency, quoteMap);
   const q = Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
   const c = quoteChangeForDailyPnL(symbol, changePerShare, asOf);
   return convertBetweenTradeCurrencies(c * q, inst, bookCurrency, sarPerUsd);
