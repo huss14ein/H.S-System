@@ -8,6 +8,7 @@ import {
   acknowledgeHoldingsIntegrity,
   clearHoldingsIntegrityAck,
   loadHoldingsIntegrityAcks,
+  mergeHoldingsIntegrityAckMapsByAt,
   saveHoldingsIntegrityAcks,
   type HoldingsIntegrityAckMap,
   type HoldingsIntegrityAckEntry,
@@ -72,7 +73,13 @@ function sanitizeHoldingsMap(raw: unknown): HoldingsIntegrityAckMap {
   const out: HoldingsIntegrityAckMap = {};
   for (const [k, v] of Object.entries(raw)) {
     if (!safeKey(k) || !isPlainObject(v)) continue;
-    const kind = v.kind === 'keep_closed' ? 'keep_closed' : v.kind === 'keep_stored' ? 'keep_stored' : null;
+    const kindRaw = String(v.kind ?? '');
+    const kind: HoldingsIntegrityAckKind | null =
+      kindRaw === 'keep_closed'
+        ? 'keep_closed'
+        : kindRaw === 'keep_stored' || kindRaw === 'reconciled' || kindRaw === 'rebuilt'
+          ? (kindRaw as HoldingsIntegrityAckKind)
+          : null;
     if (!kind) continue;
     const portfolioId = String(v.portfolioId ?? '').slice(0, 128);
     const symbol = String(v.symbol ?? '')
@@ -80,6 +87,10 @@ function sanitizeHoldingsMap(raw: unknown): HoldingsIntegrityAckMap {
       .toUpperCase()
       .slice(0, 64);
     const storedQtyFingerprint = Number(v.storedQtyFingerprint);
+    const ledgerQtyFingerprint =
+      v.ledgerQtyFingerprint != null && Number.isFinite(Number(v.ledgerQtyFingerprint))
+        ? Number(v.ledgerQtyFingerprint)
+        : undefined;
     const at = String(v.at ?? '').slice(0, 40);
     if (!portfolioId || !symbol || !Number.isFinite(storedQtyFingerprint)) continue;
     out[k.slice(0, 200)] = {
@@ -87,6 +98,7 @@ function sanitizeHoldingsMap(raw: unknown): HoldingsIntegrityAckMap {
       symbol,
       kind,
       storedQtyFingerprint,
+      ...(ledgerQtyFingerprint != null ? { ledgerQtyFingerprint } : {}),
       at: at || new Date(0).toISOString(),
     } satisfies HoldingsIntegrityAckEntry;
   }
@@ -188,19 +200,21 @@ export type ResolveAcksOptions = {
   writeThrough?: boolean;
 };
 
-/** Settings (when present) win; otherwise localStorage cache. */
+/** Settings + localStorage merge by newest `at` per key — never wipe local dismissals with an empty remote map. */
 export function resolveHoldingsIntegrityAcks(
   userId: string | null | undefined,
   settings?: Pick<Settings, 'uiAcks'> | null,
   opts?: ResolveAcksOptions,
 ): HoldingsIntegrityAckMap {
+  const local = sanitizeHoldingsMap(loadHoldingsIntegrityAcks(userId));
   const fromSettings = settings?.uiAcks?.holdingsQtyIntegrity;
   if (fromSettings && typeof fromSettings === 'object') {
-    const map = sanitizeHoldingsMap(fromSettings);
-    if (opts?.writeThrough) saveHoldingsIntegrityAcks(userId, map);
-    return map;
+    const remote = sanitizeHoldingsMap(fromSettings);
+    const merged = mergeHoldingsIntegrityAckMapsByAt(local, remote);
+    if (opts?.writeThrough) saveHoldingsIntegrityAcks(userId, merged);
+    return merged;
   }
-  return sanitizeHoldingsMap(loadHoldingsIntegrityAcks(userId));
+  return local;
 }
 
 export function resolveCashBalanceDriftAcks(
@@ -260,13 +274,14 @@ export function isInvestmentCashLedgerDriftAcked(
 
 export type PersistUiAcksFn = (uiAcks: UiAcks) => Promise<void>;
 
-/** Keep stored / Keep closed — local cache + settings.ui_acks. */
+/** Keep stored / Keep closed / reconciled / rebuilt — local cache + settings.ui_acks. */
 export async function acknowledgeHoldingsIntegrityDurable(args: {
   userId: string | null | undefined;
   portfolioId: string;
   symbol: string;
   kind: HoldingsIntegrityAckKind;
   storedQty: number;
+  ledgerQty?: number;
   currentUiAcks?: UiAcks | null;
   persistUiAcks?: PersistUiAcksFn;
 }): Promise<HoldingsIntegrityAckMap> {
@@ -283,6 +298,7 @@ export async function acknowledgeHoldingsIntegrityDurable(args: {
       symbol: args.symbol,
       kind: args.kind,
       storedQty: args.storedQty,
+      ledgerQty: args.ledgerQty,
     }),
     UI_ACKS_MAX_ENTRIES,
   );

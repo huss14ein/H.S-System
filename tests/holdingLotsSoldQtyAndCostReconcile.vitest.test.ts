@@ -57,6 +57,7 @@ describe('alignOpenLotsToHolding — sold quantity', () => {
     const txs: InvestmentTransaction[] = [
       { id: '1', accountId: 'a', date: '2026-01-01', type: 'buy', symbol: 'SNAP', quantity: 200, price: 5, total: 1000, portfolioId: 'pf-1' },
       { id: '2', accountId: 'a', date: '2026-03-01', type: 'sell', symbol: 'SNAP', quantity: 50, price: 6, total: 300, portfolioId: 'pf-1' },
+      { id: 'orphan', accountId: 'a', date: '2026-02-01', type: 'buy', symbol: 'SNAP', quantity: 999, price: 5, total: 4995 },
     ];
     const s = summarizeSymbolTradeQuantities(txs, 'SNAP', { portfolioId: 'pf-1' });
     expect(s.boughtQty).toBe(200);

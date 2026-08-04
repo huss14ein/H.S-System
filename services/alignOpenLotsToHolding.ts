@@ -65,7 +65,9 @@ export function summarizeSymbolTradeQuantities(
   let soldQty = 0;
   for (const tx of transactions ?? []) {
     if (String(tx.symbol ?? '').trim().toUpperCase() !== sym) continue;
-    if (opts?.portfolioId && tx.portfolioId && String(tx.portfolioId) !== String(opts.portfolioId)) continue;
+    // When scoped to a portfolio, only count rows stamped with that portfolio_id
+    // (same policy as holdings qty integrity / rebuild — orphans are not silent ledger).
+    if (opts?.portfolioId && String(tx.portfolioId ?? '') !== String(opts.portfolioId)) continue;
     const qty = Math.abs(Number(tx.quantity) || 0);
     if (!(qty > 0)) continue;
     if (tx.type === 'buy') boughtQty += qty;
