@@ -25,7 +25,10 @@ function cacheKeysForSymbol(symbol: string): string[] {
   return Array.from(new Set([raw, raw.toUpperCase(), canonicalQuoteLookupKey(raw)])).filter(Boolean);
 }
 
-/** Pure merge: DB price wins only when strictly newer than every local alias row. */
+/** Pure merge: DB price wins only when strictly newer than every local alias row.
+ * When `currentPrice` is missing, derive unit price from `currentValue / quantity` so
+ * legacy rows still seed the session and stop showing perpetual "Stored" after refresh.
+ */
 export function buildQuoteCacheRowsFromPersistedHoldingPrices(
   portfolios: InvestmentPortfolio[],
   rows: Record<string, CachedQuoteRow>,
@@ -39,8 +42,17 @@ export function buildQuoteCacheRowsFromPersistedHoldingPrices(
     for (const holding of portfolio.holdings ?? []) {
       if (!holdingCanUseQuoteRefresh(holding, { bookCurrency: book })) continue;
       const symbol = String(holding.symbol ?? '').trim();
-      const price = Number(holding.currentPrice);
-      const persistedMs = holding.priceUpdatedAt ? Date.parse(holding.priceUpdatedAt) : Number.NaN;
+      const qty = Number(holding.quantity);
+      let price = Number(holding.currentPrice);
+      let persistedMs = holding.priceUpdatedAt ? Date.parse(holding.priceUpdatedAt) : Number.NaN;
+      if ((!Number.isFinite(price) || price <= 0) && Number.isFinite(qty) && qty > 0) {
+        const value = Number(holding.currentValue);
+        if (Number.isFinite(value) && value > 0) {
+          price = value / qty;
+          // Epoch so any real live/cache quote still wins over a derived mark.
+          if (!Number.isFinite(persistedMs) || persistedMs <= 0) persistedMs = 1;
+        }
+      }
       if (
         !symbol ||
         !Number.isFinite(price) ||

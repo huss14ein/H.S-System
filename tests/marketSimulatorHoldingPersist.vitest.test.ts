@@ -46,7 +46,7 @@ describe('marketSimulatorHoldingPersist', () => {
         const trusted = { AAPL: { price: 10, change: 0, changePercent: 0 } };
         const updates = buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd);
         expect(updates).toEqual([
-            { id: 'h-usd', currentValue: 10 * 2 * sarPerUsd, currentPrice: 10 },
+            { id: 'h-usd', currentValue: 10 * 2 * sarPerUsd, currentPrice: 10, unrealizedPnL: 10 * 2 * sarPerUsd },
         ]);
     });
 
@@ -67,7 +67,7 @@ describe('marketSimulatorHoldingPersist', () => {
         ];
         const trusted = { '1150.SR': { price: 42, change: 0, changePercent: 0 } };
         expect(buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd)).toEqual([
-            { id: 'h-sr', currentValue: 420, currentPrice: 42 },
+            { id: 'h-sr', currentValue: 420, currentPrice: 42, unrealizedPnL: 420 },
         ]);
     });
 
@@ -128,7 +128,7 @@ describe('marketSimulatorHoldingPersist', () => {
         ];
         const trusted = { '2222.SR': { price: 3200, change: 0, changePercent: 0 } };
         const updates = buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd);
-        expect(updates).toEqual([{ id: 'h-tdwl', currentValue: 3200, currentPrice: 32 }]);
+        expect(updates).toEqual([{ id: 'h-tdwl', currentValue: 3200, currentPrice: 32, unrealizedPnL: 0 }]);
     });
 
     it('persists a changed unit price even when rounded position value is unchanged', () => {
@@ -182,6 +182,7 @@ describe('marketSimulatorHoldingPersist', () => {
                 id: 'h1',
                 currentValue: 20,
                 currentPrice: 10,
+                unrealizedPnL: 20,
                 priceUpdatedAt: '2026-07-25T00:00:00.000Z',
             },
         ]);

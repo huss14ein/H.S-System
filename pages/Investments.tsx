@@ -2903,7 +2903,16 @@ const PlatformCardInner: React.FC<{
                 const totalCost = (h.avgCost ?? 0) * qty;
                 let liveValue = effectiveHoldingValueInBookCurrency(h, bookCurrency, simulatedPrices, sarPerUsd);
                 if (liveValue <= 0 && totalCost > 0) liveValue = totalCost;
-                const gainLoss = liveValue - totalCost;
+                const liveQuote = holdingUsesLiveQuote(h)
+                    ? lookupLiveQuoteForSymbol(simulatedPrices, h.symbol)
+                    : undefined;
+                const hasLive =
+                    liveQuote != null && Number.isFinite(liveQuote.price) && liveQuote.price > 0;
+                const storedUnrealized = Number(h.unrealizedPnL);
+                const gainLoss =
+                    !hasLive && Number.isFinite(storedUnrealized)
+                        ? storedUnrealized
+                        : liveValue - totalCost;
                 return { ...h, currentValue: liveValue, totalCost, gainLoss };
             })
             .sort((a, b) => b.currentValue - a.currentValue);
@@ -3521,18 +3530,29 @@ const PlatformCardInner: React.FC<{
                                                                   sarPerUsd,
                                                               )
                                                             : 0;
-                                                    const gainLossPct = (h.totalCost && h.totalCost > 0) ? (h.gainLoss / h.totalCost) * 100 : 0;
                                                     const hasLivePrice =
                                                         holdingUsesLiveQuote(h) &&
                                                         liveQuoteRow != null &&
                                                         Number.isFinite(liveQuoteRow.price) &&
                                                         liveQuoteRow.price > 0;
+                                                    const hasPersistedUnitPrice =
+                                                        Number.isFinite(Number(h.currentPrice)) && Number(h.currentPrice) > 0;
                                                     const nonTickerStoredPrice = !holdingUsesLiveQuote(h);
-                                                    const tickerMissingQuote = holdingUsesLiveQuote(h) && !hasLivePrice;
+                                                    /** Only flag missing when neither a session quote nor a saved unit price exists. */
+                                                    const tickerMissingQuote =
+                                                        holdingUsesLiveQuote(h) && !hasLivePrice && !hasPersistedUnitPrice;
                                                     const avgCostDisplay = h.avgCost ?? 0;
                                                     const currentValueDisplay = h.currentValue;
                                                     const purchasedCostDisplay = (h.avgCost ?? 0) * (h.quantity || 0);
-                                                    const gainLossDisplay = h.gainLoss;
+                                                    const storedUnrealized = Number((h as Holding).unrealizedPnL);
+                                                    const gainLossDisplay =
+                                                        !hasLivePrice && Number.isFinite(storedUnrealized)
+                                                            ? storedUnrealized
+                                                            : h.gainLoss;
+                                                    const gainLossPct =
+                                                        h.totalCost && h.totalCost > 0
+                                                            ? (gainLossDisplay / h.totalCost) * 100
+                                                            : 0;
                                                     const rowDailyPnLDisplay = rowDailyPnL;
                                                     const zakatBadge = resolveZakatHoldingBadgeState({
                                                         holding: h,
@@ -3605,7 +3625,7 @@ const PlatformCardInner: React.FC<{
                                                                         {tickerMissingQuote && (
                                                                             <span
                                                                                 className="text-[10px] font-semibold uppercase tracking-wide text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0 rounded"
-                                                                                title="Showing last saved market value; live quote not resolved in the price cache (refresh or check symbol)."
+                                                                                title="No live quote and no saved unit price — showing last market value / cost basis. Refresh again or check the symbol."
                                                                             >
                                                                                 Stored
                                                                             </span>

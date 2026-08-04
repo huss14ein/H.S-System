@@ -17,6 +17,8 @@ export type HoldingMarketValueUpdate = {
     currentPrice: number;
     /** Original API/cache retrieval timestamp; prevents stale cache from looking newly fetched. */
     priceUpdatedAt?: string;
+    /** Book-currency unrealized P/L: currentValue − quantity × avgCost. */
+    unrealizedPnL?: number;
 };
 
 function trustedQuoteRowForHolding(
@@ -57,10 +59,14 @@ export function buildEquityHoldingValueUpdatesFromTrustedSnapshot(
             if (!(qty > 0)) continue;
             const notion = quoteNotionalInBookCurrency(row.price, qty, sym, book, sarPerUsd, trusted);
             if (!Number.isFinite(notion) || notion <= 0 || notion > MAX_HOLDING_BOOK_NOTIONAL) continue;
+            const avgCost = Number(holding.avgCost ?? 0);
+            const costBasis = Number.isFinite(avgCost) && avgCost > 0 ? avgCost * qty : 0;
+            const unrealizedPnL = Number.isFinite(costBasis) ? notion - costBasis : notion;
             out.push({
                 id: holding.id,
                 currentValue: notion,
                 currentPrice: row.price,
+                unrealizedPnL,
                 ...(quoteUpdatedAtBySymbol[String(sym).trim().toUpperCase()]
                     ? { priceUpdatedAt: quoteUpdatedAtBySymbol[String(sym).trim().toUpperCase()] }
                     : {}),
@@ -76,13 +82,18 @@ export function filterNoOpHoldingValueUpdates(
     updates: HoldingMarketValueUpdate[],
     epsilon = 0.01,
 ): HoldingMarketValueUpdate[] {
-    const currentById = new Map<string, { currentValue: number; currentPrice?: number }>();
+    const currentById = new Map<
+        string,
+        { currentValue: number; currentPrice?: number; unrealizedPnL?: number }
+    >();
     for (const p of portfolios) {
         for (const h of p.holdings ?? []) {
             if (h.id) {
+                const unrealized = Number(h.unrealizedPnL);
                 currentById.set(h.id, {
                     currentValue: Number(h.currentValue) || 0,
                     currentPrice: Number.isFinite(Number(h.currentPrice)) ? Number(h.currentPrice) : undefined,
+                    unrealizedPnL: Number.isFinite(unrealized) ? unrealized : undefined,
                 });
             }
         }
@@ -90,10 +101,14 @@ export function filterNoOpHoldingValueUpdates(
     return updates.filter((u) => {
         const prev = currentById.get(u.id);
         if (prev == null) return true;
+        const unrealizedChanged =
+            u.unrealizedPnL != null &&
+            (prev.unrealizedPnL == null || Math.abs(prev.unrealizedPnL - u.unrealizedPnL) > epsilon);
         return (
             Math.abs(prev.currentValue - u.currentValue) > epsilon ||
             prev.currentPrice == null ||
-            Math.abs(prev.currentPrice - u.currentPrice) > 1e-8
+            Math.abs(prev.currentPrice - u.currentPrice) > 1e-8 ||
+            unrealizedChanged
         );
     });
 }

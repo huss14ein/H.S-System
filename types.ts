@@ -430,6 +430,11 @@ export interface Holding {
   currentPrice?: number;
   /** ISO timestamp when currentPrice/currentValue were last persisted from a trusted quote. */
   priceUpdatedAt?: string;
+  /**
+   * Unrealized P/L in portfolio book currency from the last trusted mark
+   * (`currentValue − quantity × avgCost`). Kept in sync with share price persistence.
+   */
+  unrealizedPnL?: number;
   goalId?: string;
   assetClass?: HoldingAssetClass;
   percentage?: number;
