@@ -319,8 +319,8 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
         KPIs and net worth use <strong>stored holdings</strong> (single source of truth). If a symbol has trades in the
         log but no holding row, restore it here. Ledger scope is{' '}
         <code className="text-[11px]">portfolio_id</code> (not the whole platform account). To match broker share counts
-        without restoring a missing row, use <strong>Reconcile quantity</strong> on that holding (audited delta —
-        not a bulk rewrite).
+        without restoring a missing row, use <strong>Reconcile quantity</strong> on that holding (audited non-cash
+        delta — not a sell or withdrawal, and not a bulk rewrite).
       </p>
 
       {likelyOpenMissing.length > 0 && (

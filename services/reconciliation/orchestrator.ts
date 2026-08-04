@@ -733,7 +733,8 @@ async function applyHoldingQty(
   /**
    * Always rebuild lots/PnL for this symbol after a book qty change (never rewrite qty again).
    * Backdated fixes also run the month-lock / marks gate so blocked cases surface instead of inventing ROI.
-   * syncLotsForSymbols also FIFO-trims open lots to the new holding quantity (sold qty).
+   * syncLotsForSymbols also FIFO-trims open lots to the new holding quantity.
+   * Qty-down is a non-cash book correction — never post broker cash or investment ledger cash rows here.
    */
   const backdated = effectiveDate < appCalendarTodayYmd();
   let replayStatus: 'completed' | 'blocked' | 'failed' = 'completed';
