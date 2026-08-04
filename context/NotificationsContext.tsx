@@ -214,6 +214,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   }, [auth?.user?.id, auth?.isAdmin, showHydrateBanner]);
 
   const coreNotifications = useMemo<AppNotification[]>(() => {
+    // Observe deferred fingerprint so rebuilds stay gated (not bare `data` identity).
+    void deferredNotificationsFingerprint;
     const list: AppNotification[] = [];
     if (!data || showHydrateBanner) return list;
     const now = new Date();

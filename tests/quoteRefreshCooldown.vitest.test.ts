@@ -28,11 +28,18 @@ describe('quoteRefreshCooldown', () => {
     expect(isQuoteRefreshInCooldown()).toBe(false);
   });
 
-  it('does not shorten an existing longer cooldown', () => {
-    startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS);
-    const remaining = quoteRefreshCooldownRemainingMs();
-    startQuoteRefreshCooldown(5_000);
-    expect(quoteRefreshCooldownRemainingMs()).toBeGreaterThanOrEqual(remaining - 50);
+  it('does not shorten an existing longer cooldown on the same provider', () => {
+    startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS, 'default');
+    const remaining = quoteRefreshCooldownRemainingMs('default');
+    startQuoteRefreshCooldown(5_000, 'default');
+    expect(quoteRefreshCooldownRemainingMs('default')).toBeGreaterThanOrEqual(remaining - 50);
+  });
+
+  it('SAHMK cooldown does not block default/Finnhub provider', () => {
+    startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS, 'sahmk');
+    expect(isQuoteRefreshInCooldown('sahmk')).toBe(true);
+    expect(isQuoteRefreshInCooldown('default')).toBe(false);
+    expect(isQuoteRefreshInCooldown()).toBe(true); // any
   });
 
   it('detects rate-limit style errors', () => {

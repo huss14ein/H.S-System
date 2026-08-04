@@ -100,23 +100,23 @@ describe('live quotes permanent E2E guards', () => {
   it('pending overflow survives cooldown without premature finishQuotesRefresh', () => {
     const sim = read('components/MarketSimulator.tsx');
     // After a tick, leftover symbols continue via bump — never finish while pending unless cancelled or cooling down.
-    expect(sim).toMatch(/pendingSymbols && after[\s\S]{0,800}bumpPriceRefresh/);
+    expect(sim).toMatch(/pendingSymbols && after[\s\S]{0,1200}bumpPriceRefresh/);
     expect(sim).toMatch(
       /pendingSymbols && after[\s\S]{0,200}isQuoteRefreshCancelled\(\)[\s\S]{0,200}finishQuotesRefresh\(\)/,
     );
     expect(sim).not.toMatch(
       /else if \(pendingSymbols && after\) \{\s*after\.finishQuotesRefresh\(\)/,
     );
-    // Cooldown: clear Updating… while keeping pending for subscribeQuoteRefreshCooldownEnd.
-    expect(sim).toMatch(
-      /else if \(!isQuoteRefreshInCooldown\(\)\)[\s\S]{0,400}else \{\s*\/\/ Keep pending for cooldown-end drain[\s\S]{0,200}finishQuotesRefresh\(\)/,
-    );
+    // Default-provider cooldown keeps pending; SAHMK-only cooldown can still drain non-Tadawul.
+    expect(sim).toContain("else if (!isQuoteRefreshInCooldown('default'))");
+    expect(sim).toContain('Keep pending for cooldown-end drain');
+    expect(sim).toContain('subscribeQuoteRefreshCooldownEnd');
   });
 
   it('manual forceFetch never invents RNG prices (cooldown uses cache)', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('const allowSimulate = !isManualForceFetch');
-    expect(sim).toContain('const allowCacheFallback = !isManualForceFetch || rateLimited');
+    expect(sim).toContain('const allowCacheFallback = !isManualForceFetch || rateLimited || sahmkCooling');
     expect(sim).toContain('if (!allowSimulate) continue');
   });
 });

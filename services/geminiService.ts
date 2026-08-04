@@ -3273,15 +3273,16 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
 
     const trySahmk = async (syms: string[] = tadawulSymbols) => {
         if (syms.length === 0) return {};
-        // Never hammer SAHMK while a prior 429 cooldown is active (free tier ~100/day).
-        if (isQuoteRefreshInCooldown()) return {};
+        // Never hammer SAHMK while a prior SAHMK 429 cooldown is active (free tier ~100/day).
+        // Use provider-scoped cooldown so Finnhub/Stooq still run for US symbols.
+        if (isQuoteRefreshInCooldown('sahmk')) return {};
         try {
             return await getSahmkLivePrices(syms);
         } catch (e) {
-            // Rate limit: enter long cooldown and return {} so Finnhub/Stooq results still apply.
+            // Rate limit: enter long SAHMK-only cooldown and return {} so Finnhub/Stooq results still apply.
             // Throwing here previously aborted the whole batch and left the UI on a spinner hang.
             if (isRateLimitError(e)) {
-                startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS);
+                startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS, 'sahmk');
                 console.warn('SAHMK rate limited — serving cache until cooldown ends');
                 return {};
             }
@@ -3291,9 +3292,28 @@ export const getLivePrices = async (symbols: string[]): Promise<{ [symbol: strin
     };
 
     const mergeFinnhubStooqAndSahmk = async (): Promise<{ [symbol: string]: { price: number; change: number; changePercent: number } }> => {
-        // Sequential provider calls reduce parallel proxy/API pressure during large refreshes.
-        const finnhub = await tryFinnhub(usSymbols);
-        const sahmk = await trySahmk(tadawulSymbols);
+        // Tadawul-only books (e.g. Awaed): skip Finnhub/Stooq entirely — biggest win for SAR portfolios.
+        if (usSymbols.length === 0) {
+            return await trySahmk(tadawulSymbols);
+        }
+        // US-only: skip SAHMK.
+        if (tadawulSymbols.length === 0) {
+            const finnhub = await tryFinnhub(usSymbols);
+            const missingUs = usSymbols.filter((s) => {
+                const u = (s || '').trim().toUpperCase();
+                const canon = canonicalQuoteLookupKey(s);
+                const has =
+                    finnhub[s] ||
+                    finnhub[u] ||
+                    finnhub[canon] ||
+                    Object.keys(finnhub).some((k) => canonicalQuoteLookupKey(k) === canon);
+                return !has;
+            });
+            const stooq = missingUs.length > 0 ? await tryStooq(missingUs) : {};
+            return { ...stooq, ...finnhub };
+        }
+        // Mixed: Finnhub ∥ SAHMK, then Stooq only for US gaps.
+        const [finnhub, sahmk] = await Promise.all([tryFinnhub(usSymbols), trySahmk(tadawulSymbols)]);
         const missingUs = usSymbols.filter((s) => {
             const u = (s || '').trim().toUpperCase();
             const canon = canonicalQuoteLookupKey(s);

@@ -9,6 +9,14 @@ import { computeSalaryInvestmentKpis } from '../services/salaryInvestmentKpis';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
+function currentMonthDay(day: number): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(Math.min(28, Math.max(1, day))).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 describe('weekly digest salary investment wiring', () => {
   it('edge function fetches cash transactions and settings with salary column fallback', () => {
     const src = read('supabase/functions/send-weekly-digest/index.ts');
@@ -54,7 +62,7 @@ describe('weekly digest salary investment wiring', () => {
           id: 'dep-1',
           account_id: 'broker-1',
           linked_cash_account_id: 'checking-1',
-          date: '2026-07-07',
+          date: currentMonthDay(7),
           type: 'deposit',
           symbol: 'CASH',
           quantity: 0,
@@ -71,7 +79,7 @@ describe('weekly digest salary investment wiring', () => {
           type: 'income',
           category: 'Salary',
           description: 'Monthly salary',
-          date: '2026-07-05',
+          date: currentMonthDay(5),
         },
       ],
       settingsRaw: {

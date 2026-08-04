@@ -29,9 +29,10 @@ const portfolioWith = (holdings: Holding[]): InvestmentPortfolio => ({
 });
 
 describe('trusted holding market price persistence', () => {
-  it('awaits trusted quote persistence before completing the refresh tick', () => {
+  it('persists trusted quotes without blocking the next quote batch', () => {
     const simulator = read('components/MarketSimulator.tsx');
-    expect(simulator).toContain('await batchUpdateHoldingValues(holdingUpdatesFiltered)');
+    expect(simulator).toContain('holdingPersistChainRef');
+    expect(simulator).toContain('await batchUpdateHoldingValues(updates)');
     expect(simulator).toContain('buildEquityHoldingValueUpdatesFromTrustedSnapshot');
   });
 
@@ -100,9 +101,9 @@ describe('trusted holding market price persistence', () => {
 
   it('a failed save does not cancel alerts or commodity marks in the same tick', () => {
     const simulator = read('components/MarketSimulator.tsx');
-    const start = simulator.indexOf('await batchUpdateHoldingValues(holdingUpdatesFiltered)');
+    const start = simulator.indexOf('await batchUpdateHoldingValues(updates)');
     expect(start).toBeGreaterThan(-1);
-    expect(simulator.slice(start, start + 400)).toContain(
+    expect(simulator.slice(start - 200, start + 400)).toContain(
       "console.warn('Holding market value persist failed:'",
     );
     expect(simulator.indexOf('triggeredAlerts.length > 0')).toBeGreaterThan(start);

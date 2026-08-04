@@ -10,6 +10,7 @@ import {
   currentFinancialMonthColumnEndIndex,
   resolveMonthStartDayFromData,
   financialMonthRangeFromKey,
+  financialMonthKey,
   calendarDayStartMs,
 } from '../utils/financialMonth';
 import { hydrateSarPerUsdDailySeries, getSarPerUsdForCalendarDay } from './fxDailySeries';
@@ -63,6 +64,11 @@ export interface HouseholdBudgetPlanInput {
   config: HouseholdEngineConfig;
   /** 0–11: current financial month in the plan year (projection skips past months). */
   currentMonthIndex?: number;
+  /**
+   * True only when today’s financial year is after `planYear` (not merely month index 11 /
+   * December of the current plan year).
+   */
+  planYearFullyElapsed?: boolean;
   /**
    * Ledger income−expense after the plan year’s last financial month (SAR).
    * Used to reconstruct historical year-end liquid: currentLiquid − postYearNet.
@@ -202,6 +208,7 @@ export function suggestProfileFromIncomeVariance(
 /**
  * Year-end liquid from balances + remaining months — or full-year reconstruction when elapsed.
  * Past months are already inside opening liquid for the *current* plan year — never re-apply them.
+ * The unfinished current month contributes only its unposted remainder (planned − actual).
  * Fully elapsed plan years: peel post-year ledger nets from current liquid to recover that year's
  * ending cash, then peel this year's nets for year-start (opening ≠ year-end when cashflow existed).
  */
@@ -214,7 +221,7 @@ export function projectYearEndLiquidFromCurrent(args: {
   currentMonthIndex: number;
   /** Fallback monthly expense when a future month has no ledger spend yet. */
   expectedFutureExpenseSar: number;
-  /** When true (past plan year / Dec), reconstruct year-end from current − post-year nets. */
+  /** When true (past plan year), reconstruct year-end from current − post-year nets. */
   planYearFullyElapsed?: boolean;
   /**
    * Income−expense after the plan year (SAR). Subtracted from current liquid when reconstructing
@@ -242,13 +249,24 @@ export function projectYearEndLiquidFromCurrent(args: {
     return inc - exp;
   };
 
-  if (args.planYearFullyElapsed || cur >= 11) {
+  // Elapsed = plan year before today’s financial year — never treat December (index 11) alone as done.
+  if (args.planYearFullyElapsed) {
     // currentLiquid − cashflow after year-end ≈ liquid at that year's close
     return opening - postYearNet;
   }
 
   let proj = opening;
-  // cur === -1 → project all 12 months (future plan year)
+  // Unposted remainder of the current financial month (opening already includes posted actuals).
+  if (cur >= 0 && cur <= 11) {
+    const plannedSalary = Math.max(0, Number(salary[cur]) || 0);
+    const actualInc = Math.max(0, Number(income[cur]) || 0);
+    const actualExp = Math.max(0, Number(expense[cur]) || 0);
+    const remainingInc = Math.max(0, plannedSalary - actualInc);
+    const expectedExp = futureExp > 0 ? futureExp : actualExp;
+    const remainingExp = Math.max(0, expectedExp - actualExp);
+    proj += remainingInc - remainingExp;
+  }
+  // cur === -1 → project all 12 months (future plan year); otherwise months after current.
   for (let i = cur + 1; i < 12; i++) {
     proj += monthNet(i, true);
   }
@@ -387,6 +405,15 @@ export function resolveHouseholdPlanMonthIndex(
   monthStartDay?: unknown,
 ): number {
   return currentFinancialMonthColumnEndIndex(planYear, ref, monthStartDay ?? 1);
+}
+
+/** True when today’s financial year is strictly after `planYear` (December of the plan year is still open). */
+export function isHouseholdPlanYearFullyElapsed(
+  planYear: number,
+  ref: Date = new Date(),
+  monthStartDay: unknown = 1,
+): boolean {
+  return financialMonthKey(ref, monthStartDay).year > planYear;
 }
 
 /**
@@ -1029,10 +1056,11 @@ export function buildHouseholdEngineInputFromPlanData(
     options?.currentMonthIndex != null
       ? clampHouseholdPlanMonthIndex(options.currentMonthIndex)
       : resolveHouseholdPlanMonthIndex(planYear);
+  const planYearFullyElapsed = isHouseholdPlanYearFullyElapsed(planYear, new Date(), monthStartDay);
   let postPlanYearCashflowNetSar = Number(options?.postPlanYearCashflowNetSar) || 0;
   if (
     options?.postPlanYearCashflowNetSar == null &&
-    currentMonthIndex >= 11 &&
+    planYearFullyElapsed &&
     options?.financialData != null
   ) {
     const uiEx = Number(options?.uiExchangeRate ?? options?.sarPerUsd);
@@ -1071,6 +1099,7 @@ export function buildHouseholdEngineInputFromPlanData(
     goals: goalsMapped,
     config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, profile: options?.profile, ...options?.config },
     currentMonthIndex,
+    planYearFullyElapsed,
     postPlanYearCashflowNetSar,
   };
 }
@@ -1159,7 +1188,8 @@ export function buildHouseholdEngineInputFromData(
     options?.currentMonthIndex != null
       ? clampHouseholdPlanMonthIndex(options.currentMonthIndex)
       : resolveHouseholdPlanMonthIndex(year, new Date(), monthStartDay);
-  if (resolvedMonthIndex >= 11 && Number.isFinite(uiEx) && uiEx > 0) {
+  const planYearFullyElapsed = isHouseholdPlanYearFullyElapsed(year, new Date(), monthStartDay);
+  if (planYearFullyElapsed && Number.isFinite(uiEx) && uiEx > 0) {
     postPlanYearCashflowNetSar = sumHouseholdCashflowNetAfterPlanYear(
       options?.financialData ?? null,
       transactions,
@@ -1181,6 +1211,7 @@ export function buildHouseholdEngineInputFromData(
     goals: goalsMapped,
     config: { ...DEFAULT_HOUSEHOLD_ENGINE_CONFIG, profile: options?.profile, ...options?.config },
     currentMonthIndex: resolvedMonthIndex,
+    planYearFullyElapsed,
     postPlanYearCashflowNetSar,
   };
 }
@@ -1245,6 +1276,7 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
   const currentMonthIndex = clampHouseholdPlanMonthIndex(
     input.currentMonthIndex ?? resolveHouseholdPlanMonthIndex(new Date().getFullYear()),
   );
+  const planYearFullyElapsed = input.planYearFullyElapsed === true;
   const postPlanYearCashflowNetSar = Number(input.postPlanYearCashflowNetSar) || 0;
 
   const emergencyTargetMonths = Number((config as { emergencyTargetMonths?: number })?.emergencyTargetMonths) || DEFAULT_EMERGENCY_TARGET_MONTHS;
@@ -1514,9 +1546,11 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
       'investing',
       'kidsFutureSavings',
     ]);
+    /** Duplicate representations of canonical spend buckets — do not double-count in planned totals. */
+    const consumptionAliasKeys = new Set(['food', 'entertainment']);
     const savingsTotal = Array.from(savingsBucketKeys).reduce((s, k) => s + (Number((buckets as Record<string, number>)[k]) || 0), 0);
     const consumptionFromBuckets = Object.entries(buckets).reduce((sum, [k, v]) => {
-      if (savingsBucketKeys.has(k)) return sum;
+      if (savingsBucketKeys.has(k) || consumptionAliasKeys.has(k)) return sum;
       return sum + (Number(v) || 0);
     }, 0);
     const txExpense = Math.max(0, Number(monthlyActualExpense[i] ?? 0));
@@ -1558,7 +1592,6 @@ export function buildHouseholdBudgetPlan(input: HouseholdBudgetPlanInput): House
     avgMonthlyExpense > 0
       ? avgMonthlyExpense
       : Math.round(effectiveTemplateBaseExpense(avgMonthlySalary, adults, kids));
-  const planYearFullyElapsed = currentMonthIndex >= 11;
   const openingLiquidDisplay = planYearFullyElapsed
     ? estimateYearStartLiquidFromOpening(
         liquidBalance,

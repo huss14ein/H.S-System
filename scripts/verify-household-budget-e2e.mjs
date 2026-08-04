@@ -109,7 +109,16 @@ for (const fn of [
 ]) {
   expectContains(engine, fn, `services/householdBudgetEngine.ts ${fn}`);
 }
+expectContains(engine, 'isHouseholdPlanYearFullyElapsed', 'services/householdBudgetEngine.ts elapsed helper');
+expectContains(engine, 'consumptionAliasKeys', 'services/householdBudgetEngine.ts expense alias dedupe');
+expectContains(read('services/householdAutoSetup.ts'), ': null', 'services/householdAutoSetup.ts persist null salary clear');
 expectContains(budgets, 'resolveHouseholdPlanMonthIndex(currentYear, new Date()', 'pages/Budgets.tsx KPI month index uses today');
+expectContains(budgets, 'expectedMonthlySalary > 0 ? expectedMonthlySalary : null', 'pages/Budgets.tsx salary null persist');
+expectContains(plan, 'expectedMonthlySalary > 0 ? expectedMonthlySalary : null', 'pages/Plan.tsx salary null persist');
+expectContains(read('services/householdAutoSetup.ts'), 'currentProfile', 'services/householdAutoSetup.ts preserves manual profile');
+expectContains(read('context/DataContext.tsx'), 'Budget may have been saved but could not be loaded', 'context/DataContext.tsx silent-insert toast');
+expectContains(read('context/NotificationsContext.tsx'), 'void deferredNotificationsFingerprint', 'context/NotificationsContext.tsx deferred gate');
+expectContains(read('services/budgetSpendFingerprint.ts'), 'salarySignalCents', 'services/budgetSpendFingerprint.ts salary amount invalidation');
 
 const analytics = read('services/householdBudgetAnalytics.ts');
 expectContains(analytics, 'selectHouseholdTrendMonths', 'services/householdBudgetAnalytics.ts');

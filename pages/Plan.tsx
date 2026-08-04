@@ -147,6 +147,8 @@ const AnnualFinancialPlan: React.FC<{
                 }
                 if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
                     setExpectedMonthlySalary(parsed.expectedMonthlySalary);
+                } else if (parsed && Object.prototype.hasOwnProperty.call(parsed, 'expectedMonthlySalary')) {
+                    setExpectedMonthlySalary('');
                 }
             }
         } catch {}
@@ -202,7 +204,7 @@ const AnnualFinancialPlan: React.FC<{
                 kids: householdKids,
                 overrides: householdOverrides,
                 profile: engineProfile,
-                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : null,
             }));
         } catch {}
     }, [householdAdults, householdKids, householdOverrides, engineProfile, expectedMonthlySalary, householdProfileStorageKey]);
@@ -216,7 +218,7 @@ const AnnualFinancialPlan: React.FC<{
             kids: householdKids,
             overrides: householdOverrides,
             profile: engineProfile,
-            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : null,
         };
         const t = window.setTimeout(async () => {
             setHouseholdProfileSaveStatus('saving');

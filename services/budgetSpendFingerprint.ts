@@ -61,7 +61,7 @@ export function buildBudgetSpendFingerprint(
 export function buildNotificationsDataFingerprint(data: {
   budgets?: Array<{ limit?: number; spent?: number; used?: number }>;
   goals?: Array<{ id?: string; deadline?: string; targetDate?: string; target_date?: string }>;
-  transactions?: unknown[];
+  transactions?: Array<{ date?: string; amount?: number; type?: string; category?: string; status?: string }>;
   budgetRequests?: Array<{ id?: string; status?: string }>;
   settings?: { budgetThreshold?: number };
   investmentPlan?: { monthlyBudget?: number };
@@ -92,6 +92,25 @@ export function buildNotificationsDataFingerprint(data: {
     const days = Math.ceil((d.getTime() - now) / 86400000);
     if (days >= 0 && days < nearestGoalDays) nearestGoalDays = days;
   }
+  // Salary / broker-deposit KPI alerts need amount+date invalidation — length alone misses edits.
+  let txAmountCents = 0;
+  let txMaxDate = '';
+  let salarySignalCents = 0;
+  for (const t of txs) {
+    const amountCents = Math.round(Math.abs(Number(t.amount) || 0) * 100);
+    txAmountCents += amountCents;
+    const d = String(t.date ?? '');
+    if (d > txMaxDate) txMaxDate = d;
+    const cat = String(t.category ?? '').toLowerCase();
+    const typ = String(t.type ?? '').toLowerCase();
+    if (
+      /salary|payroll|wage|broker|deposit|invest/i.test(cat) ||
+      typ === 'income' ||
+      typ === 'transfer'
+    ) {
+      salarySignalCents += amountCents;
+    }
+  }
   const rewardsAccounts = data.rewardsAccounts ?? [];
   const rewardsTxs = data.rewardsTransactions ?? [];
   const rewardsBalanceSum = rewardsAccounts.reduce((s, a) => s + (Number(a.currentBalance) || 0), 0);
@@ -119,6 +138,9 @@ export function buildNotificationsDataFingerprint(data: {
     goalIds.slice(0, 200),
     nearestGoalDays === 9999 ? '' : nearestGoalDays,
     txs.length,
+    txAmountCents,
+    txMaxDate,
+    salarySignalCents,
     data.settings?.budgetThreshold ?? 90,
     Number((data.investmentPlan as { monthlyBudget?: number } | undefined)?.monthlyBudget ?? 0),
     (data.plannedTrades ?? []).length,

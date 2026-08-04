@@ -172,6 +172,20 @@ describe('rewardsDomainCompletion', () => {
     expect(incomplete).not.toBe(earned);
   });
 
+  it('fingerprint changes when a salary transaction amount is edited at same row count', () => {
+    const base = {
+      budgets: [],
+      goals: [],
+      transactions: [{ date: '2026-07-01', amount: 10000, type: 'Income', category: 'Salary' }],
+    };
+    const before = buildNotificationsDataFingerprint(base);
+    const after = buildNotificationsDataFingerprint({
+      ...base,
+      transactions: [{ date: '2026-07-01', amount: 12000, type: 'Income', category: 'Salary' }],
+    });
+    expect(after).not.toBe(before);
+  });
+
   it('a posted redemption can be reversed on both legs from the Rewards page', () => {
     const orch = read('services/rewards/orchestrator.ts');
     expect(orch).toContain('export async function reverseRewardsRedemption');

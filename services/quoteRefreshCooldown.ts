@@ -8,17 +8,36 @@ const COOLDOWN_MS = 45_000;
  */
 export const SAHMK_RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000;
 
-let cooldownUntil = 0;
+export type QuoteCooldownProvider = 'default' | 'sahmk';
+
+const cooldownUntilByProvider: Record<QuoteCooldownProvider, number> = {
+  default: 0,
+  sahmk: 0,
+};
+
 let cooldownTimer: ReturnType<typeof setTimeout> | null = null;
 type CooldownEndListener = () => void;
 const cooldownEndListeners = new Set<CooldownEndListener>();
 
-export function isQuoteRefreshInCooldown(): boolean {
-  return Date.now() < cooldownUntil;
+function maxCooldownUntil(): number {
+  return Math.max(cooldownUntilByProvider.default, cooldownUntilByProvider.sahmk);
 }
 
-export function quoteRefreshCooldownRemainingMs(): number {
-  return Math.max(0, cooldownUntil - Date.now());
+/**
+ * @param provider Omit for “any provider cooling” (UI banners).
+ *   Pass `'default'` to gate Finnhub/generic batches; `'sahmk'` for Tadawul-only.
+ */
+export function isQuoteRefreshInCooldown(provider?: QuoteCooldownProvider): boolean {
+  const now = Date.now();
+  if (provider === 'sahmk') return now < cooldownUntilByProvider.sahmk;
+  if (provider === 'default') return now < cooldownUntilByProvider.default;
+  return now < maxCooldownUntil();
+}
+
+export function quoteRefreshCooldownRemainingMs(provider?: QuoteCooldownProvider): number {
+  if (provider === 'sahmk') return Math.max(0, cooldownUntilByProvider.sahmk - Date.now());
+  if (provider === 'default') return Math.max(0, cooldownUntilByProvider.default - Date.now());
+  return Math.max(0, maxCooldownUntil() - Date.now());
 }
 
 /** Additive subscription — UI hooks must not replace MarketSimulator drain handlers. */
@@ -45,19 +64,26 @@ function notifyCooldownEnd(): void {
   }
 }
 
-export function startQuoteRefreshCooldown(ms: number = COOLDOWN_MS): void {
-  const requested = Number.isFinite(ms) ? Number(ms) : COOLDOWN_MS;
-  const waitMs = Math.max(5_000, requested);
-  // Never shorten an existing longer cooldown (e.g. SAHMK 10m then Finnhub 45s).
-  const nextUntil = Date.now() + waitMs;
-  if (nextUntil <= cooldownUntil) return;
-  cooldownUntil = nextUntil;
+function scheduleCooldownEndNotify(): void {
   if (cooldownTimer) clearTimeout(cooldownTimer);
-  const delay = Math.max(0, cooldownUntil - Date.now());
+  const delay = Math.max(0, maxCooldownUntil() - Date.now());
   cooldownTimer = setTimeout(() => {
     cooldownTimer = null;
-    if (Date.now() >= cooldownUntil) notifyCooldownEnd();
+    if (Date.now() >= maxCooldownUntil()) notifyCooldownEnd();
   }, delay);
+}
+
+export function startQuoteRefreshCooldown(
+  ms: number = COOLDOWN_MS,
+  provider: QuoteCooldownProvider = 'default',
+): void {
+  const requested = Number.isFinite(ms) ? Number(ms) : COOLDOWN_MS;
+  const waitMs = Math.max(5_000, requested);
+  // Never shorten an existing longer cooldown for this provider.
+  const nextUntil = Date.now() + waitMs;
+  if (nextUntil <= cooldownUntilByProvider[provider]) return;
+  cooldownUntilByProvider[provider] = nextUntil;
+  scheduleCooldownEndNotify();
 }
 
 export function isRateLimitError(err: unknown): boolean {
@@ -72,7 +98,8 @@ export function resetQuoteRefreshCooldownListenersForTests(): void {
 
 /** Test helper — clears active cooldown window. */
 export function resetQuoteRefreshCooldownForTests(): void {
-  cooldownUntil = 0;
+  cooldownUntilByProvider.default = 0;
+  cooldownUntilByProvider.sahmk = 0;
   if (cooldownTimer) {
     clearTimeout(cooldownTimer);
     cooldownTimer = null;

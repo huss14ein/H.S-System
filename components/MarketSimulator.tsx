@@ -34,6 +34,7 @@ import {
     subscribeQuoteRefreshCooldownEnd,
     SAHMK_RATE_LIMIT_COOLDOWN_MS,
 } from '../services/quoteRefreshCooldown';
+import { consumeSahmkBatchDeferredSymbols, SAHMK_MAX_CODES_PER_BATCH } from '../services/sahmkQuote';
 import { isBackgroundWorkPaused, backgroundWorkPauseRemainingMs } from '../utils/backgroundWorkGate';
 import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed } from '../utils/runWhenIdle';
 import { yieldToMain } from '../utils/yieldToMain';
@@ -51,10 +52,12 @@ import { AuthContext } from '../context/AuthContext';
 import { supabase } from '../services/supabaseClient';
 import { applyManualCommodityQuotes } from '../services/applyManualCommodityQuotes';
 
-/** Cap per tick — large books continue via queued scopes after a *manual* refresh. */
+/** Cap per tick for US / mixed books — large books continue via queued scopes after a *manual* refresh. */
 const MAX_LIVE_FETCH_PER_TICK = 12;
 const PARTIAL_LIVE_RATIO = 0.8;
+/** Delay between queued scopes; manual drains stay tight so Tadawul batches don't idle. */
 const INTER_SCOPE_DELAY_MS = 250;
+const MANUAL_INTER_SCOPE_DELAY_MS = 40;
 /** Clear stuck "Updating…" if pause/retry never drains the queue. */
 const STUCK_REFRESH_GUARD_MS = 35_000;
 const COMMODITY_FETCH_TIMEOUT_MS = 25_000;
@@ -113,6 +116,8 @@ const MarketSimulator: React.FC = () => {
     const pendingLiveFetchSymbolsRef = useRef<string[]>([]);
     const refreshRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingRefreshWhileInFlightRef = useRef(false);
+    /** Serialize holding persists without blocking the next quote batch. */
+    const holdingPersistChainRef = useRef(Promise.resolve());
 
     /** Restore cached quotes into session immediately — no Supabase hydrate required. */
     useEffect(() => {
@@ -401,19 +406,32 @@ const MarketSimulator: React.FC = () => {
                         new Set([...pendingLiveFetchSymbolsRef.current, ...toFetchAll]),
                     );
                     pendingLiveFetchSymbolsRef.current = [];
-                    const toFetch = mergedFetch.slice(0, MAX_LIVE_FETCH_PER_TICK);
-                    pendingLiveFetchSymbolsRef.current = mergedFetch.slice(MAX_LIVE_FETCH_PER_TICK);
-                    // Never bypass rate-limit cooldown — silent bootstrap + manual forceFetch used to
-                    // punch through and re-hammer SAHMK (429 storms + multi-second main-thread hangs).
-                    const rateLimited = isQuoteRefreshInCooldown();
+                    // Tadawul-only books: align outer slice with SAHMK batch cap (avoid fetching 12 then
+                    // re-queuing 4–7 that SAHMK already deferred).
+                    const tadawulOnly =
+                        mergedFetch.length > 0 && mergedFetch.every((s) => isTadawulQuoteSymbol(s));
+                    const tickCap = tadawulOnly ? SAHMK_MAX_CODES_PER_BATCH : MAX_LIVE_FETCH_PER_TICK;
+                    const toFetch = mergedFetch.slice(0, tickCap);
+                    pendingLiveFetchSymbolsRef.current = mergedFetch.slice(tickCap);
+                    // Finnhub/generic cooldown blocks the whole equity batch; SAHMK cooldown must not.
+                    const rateLimited = isQuoteRefreshInCooldown('default');
+                    const sahmkCooling = isQuoteRefreshInCooldown('sahmk');
                     if (rateLimited && toFetch.length > 0) {
                         pendingLiveFetchSymbolsRef.current = Array.from(
                             new Set([...pendingLiveFetchSymbolsRef.current, ...toFetch]),
                         );
+                    } else if (sahmkCooling && toFetch.length > 0) {
+                        // Keep Tadawul symbols queued while SAHMK alone is cooling — US providers still run.
+                        const tadawulPending = toFetch.filter((s) => isTadawulQuoteSymbol(s));
+                        if (tadawulPending.length > 0) {
+                            pendingLiveFetchSymbolsRef.current = Array.from(
+                                new Set([...pendingLiveFetchSymbolsRef.current, ...tadawulPending]),
+                            );
+                        }
                     }
                     const isManualForceFetch = forceFetch && priceScope.manual === true;
                     // Manual Sync must never invent RNG prices. During cooldown, prefer cache over gaps.
-                    const allowCacheFallback = !isManualForceFetch || rateLimited;
+                    const allowCacheFallback = !isManualForceFetch || rateLimited || sahmkCooling;
                     const allowSimulate = !isManualForceFetch;
 
                     /** Equity and commodities are independent: a thrown/rejected equity batch must not discard commodity quotes. */
@@ -422,9 +440,11 @@ const MarketSimulator: React.FC = () => {
                             ? getLivePricesDeduped(toFetch, { forceFetch }).catch((err) => {
                                   if (isRateLimitError(err)) {
                                       const msg = err instanceof Error ? err.message : String(err ?? '');
-                                      startQuoteRefreshCooldown(
-                                          /SAHMK/i.test(msg) ? SAHMK_RATE_LIMIT_COOLDOWN_MS : 45_000,
-                                      );
+                                      if (/SAHMK/i.test(msg)) {
+                                          startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS, 'sahmk');
+                                      } else {
+                                          startQuoteRefreshCooldown(45_000, 'default');
+                                      }
                                   }
                                   throw err;
                               })
@@ -474,6 +494,13 @@ const MarketSimulator: React.FC = () => {
                             networkFetchedThisTick = true;
                             // Durable DB cache — survives cleared localStorage / new device (manual fetch only).
                             void upsertMarketQuotesToDb(supabase as any, sanitizedApi);
+                        }
+                        // SAHMK batch cap / mid-batch 429 — requeue omitted Tadawul symbols for a later tick.
+                        const deferredSahmk = consumeSahmkBatchDeferredSymbols();
+                        if (deferredSahmk.length > 0) {
+                            pendingLiveFetchSymbolsRef.current = Array.from(
+                                new Set([...pendingLiveFetchSymbolsRef.current, ...deferredSahmk]),
+                            );
                         }
                     }
 
@@ -754,15 +781,19 @@ const MarketSimulator: React.FC = () => {
             const allowHoldingPersist = (manual: boolean) =>
                 !marketContext.isQuoteRefreshCancelled() && (manual || !isBackgroundWorkPaused());
             if (holdingUpdatesFiltered.length > 0 && allowHoldingPersist(priceScope.manual === true)) {
-                await yieldToMain();
-                if (!allowHoldingPersist(priceScope.manual === true)) return;
-                try {
-                    await batchUpdateHoldingValues(holdingUpdatesFiltered);
-                } catch (persistErr) {
-                    // Quotes are already on screen; a failed save must not skip price alerts,
-                    // commodity marks, or the queued follow-up fetch below.
-                    console.warn('Holding market value persist failed:', persistErr);
-                }
+                // Do not await persist before draining the next quote batch — was the main multi-minute
+                // amplifier for large Tadawul books (Awaed). Chain keeps writes ordered.
+                const manual = priceScope.manual === true;
+                const updates = holdingUpdatesFiltered;
+                holdingPersistChainRef.current = holdingPersistChainRef.current
+                    .then(async () => {
+                        await yieldToMain();
+                        if (!allowHoldingPersist(manual)) return;
+                        await batchUpdateHoldingValues(updates);
+                    })
+                    .catch((persistErr) => {
+                        console.warn('Holding market value persist failed:', persistErr);
+                    });
             }
 
             const commodityPrevById = new Map(
@@ -785,14 +816,26 @@ const MarketSimulator: React.FC = () => {
 
             if (
                 pendingLiveFetchSymbolsRef.current.length > 0 &&
-                !isQuoteRefreshInCooldown() &&
+                !isQuoteRefreshInCooldown('default') &&
                 marketContext &&
                 priceScope.manual === true &&
                 !marketContext.isQuoteRefreshCancelled()
             ) {
-                const pending = [...pendingLiveFetchSymbolsRef.current];
-                pendingLiveFetchSymbolsRef.current = [];
-                marketContext.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: true, manual: true, silent: true });
+                // While SAHMK alone is cooling, only drain non-Tadawul pending (avoid tight requeue loops).
+                const pendingAll = [...pendingLiveFetchSymbolsRef.current];
+                const drainNow = isQuoteRefreshInCooldown('sahmk')
+                    ? pendingAll.filter((s) => !isTadawulQuoteSymbol(s))
+                    : pendingAll;
+                if (drainNow.length > 0) {
+                    pendingLiveFetchSymbolsRef.current = pendingAll.filter((s) => !drainNow.includes(s));
+                    marketContext.bumpPriceRefresh({
+                        kind: 'symbols',
+                        symbols: drainNow,
+                        forceFetch: true,
+                        manual: true,
+                        silent: true,
+                    });
+                }
             }
         };
 
@@ -818,7 +861,10 @@ const MarketSimulator: React.FC = () => {
                     if (ctx.isQuoteRefreshCancelled()) break;
                     if (isBackgroundWorkPaused() && !ctx.isManualRefreshSession?.()) break;
                     if (ctx.hasQueuedPriceRefresh()) {
-                        await new Promise((r) => setTimeout(r, INTER_SCOPE_DELAY_MS));
+                        const delayMs = ctx.isManualRefreshSession?.()
+                            ? MANUAL_INTER_SCOPE_DELAY_MS
+                            : INTER_SCOPE_DELAY_MS;
+                        await new Promise((r) => setTimeout(r, delayMs));
                     }
                 }
             } finally {
@@ -831,10 +877,24 @@ const MarketSimulator: React.FC = () => {
                     if (after.isQuoteRefreshCancelled()) {
                         pendingLiveFetchSymbolsRef.current = [];
                         after.finishQuotesRefresh();
-                    } else if (!isQuoteRefreshInCooldown()) {
-                        const pending = [...pendingLiveFetchSymbolsRef.current];
-                        pendingLiveFetchSymbolsRef.current = [];
-                        after.bumpPriceRefresh({ kind: 'symbols', symbols: pending, forceFetch: true, manual: true, silent: true });
+                    } else if (!isQuoteRefreshInCooldown('default')) {
+                        const pendingAll = [...pendingLiveFetchSymbolsRef.current];
+                        const drainNow = isQuoteRefreshInCooldown('sahmk')
+                            ? pendingAll.filter((s) => !isTadawulQuoteSymbol(s))
+                            : pendingAll;
+                        if (drainNow.length === 0) {
+                            // Tadawul-only while SAHMK cools — keep pending for cooldown-end drain.
+                            after.finishQuotesRefresh();
+                        } else {
+                            pendingLiveFetchSymbolsRef.current = pendingAll.filter((s) => !drainNow.includes(s));
+                            after.bumpPriceRefresh({
+                                kind: 'symbols',
+                                symbols: drainNow,
+                                forceFetch: true,
+                                manual: true,
+                                silent: true,
+                            });
+                        }
                     } else {
                         // Keep pending for cooldown-end drain; clear Updating… so the UI is not stuck for minutes.
                         after.finishQuotesRefresh();

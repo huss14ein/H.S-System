@@ -23,7 +23,12 @@ describe('live quotes E2E wiring', () => {
     expect(sim).toContain('scheduleRefreshRetry');
     expect(sim).toContain('urgentApply');
     expect(sim).toContain('MAX_LIVE_FETCH_PER_TICK = 12');
-    expect(sim).toContain('const rateLimited = isQuoteRefreshInCooldown()');
+    expect(sim).toContain('SAHMK_MAX_CODES_PER_BATCH');
+    expect(sim).toContain('tadawulOnly');
+    expect(sim).toContain('holdingPersistChainRef');
+    expect(sim).toContain("const rateLimited = isQuoteRefreshInCooldown('default')");
+    expect(sim).toContain('consumeSahmkBatchDeferredSymbols');
+    expect(sim).toContain('MANUAL_INTER_SCOPE_DELAY_MS');
     expect(sim).not.toContain('!(priceScope.manual === true && forceFetch)');
     expect(sim).toContain('SAHMK_RATE_LIMIT_COOLDOWN_MS');
     expect(sim).toContain('skipCommodityForRateLimit');

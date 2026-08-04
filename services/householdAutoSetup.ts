@@ -27,7 +27,8 @@ export type HouseholdProfileSnapshot = {
   kids: number;
   overrides: HouseholdMonthlyOverride[];
   profile: HouseholdEngineProfile;
-  expectedMonthlySalary?: number;
+  /** Positive override, or `null` when Auto-setup clears a prior override (must persist — not omit). */
+  expectedMonthlySalary?: number | null;
 };
 
 /** JSON shape persisted locally and in `household_budget_profiles.profile`. */
@@ -40,10 +41,11 @@ export function buildHouseholdProfileSnapshot(
     kids: setup.kids,
     profile: setup.profile,
     overrides: setup.clearOverrides ? [] : prevOverrides,
+    // Explicit null so JSON.stringify / Supabase keep the key — loaders clear local overrides.
     expectedMonthlySalary:
       typeof setup.expectedMonthlySalary === 'number' && setup.expectedMonthlySalary > 0
         ? setup.expectedMonthlySalary
-        : undefined,
+        : null,
   };
 }
 

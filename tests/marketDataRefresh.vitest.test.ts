@@ -22,7 +22,9 @@ describe('market data refresh wiring', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current.length > 0');
     expect(sim).toContain('pendingLiveFetchSymbolsRef.current = []');
-    expect(sim).toContain('forceFetch: true, manual: true, silent: true');
+    expect(sim).toMatch(/forceFetch:\s*true,\s*manual:\s*true,\s*silent:\s*true/);
     expect(sim).toContain('subscribeQuoteRefreshCooldownEnd');
+    expect(sim).toContain("isQuoteRefreshInCooldown('default')");
+    expect(sim).toContain('consumeSahmkBatchDeferredSymbols');
   });
 });

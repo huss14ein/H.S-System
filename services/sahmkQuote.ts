@@ -17,12 +17,27 @@ export type SahmkQuoteTick = { price: number; change: number; changePercent: num
 const SUCCESS_CACHE_TTL_MS = 60_000;
 /** After a 429, do not hit the proxy again for this code until cooldown-ish TTL. */
 const RATE_LIMIT_CACHE_TTL_MS = SAHMK_RATE_LIMIT_COOLDOWN_MS;
-/** Free-tier budget: never blast more than this many distinct codes in one batch. */
-export const SAHMK_MAX_CODES_PER_BATCH = 5;
-const INTER_CODE_GAP_MS = 200;
+/**
+ * Free-tier budget: cap distinct codes per outer tick.
+ * Keep ≤8 so daily quota (~100) survives a full Awaed-sized book without one-shot burn.
+ */
+export const SAHMK_MAX_CODES_PER_BATCH = 8;
+/** Parallel proxy calls within a batch — cuts wall time vs pure sequential without blasting the API. */
+const SAHMK_FETCH_CONCURRENCY = 3;
+/** Pause between concurrent waves (not between every single code). */
+const INTER_WAVE_GAP_MS = 120;
 
 const inFlightByCode = new Map<string, Promise<SahmkQuoteTick | null>>();
 const cachedByCode = new Map<string, { at: number; tick: SahmkQuoteTick | null; rateLimited?: boolean }>();
+/** Display symbols omitted by the per-batch code cap — MarketSimulator requeues these. */
+let lastBatchDeferredDisplaySymbols: string[] = [];
+
+/** Drain symbols skipped by `SAHMK_MAX_CODES_PER_BATCH` so the outer queue can retry them. */
+export function consumeSahmkBatchDeferredSymbols(): string[] {
+  const out = lastBatchDeferredDisplaySymbols;
+  lastBatchDeferredDisplaySymbols = [];
+  return out;
+}
 
 /** Map `2222.SR` / bare `2222` / `REITF.SA` → code for `/quote/{code}/`. Letter tickers require a Saudi suffix to avoid US ticker collisions. */
 export function extractTadawulCodeForSahmk(symbol: string): string | null {
@@ -35,14 +50,15 @@ export function extractTadawulCodeForSahmk(symbol: string): string | null {
 }
 
 function noteSahmkRateLimited(): void {
-  startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS);
+  // SAHMK-only — must not block Finnhub/Stooq for US (or mixed) refreshes.
+  startQuoteRefreshCooldown(SAHMK_RATE_LIMIT_COOLDOWN_MS, 'sahmk');
 }
 
 async function fetchSahmkTickByCode(code: string): Promise<SahmkQuoteTick | null> {
   const c = code.trim().toUpperCase();
   if (!c) return null;
 
-  if (isQuoteRefreshInCooldown()) {
+  if (isQuoteRefreshInCooldown('sahmk')) {
     const cached = cachedByCode.get(c);
     return cached?.tick ?? null;
   }
@@ -152,13 +168,15 @@ function assignQuoteKeys(
 
 /**
  * Batch live map compatible with `getLivePrices` / Finnhub output keys.
- * Caps distinct SAHMK codes per call, aborts on first 429, and respects global cooldown.
+ * Caps distinct SAHMK codes per call, aborts on first 429, and respects SAHMK-only cooldown.
+ * Codes beyond the cap are exposed via `consumeSahmkBatchDeferredSymbols()` for requeue.
  */
 export async function getSahmkLivePrices(
   symbols: string[],
 ): Promise<Record<string, SahmkQuoteTick>> {
+  lastBatchDeferredDisplaySymbols = [];
   if (symbols.length === 0) return {};
-  if (isQuoteRefreshInCooldown()) return {};
+  if (isQuoteRefreshInCooldown('sahmk')) return {};
 
   const out: Record<string, SahmkQuoteTick> = {};
 
@@ -171,27 +189,53 @@ export async function getSahmkLivePrices(
     codeToDisplaySymbols.set(code, list);
   }
 
-  const codes = Array.from(codeToDisplaySymbols.keys()).slice(0, SAHMK_MAX_CODES_PER_BATCH);
+  const allCodes = Array.from(codeToDisplaySymbols.keys());
+  const codes = allCodes.slice(0, SAHMK_MAX_CODES_PER_BATCH);
+  const deferredCodes = allCodes.slice(SAHMK_MAX_CODES_PER_BATCH);
+  lastBatchDeferredDisplaySymbols = deferredCodes.flatMap((c) => codeToDisplaySymbols.get(c) ?? []);
   let rateLimited = false;
+  const succeededCodes = new Set<string>();
 
-  for (let i = 0; i < codes.length; i++) {
-    if (isQuoteRefreshInCooldown()) break;
-    const code = codes[i]!;
-    const displaySymbols = codeToDisplaySymbols.get(code) ?? [];
-    try {
-      const quote = await fetchSahmkTickByCode(code);
-      if (!quote) continue;
-      assignQuoteKeys(out, displaySymbols, code, quote);
-    } catch (err) {
+  for (let waveStart = 0; waveStart < codes.length; waveStart += SAHMK_FETCH_CONCURRENCY) {
+    if (isQuoteRefreshInCooldown('sahmk') || rateLimited) break;
+    const wave = codes.slice(waveStart, waveStart + SAHMK_FETCH_CONCURRENCY);
+    const settled = await Promise.allSettled(
+      wave.map(async (code) => {
+        const displaySymbols = codeToDisplaySymbols.get(code) ?? [];
+        const quote = await fetchSahmkTickByCode(code);
+        return { code, displaySymbols, quote };
+      }),
+    );
+
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        const { code, displaySymbols, quote } = result.value;
+        if (quote) {
+          assignQuoteKeys(out, displaySymbols, code, quote);
+          succeededCodes.add(code);
+        }
+        continue;
+      }
+      const err = result.reason;
       if (/429|rate.?limit|throttl|quota/i.test(err instanceof Error ? err.message : String(err ?? ''))) {
         rateLimited = true;
-        // Stop immediately — continuing burns the free-tier daily budget.
-        break;
       }
     }
 
-    if (i + 1 < codes.length) {
-      await new Promise((r) => setTimeout(r, INTER_CODE_GAP_MS));
+    if (rateLimited) {
+      // Requeue this wave’s unfinished codes + everything after (siblings may have succeeded).
+      const remaining = codes
+        .slice(waveStart)
+        .filter((c) => !succeededCodes.has(c))
+        .flatMap((c) => codeToDisplaySymbols.get(c) ?? []);
+      lastBatchDeferredDisplaySymbols = Array.from(
+        new Set([...remaining, ...lastBatchDeferredDisplaySymbols]),
+      );
+      break;
+    }
+
+    if (waveStart + SAHMK_FETCH_CONCURRENCY < codes.length) {
+      await new Promise((r) => setTimeout(r, INTER_WAVE_GAP_MS));
     }
   }
 
@@ -210,4 +254,5 @@ export async function getSahmkLivePrices(
 export function resetSahmkQuoteCacheForTests(): void {
   inFlightByCode.clear();
   cachedByCode.clear();
+  lastBatchDeferredDisplaySymbols = [];
 }

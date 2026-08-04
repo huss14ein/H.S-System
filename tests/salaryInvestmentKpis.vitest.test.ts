@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { computeSalaryInvestmentKpis } from '../services/salaryInvestmentKpis';
 import { normalizeSalaryInvestmentTargets } from '../services/salaryInvestmentSettings';
 
+/** Stable YYYY-MM-DD inside the current calendar month (KPI window is “this financial month”). */
+function currentMonthDay(day: number): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(Math.min(28, Math.max(1, day))).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 describe('salary investment KPIs', () => {
   it('computes salary-funded deposits, deployment, idle broker cash, and history', () => {
     const data = {
@@ -19,8 +28,8 @@ describe('salary investment KPIs', () => {
         { id: 'broker-1', name: 'Broker One', type: 'Investment', balance: 0, currency: 'SAR' },
       ],
       transactions: [
-        { id: 'tx-salary', accountId: 'checking-1', amount: 12000, type: 'income', category: 'Salary', description: 'Monthly salary', date: '2026-07-05' },
-        { id: 'tx-expense', accountId: 'checking-1', amount: -3000, type: 'expense', category: 'Housing', description: 'Rent', date: '2026-07-10' },
+        { id: 'tx-salary', accountId: 'checking-1', amount: 12000, type: 'income', category: 'Salary', description: 'Monthly salary', date: currentMonthDay(5) },
+        { id: 'tx-expense', accountId: 'checking-1', amount: -3000, type: 'expense', category: 'Housing', description: 'Rent', date: currentMonthDay(10) },
       ],
       investments: [
         {
@@ -32,8 +41,8 @@ describe('salary investment KPIs', () => {
         },
       ],
       investmentTransactions: [
-        { id: 'dep-1', accountId: 'broker-1', linkedCashAccountId: 'checking-1', date: '2026-07-07', type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 4000, currency: 'SAR' },
-        { id: 'buy-1', accountId: 'broker-1', portfolioId: 'portfolio-1', date: '2026-07-09', type: 'buy', symbol: 'AAPL', quantity: 5, price: 500, total: 2500, currency: 'SAR' },
+        { id: 'dep-1', accountId: 'broker-1', linkedCashAccountId: 'checking-1', date: currentMonthDay(7), type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 4000, currency: 'SAR' },
+        { id: 'buy-1', accountId: 'broker-1', portfolioId: 'portfolio-1', date: currentMonthDay(9), type: 'buy', symbol: 'AAPL', quantity: 5, price: 500, total: 2500, currency: 'SAR' },
       ],
     } as any;
 
@@ -89,7 +98,7 @@ describe('salary investment KPIs', () => {
         { id: 'broker-1', name: 'Broker One', type: 'Investment', balance: 0, currency: 'SAR' },
       ],
       transactions: [
-        { id: 'tx-salary', accountId: 'checking-1', amount: 10000, type: 'income', category: 'Salary', description: 'Monthly salary', date: '2026-07-05' },
+        { id: 'tx-salary', accountId: 'checking-1', amount: 10000, type: 'income', category: 'Salary', description: 'Monthly salary', date: currentMonthDay(5) },
       ],
       investments: [
         {
@@ -101,9 +110,9 @@ describe('salary investment KPIs', () => {
         },
       ],
       investmentTransactions: [
-        { id: 'dep-salary', accountId: 'broker-1', linkedCashAccountId: 'checking-1', date: '2026-07-07', type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 1000, currency: 'SAR' },
-        { id: 'dep-other', accountId: 'broker-1', linkedCashAccountId: 'other-cash', date: '2026-07-07', type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 4000, currency: 'SAR' },
-        { id: 'buy-1', accountId: 'broker-1', portfolioId: 'portfolio-1', date: '2026-07-09', type: 'buy', symbol: 'AAPL', quantity: 2, price: 500, total: 1000, currency: 'SAR' },
+        { id: 'dep-salary', accountId: 'broker-1', linkedCashAccountId: 'checking-1', date: currentMonthDay(7), type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 1000, currency: 'SAR' },
+        { id: 'dep-other', accountId: 'broker-1', linkedCashAccountId: 'other-cash', date: currentMonthDay(7), type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 4000, currency: 'SAR' },
+        { id: 'buy-1', accountId: 'broker-1', portfolioId: 'portfolio-1', date: currentMonthDay(9), type: 'buy', symbol: 'AAPL', quantity: 2, price: 500, total: 1000, currency: 'SAR' },
       ],
     } as any;
 
@@ -126,7 +135,7 @@ describe('salary investment KPIs', () => {
       transactions: [],
       investments: [{ id: 'portfolio-1', name: 'Growth', accountId: 'broker-1', currency: 'SAR', holdings: [] }],
       investmentTransactions: [
-        { id: 'dep-unlinked', accountId: 'broker-1', date: '2026-07-07', type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 2000, currency: 'SAR' },
+        { id: 'dep-unlinked', accountId: 'broker-1', date: currentMonthDay(7), type: 'deposit', symbol: 'CASH', quantity: 0, price: 0, total: 2000, currency: 'SAR' },
       ],
     } as any;
     const result = computeSalaryInvestmentKpis(data, 3.75);

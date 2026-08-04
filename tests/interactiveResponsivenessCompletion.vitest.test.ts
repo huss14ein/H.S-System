@@ -72,11 +72,19 @@ describe('interactiveResponsivenessCompletion', () => {
     const sim = read('components/MarketSimulator.tsx');
     expect(sim).toContain('SAHMK_RATE_LIMIT_COOLDOWN_MS');
     expect(sim).toContain('MAX_LIVE_FETCH_PER_TICK = 12');
-    expect(sim).toContain('const rateLimited = isQuoteRefreshInCooldown()');
+    expect(sim).toContain('SAHMK_MAX_CODES_PER_BATCH');
+    expect(sim).toContain('tadawulOnly');
+    expect(sim).toContain('holdingPersistChainRef');
+    expect(sim).toContain("const rateLimited = isQuoteRefreshInCooldown('default')");
+    expect(sim).toContain('consumeSahmkBatchDeferredSymbols');
     expect(sim).toContain('upsertMarketQuotesToDb');
     expect(sim).not.toContain('MARKET_SESSION_POLL_MS');
     expect(read('services/sahmkQuote.ts')).toContain('SAHMK_MAX_CODES_PER_BATCH');
-    expect(read('services/geminiService.ts')).toContain('isQuoteRefreshInCooldown()');
+    expect(read('services/sahmkQuote.ts')).toContain('SAHMK_FETCH_CONCURRENCY');
+    expect(read('services/geminiService.ts')).toContain("isQuoteRefreshInCooldown('sahmk')");
+    expect(read('services/geminiService.ts')).toContain('usSymbols.length === 0');
+    expect(sim).toContain('MANUAL_INTER_SCOPE_DELAY_MS');
+    expect(sim).toContain('holdingPersistChainRef');
   });
 
   it('suggested adjustments await updateBudget and keep panel on total failure', () => {
