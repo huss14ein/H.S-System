@@ -48,6 +48,15 @@ describe('budgetAddCompletion', () => {
     );
   });
 
+  it('yearly budgets expose anchor month picker; updateBudget matches by id', () => {
+    const budgets = read('pages/Budgets.tsx');
+    const ctx = read('context/DataContext.tsx');
+    expect(budgets).toContain('yearly-anchor-month');
+    expect(budgets).toContain('Month this yearly budget is used');
+    expect(ctx).toContain('.match({ id, user_id: auth.user.id })');
+    expect(ctx).toContain('Could not find that budget to update');
+  });
+
   it('finalize request and smart-fill skip double-confirm and await saves', () => {
     const budgets = read('pages/Budgets.tsx');
     expect(budgets).toMatch(

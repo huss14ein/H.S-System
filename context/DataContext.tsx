@@ -2703,28 +2703,90 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const v = validateBudget({ category: budget.category, month: budget.month, year: budget.year, limit: budget.limit, period: budget.period });
       if (!v.valid) { toast(v.errors.join('\n'), 'error'); return false; }
       const db = supabase;
-      const { category, month, year, limit, period, tier, destinationAccountId, goalId } = budget;
+      const { id, category, year, limit, period, tier, destinationAccountId, goalId } = budget;
+      const storageMonth = canonicalBudgetStorageMonth(period, budget.month);
+      const existing = (data?.budgets ?? []).find((b) => b.id && id && b.id === id);
+      const matchMonth = existing ? Number(existing.month) : Number(budget.month);
+      const matchYear = existing ? Number(existing.year) : Number(year);
       const payload: Record<string, unknown> = {
         limit,
         period,
         tier,
+        month: storageMonth,
+        year,
       };
       if (destinationAccountId !== undefined) payload.destination_account_id = destinationAccountId;
       if (goalId !== undefined) payload.goal_id = goalId != null && String(goalId).trim() !== '' ? goalId : null;
-      const { error } = await db
-        .from('budgets')
-        .update(payload)
-        .match({ user_id: auth.user.id, category, month, year });
+
+      const isPersistedId =
+        Boolean(id) &&
+        !String(id).startsWith('synthetic-') &&
+        !String(id).startsWith('approved-request-');
+
+      let updatedRow: Record<string, unknown> | null = null;
+      let error: unknown = null;
+      if (isPersistedId) {
+        const res = await db
+          .from('budgets')
+          .update(payload)
+          .match({ id, user_id: auth.user.id })
+          .select('*')
+          .maybeSingle();
+        updatedRow = (res.data as Record<string, unknown> | null) ?? null;
+        error = res.error;
+        if (error && /goal_id|destination_account_id|period|tier|PGRST204|schema cache|column/i.test(String((error as any)?.message ?? ''))) {
+          const legacyPayload = { ...payload };
+          if (/goal_id/i.test(String((error as any)?.message ?? ''))) delete legacyPayload.goal_id;
+          if (/destination_account_id/i.test(String((error as any)?.message ?? ''))) delete legacyPayload.destination_account_id;
+          if (/period/i.test(String((error as any)?.message ?? ''))) delete legacyPayload.period;
+          if (/tier/i.test(String((error as any)?.message ?? ''))) delete legacyPayload.tier;
+          const retry = await db
+            .from('budgets')
+            .update(legacyPayload)
+            .match({ id, user_id: auth.user.id })
+            .select('*')
+            .maybeSingle();
+          updatedRow = (retry.data as Record<string, unknown> | null) ?? null;
+          error = retry.error;
+        }
+      } else {
+        const res = await db
+          .from('budgets')
+          .update(payload)
+          .match({ user_id: auth.user.id, category, month: matchMonth, year: matchYear })
+          .select('*')
+          .maybeSingle();
+        updatedRow = (res.data as Record<string, unknown> | null) ?? null;
+        error = res.error;
+      }
+
       if (error) {
         console.error('Error updating budget:', error);
         toast(`Could not update budget: ${formatDbError(error)}`, 'error');
         throw error;
       }
+      if (!updatedRow) {
+        toast('Could not find that budget to update. Refresh and try again.', 'error');
+        return false;
+      }
+      const nextMonth = Number((updatedRow as any).month) || storageMonth;
+      const nextYear = Number((updatedRow as any).year) || year;
       setData((prev) => ({
         ...prev,
         budgets: prev.budgets.map((b) =>
-          b.category === category && b.month === month && b.year === year
-            ? { ...b, limit, period, tier, destinationAccountId, goalId }
+          (id && b.id === id) || (b.category === category && b.month === matchMonth && b.year === matchYear)
+            ? {
+                ...b,
+                ...updatedRow,
+                month: nextMonth,
+                year: nextYear,
+                limit,
+                period,
+                tier,
+                destinationAccountId:
+                  (updatedRow as any).destination_account_id ?? destinationAccountId ?? b.destinationAccountId,
+                goalId: (updatedRow as any).goal_id ?? goalId ?? b.goalId,
+              }
             : b
         ),
       }));
@@ -2758,10 +2820,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         const budgetsToInsert = sourceBudgets
             .filter((b: any) => !existingTargetCategories.has(b.category))
+            // Yearly envelopes already apply to every month of the plan year — do not clone them into each month.
+            .filter((b: any) => String(b.period ?? 'monthly').toLowerCase() !== 'yearly' || Number(b.year) !== targetYear)
             .map((b: any) => ({
                 user_id: auth.user!.id,
                 category: b.category,
-                month: targetMonth,
+                month: String(b.period ?? 'monthly').toLowerCase() === 'yearly'
+                  ? canonicalBudgetStorageMonth(b.period, b.month ?? targetMonth)
+                  : targetMonth,
                 year: targetYear,
                 limit: b.limit,
                 period: b.period ?? 'monthly',

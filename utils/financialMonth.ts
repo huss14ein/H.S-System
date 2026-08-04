@@ -350,16 +350,14 @@ export function budgetAppliesToFinancialView(
 }
 
 /**
- * Canonical `month` to persist for a budget period.
- * Yearly rows are year-scoped and always stored as month `1` so they uniquely key
- * (category, year, month) and remain visible in every financial month of that year.
+ * Clamp a budget storage month to 1–12.
+ * Yearly rows may use any anchor month (when the yearly envelope is “used” / billed);
+ * they still apply to the whole plan year via {@link budgetAppliesToFinancialView}.
  */
 export function canonicalBudgetStorageMonth(
-  period: string | null | undefined,
+  _period: string | null | undefined,
   viewMonth: number,
 ): number {
-  const p = String(period ?? 'monthly').toLowerCase();
-  if (p === 'yearly') return 1;
   const m = Number(viewMonth);
   if (Number.isFinite(m) && m >= 1 && m <= 12) return Math.round(m);
   return 1;
@@ -369,8 +367,8 @@ export function canonicalBudgetStorageMonth(
  * How well a persisted budget row matches the selected financial view (higher = preferred).
  * Used to pick one row per category when legacy calendar-index rows overlap the same window.
  *
- * Yearly-period rows apply to the whole plan year (`budgetAppliesToFinancialView`) but are often
- * stored as `month: 1`. They must score ≥ 0 for every financial month of that year — otherwise
+ * Yearly-period rows apply to the whole plan year (`budgetAppliesToFinancialView`) for any
+ * stored anchor month. They must score ≥ 0 for every financial month of that year — otherwise
  * `dedupeBudgetRowsForFinancialView` drops them and Add Budget / household yearly rows never appear.
  */
 export function budgetRowViewMatchScore(

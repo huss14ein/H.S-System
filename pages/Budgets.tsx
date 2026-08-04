@@ -265,6 +265,11 @@ interface BudgetModalProps {
     currentYear: number;
 }
 
+const BUDGET_MODAL_MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
 const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budgetToEdit, currentMonth, currentYear }) => {
     const { data } = useContext(DataContext)!;
     const monthStartDay = resolveMonthStartDayFromData(data);
@@ -276,6 +281,8 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
     const [limitPeriod, setLimitPeriod] = useState<'Monthly' | 'Weekly' | 'Daily' | 'Yearly'>('Monthly');
     const [tier, setTier] = useState<'Core' | 'Supporting' | 'Optional'>('Optional');
     const [goalId, setGoalId] = useState<string>('');
+    /** Anchor month for yearly budgets (when the yearly cost is typically used). */
+    const [storageMonth, setStorageMonth] = useState(currentMonth);
 
     const existingCategories = useMemo(
         () =>
@@ -301,6 +308,9 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             setLimitPeriod(budgetToEdit.period === 'yearly' ? 'Yearly' : budgetToEdit.period === 'weekly' ? 'Weekly' : budgetToEdit.period === 'daily' ? 'Daily' : 'Monthly');
             setTier((budgetToEdit as { tier?: 'Core' | 'Supporting' | 'Optional' }).tier ?? 'Optional');
             setGoalId((budgetToEdit as Budget).goalId ?? '');
+            setStorageMonth(
+                canonicalBudgetStorageMonth(budgetToEdit.period, Number(budgetToEdit.month) || currentMonth),
+            );
         } else {
             const learnedPeriod = getLearnedDefault('budget-add', 'limitPeriod') as string | undefined;
             const learnedTier = getLearnedDefault('budget-add', 'tier') as string | undefined;
@@ -311,22 +321,26 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             setLimitPeriod(learnedPeriod && validPeriods.includes(learnedPeriod as any) ? (learnedPeriod as any) : 'Monthly');
             setTier(learnedTier && validTiers.includes(learnedTier as any) ? (learnedTier as any) : 'Optional');
             setGoalId('');
+            setStorageMonth(currentMonth);
         }
-    }, [budgetToEdit, isOpen, getLearnedDefault]);
+    }, [budgetToEdit, isOpen, getLearnedDefault, currentMonth]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const rawLimit = parseFloat(limit) || 0;
         const isYearly = limitPeriod === 'Yearly';
         const period = isYearly ? 'yearly' : limitPeriod === 'Weekly' ? 'weekly' : limitPeriod === 'Daily' ? 'daily' : 'monthly';
-        const month = budgetToEdit ? budgetToEdit.month : (isYearly ? 1 : currentMonth);
         const year = budgetToEdit ? budgetToEdit.year : currentYear;
+        const month = canonicalBudgetStorageMonth(
+            period,
+            isYearly || !budgetToEdit ? storageMonth : Number(budgetToEdit.month) || currentMonth,
+        );
 
         const ok = await confirmAction(
             summarizeBudgetForConfirm({
                 category,
                 limit: rawLimit,
-                month: isYearly ? 1 : month,
+                month,
                 year,
                 isEdit: !!budgetToEdit,
             }),
@@ -337,7 +351,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             await onSave({
                 category,
                 limit: rawLimit,
-                month: isYearly ? 1 : month,
+                month,
                 year,
                 period,
                 tier,
@@ -399,6 +413,26 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
                         </p>
                     )}
                 </div>
+                {limitPeriod === 'Yearly' && (
+                    <div>
+                        <label htmlFor="yearly-anchor-month" className="block text-sm font-medium text-gray-700 flex items-center">
+                            Month this yearly budget is used{' '}
+                            <InfoHint text="Pick the month when this yearly cost typically hits (e.g. Iqama in March). The envelope still covers the full year in every Budgets month view." />
+                        </label>
+                        <select
+                            id="yearly-anchor-month"
+                            value={storageMonth}
+                            onChange={(e) => setStorageMonth(Number(e.target.value))}
+                            className="select-base mt-1"
+                        >
+                            {BUDGET_MODAL_MONTHS.map((label, idx) => (
+                                <option key={label} value={idx + 1}>
+                                    {label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
                 <div>
                     <label htmlFor="budget-goal-link" className="block text-sm font-medium text-gray-700 flex items-center">
                         Fund a goal (optional){' '}
@@ -1440,14 +1474,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         const scopedBudgets = [...ownScopedBudgets, ...syntheticRestrictedBudgets, ...approvedRequestBudgets];
 
         if (budgetView === 'Yearly') {
-            const yearlyLimitByCategory = new Map<string, number>();
             const toYearly = (b: Budget) => b.period === 'yearly' ? b.limit : b.period === 'weekly' ? b.limit * 52 : b.period === 'daily' ? b.limit * 365 : b.limit * 12;
-            scopedBudgets.forEach((b) => yearlyLimitByCategory.set(b.category, (yearlyLimitByCategory.get(b.category) || 0) + toYearly(b)));
 
-            return Array.from(yearlyLimitByCategory.entries())
-                .map(([category, yearlyLimit]) => {
-                    const spent = spending.get(category) || 0;
-                    const prevYear = previousSpending.get(category) || 0;
+            return scopedBudgets
+                .map((budget) => {
+                    const yearlyLimit = toYearly(budget);
+                    const spent = spending.get(budget.category) || 0;
+                    const prevYear = previousSpending.get(budget.category) || 0;
                     const trend = budgetTrendFromPeriods(prevYear, spent);
                     const visual = buildBudgetCardVisualMetrics({
                         budgetView: 'Yearly',
@@ -1458,10 +1491,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         annualEnvelopeLimit: 0,
                     });
                     return {
-                        id: `${category}-${currentYear}`,
-                        category,
-                        month: currentMonth,
-                        year: currentYear,
+                        ...budget,
+                        // Keep real id / month / period so Edit updates the stored row (not a synthetic Yearly rollup).
                         spent: visual.spent,
                         limit: yearlyLimit,
                         displayLimit: yearlyLimit,
@@ -1474,6 +1505,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                         utilizationLabel: visual.utilizationLabel,
                         primaryBarValue: visual.primaryBarValue,
                         primaryBarMax: visual.primaryBarMax,
+                        budgetTier: (budget.tier ?? 'Optional') as BudgetTier,
                     };
                 })
                 .sort((a, b) => b.spent - a.spent);
@@ -2230,13 +2262,22 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             );
             return;
         }
+        if (budget?.id) {
+            const stored = (data?.budgets ?? []).find((b) => b.id === budget.id);
+            if (stored) {
+                setBudgetToEdit(stored);
+                setIsModalOpen(true);
+                return;
+            }
+        }
         setBudgetToEdit(budget);
         setIsModalOpen(true);
-    }, [canManageBudgets, isCollaborator]);
+    }, [canManageBudgets, isCollaborator, data?.budgets]);
 
     const handleOwnPortfolioEdit = useCallback(
         (budget: BudgetRow) => {
-            handleOpenModal({ ...budget, limit: budget.displayLimit });
+            // Always resolve the persisted row (real limit/month) — Yearly view displayLimit is annualized.
+            handleOpenModal(budget);
         },
         [handleOpenModal],
     );
@@ -2244,7 +2285,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
     const handleSaveBudget = async (budget: Omit<Budget, 'id' | 'user_id'>, isEditing: boolean) => {
         try {
             const ok = isEditing && budgetToEdit
-                ? await updateBudget({ ...budgetToEdit, ...budget })
+                ? await updateBudget({
+                      ...budgetToEdit,
+                      ...budget,
+                      // Prefer DB id; preserve original month key for match when id missing.
+                      id: budgetToEdit.id,
+                      month: budget.month,
+                      year: budget.year ?? budgetToEdit.year,
+                  })
                 : await addBudget(budget, { confirmed: true });
             if (!ok) {
                 // Validation / guard / auth failure already toasted — keep modal open for retry

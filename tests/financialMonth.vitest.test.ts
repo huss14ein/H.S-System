@@ -197,9 +197,11 @@ describe('dedupeBudgetRowsForFinancialView', () => {
     expect(deduped[0].limit).toBe(18000);
   });
 
-  it('canonicalBudgetStorageMonth forces yearly to month 1', () => {
-    expect(canonicalBudgetStorageMonth('yearly', 8)).toBe(1);
+  it('canonicalBudgetStorageMonth clamps any period to 1–12 (yearly keeps chosen anchor month)', () => {
+    expect(canonicalBudgetStorageMonth('yearly', 8)).toBe(8);
+    expect(canonicalBudgetStorageMonth('yearly', 1)).toBe(1);
     expect(canonicalBudgetStorageMonth('monthly', 8)).toBe(8);
+    expect(canonicalBudgetStorageMonth('monthly', 0)).toBe(1);
   });
 });
 

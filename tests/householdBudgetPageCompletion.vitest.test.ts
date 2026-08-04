@@ -33,15 +33,20 @@ describe('householdBudgetPageCompletion', () => {
     expect(finalize).toContain('Request was not finalized');
   });
 
-  it('yearly budgets stay visible via match score + canonical month=1 on write', () => {
+  it('yearly budgets stay visible via match score; write/edit use chosen anchor month', () => {
     const budgets = read('pages/Budgets.tsx');
     const ctx = read('context/DataContext.tsx');
     const fm = read('utils/financialMonth.ts');
+    const card = read('components/BudgetOwnPortfolioCard.tsx');
     expect(fm).toContain('canonicalBudgetStorageMonth');
     expect(fm).toMatch(/period === 'yearly'[\s\S]{0,200}return budgetView === 'Yearly' \? 250 : 150/);
     expect(fm).toContain('// Group already passed budgetAppliesToFinancialView — always keep a winner.');
     expect(ctx).toContain('canonicalBudgetStorageMonth(periodNorm, budget.month)');
+    expect(ctx).toContain('.match({ id, user_id: auth.user.id })');
     expect(budgets).toContain('canonicalBudgetStorageMonth(cat.period, bulkAddTargetMonth)');
+    expect(budgets).toContain('yearly-anchor-month');
+    expect(budgets).toContain('Keep real id / month / period so Edit updates the stored row');
+    expect(card).not.toContain("disabled={budgetView === 'Yearly'}");
   });
 
   it('DataContext addBudget uses snake_case insert payload', () => {

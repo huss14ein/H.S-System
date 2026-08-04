@@ -145,23 +145,26 @@ const BudgetOwnPortfolioCard: React.FC<BudgetOwnPortfolioCardProps> = React.memo
                         </button>
                         <button
                             type="button"
-                            disabled={budgetView === 'Yearly'}
                             onClick={(e) => {
                                 e.stopPropagation();
                                 onEdit(budget);
                             }}
-                            className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80 disabled:opacity-40"
+                            className="p-2 text-slate-400 hover:text-primary rounded-lg hover:bg-white/80"
+                            title="Edit budget"
+                            aria-label="Edit budget"
                         >
                             <PencilIcon className="h-4 w-4" />
                         </button>
                         <button
                             type="button"
-                            disabled={!canDelete || budgetView === 'Yearly'}
+                            disabled={!canDelete}
                             onClick={(e) => {
                                 e.stopPropagation();
                                 onDelete(budget);
                             }}
                             className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 disabled:opacity-40"
+                            title="Delete budget"
+                            aria-label="Delete budget"
                         >
                             <TrashIcon className="h-4 w-4" />
                         </button>
