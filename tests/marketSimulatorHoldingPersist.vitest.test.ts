@@ -91,7 +91,7 @@ describe('marketSimulatorHoldingPersist', () => {
             'REITF.SR': { price: 20, change: 0, changePercent: 0 },
         };
         expect(buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd)).toEqual([
-            { id: 'h-reit', currentValue: 2000, currentPrice: 20 },
+            { id: 'h-reit', currentValue: 2000, currentPrice: 20, unrealizedPnL: 2000 },
         ]);
     });
 
