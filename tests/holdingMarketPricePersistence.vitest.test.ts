@@ -207,13 +207,13 @@ describe('persisted holding price seeds the quote path', () => {
     expect(result.seededSymbols).toEqual([]);
   });
 
-  it('derives unit price from currentValue/qty when currentPrice is missing', () => {
+  it('does not derive unit price from book currentValue (avoids FX double-apply)', () => {
     const result = buildQuoteCacheRowsFromPersistedHoldingPrices(
       [portfolioWith([holding({ symbol: 'MSFT', quantity: 10, currentValue: 4200, currentPrice: undefined })])],
       {},
     );
-    expect(result.changed).toBe(true);
-    expect(result.rows.MSFT?.price).toBe(420);
+    expect(result.changed).toBe(false);
+    expect(result.rows.MSFT).toBeUndefined();
   });
 
   it('seed helper returns merged rows for the restore path', () => {

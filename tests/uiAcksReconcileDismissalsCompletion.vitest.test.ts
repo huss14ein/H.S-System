@@ -132,31 +132,44 @@ describe('uiAcks durable reconcile dismissals', () => {
     expect(ctx).toContain('acknowledgeInvestmentCashLedgerDriftDurable');
   });
 
-  it('settings uiAcks win over localStorage for holdings', () => {
+  it('settings and localStorage merge by newest at (empty remote never wipes local dismissals)', () => {
     saveHoldingsIntegrityAcks(userId, {
       'pf:OLD': {
         portfolioId: 'pf',
         symbol: 'OLD',
         kind: 'keep_stored',
         storedQtyFingerprint: 1,
-        at: '2026-01-01T00:00:00.000Z',
+        ledgerQtyFingerprint: 0,
+        at: '2026-01-03T00:00:00.000Z',
       },
     });
-    const fromSettings = resolveHoldingsIntegrityAcks(userId, {
-      uiAcks: {
-        holdingsQtyIntegrity: {
-          'pf:NEW': {
-            portfolioId: 'pf',
-            symbol: 'NEW',
-            kind: 'keep_stored',
-            storedQtyFingerprint: 5,
-            at: '2026-01-02T00:00:00.000Z',
+    const fromSettings = resolveHoldingsIntegrityAcks(
+      userId,
+      {
+        uiAcks: {
+          holdingsQtyIntegrity: {
+            'pf:NEW': {
+              portfolioId: 'pf',
+              symbol: 'NEW',
+              kind: 'keep_stored',
+              storedQtyFingerprint: 5,
+              at: '2026-01-02T00:00:00.000Z',
+            },
           },
         },
       },
-    }, { writeThrough: true });
-    expect(Object.keys(fromSettings)).toEqual(['pf:NEW']);
-    expect(loadHoldingsIntegrityAcks(userId)['pf:NEW']?.symbol).toBe('NEW');
+      { writeThrough: true },
+    );
+    expect(fromSettings['pf:NEW']?.symbol).toBe('NEW');
+    expect(fromSettings['pf:OLD']?.symbol).toBe('OLD');
+    expect(loadHoldingsIntegrityAcks(userId)['pf:OLD']?.symbol).toBe('OLD');
+
+    const wipedRemote = resolveHoldingsIntegrityAcks(
+      userId,
+      { uiAcks: { holdingsQtyIntegrity: {} } },
+      { writeThrough: true },
+    );
+    expect(wipedRemote['pf:OLD']?.symbol).toBe('OLD');
   });
 
   it('resolveHoldingsIntegrityAcks does not write localStorage on hot paths by default', () => {

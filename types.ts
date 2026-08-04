@@ -709,8 +709,10 @@ export interface Settings {
         {
           portfolioId: string;
           symbol: string;
-          kind: 'keep_stored' | 'keep_closed';
+          kind: 'keep_stored' | 'keep_closed' | 'reconciled' | 'rebuilt';
           storedQtyFingerprint: number;
+          /** When set, dismissal is bound to this ledger qty as well. */
+          ledgerQtyFingerprint?: number;
           at: string;
         }
       >;

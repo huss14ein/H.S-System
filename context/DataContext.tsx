@@ -4880,12 +4880,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 Math.abs(Number(input.actualValue) - holdingMeta.beforeQty) > 1e-6
               ) {
                 /** Skip align-lots / cost-only applies — they must not silent-dismiss qty warnings. */
+                const fresh = dataRef.current ?? data;
+                const scoped = (fresh?.investmentTransactions ?? []).filter(
+                  (t) => t.portfolioId === holdingMeta.portfolioId,
+                );
+                let ledgerQty = 0;
+                const sym = String(holdingMeta.symbol).trim().toUpperCase();
+                for (const t of scoped) {
+                  if (String(t.symbol ?? '').trim().toUpperCase() !== sym) continue;
+                  if (t.type === 'buy') ledgerQty += Math.max(0, Number(t.quantity) || 0);
+                  if (t.type === 'sell') ledgerQty -= Math.max(0, Number(t.quantity) || 0);
+                }
                 await acknowledgeHoldingsIntegrityDurable({
                   userId,
                   portfolioId: holdingMeta.portfolioId,
                   symbol: holdingMeta.symbol,
-                  kind: 'keep_stored',
+                  kind: 'reconciled',
                   storedQty: Number(input.actualValue),
+                  ledgerQty,
                   currentUiAcks: (dataRef.current ?? data)?.settings?.uiAcks,
                   persistUiAcks,
                 });
