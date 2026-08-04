@@ -1064,6 +1064,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const normalizeHolding = (holding: any): Holding => {
         const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
+        const currentPriceRaw = holding.currentPrice ?? holding.current_price;
+        const unrealizedRaw = holding.unrealizedPnL ?? holding.unrealized_pnl;
         return {
             ...holding,
             portfolio_id: holding.portfolio_id || holding.portfolioId,
@@ -1072,6 +1074,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             quantity: roundQuantity(Number(holding.quantity ?? 0)),
             avgCost: roundAvgCostPerUnit(Number(holding.avgCost ?? holding.avg_cost ?? 0)),
             currentValue: roundMoney(Number(holding.currentValue ?? holding.current_value ?? 0)),
+            currentPrice:
+                currentPriceRaw != null && Number.isFinite(Number(currentPriceRaw))
+                    ? Number(currentPriceRaw)
+                    : undefined,
+            priceUpdatedAt: holding.priceUpdatedAt ?? holding.price_updated_at ?? undefined,
+            unrealizedPnL:
+                unrealizedRaw != null && Number.isFinite(Number(unrealizedRaw))
+                    ? roundMoney(Number(unrealizedRaw))
+                    : undefined,
             goalId: holding.goalId ?? holding.goal_id,
             assetClass: holding.assetClass ?? holding.asset_class,
             realizedPnL: roundMoney(Number(holding.realizedPnL ?? holding.realized_pnl ?? 0)),

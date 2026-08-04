@@ -103,21 +103,41 @@ export function CanonicalFinancialMetricsProvider({ children }: { children: Reac
     if (!metricsData) setExtendedBundle(null);
   }, [metricsData]);
 
-  const extendedFingerprint = useMemo(
-    () =>
-      metricsData
-        ? [
-            metricsData.accounts?.length ?? 0,
-            metricsData.transactions?.length ?? 0,
-            metricsData.investmentTransactions?.length ?? 0,
-            metricsData.investments?.length ?? 0,
-            Object.keys(kpiQuotePrices).length,
-            compactQuotePriceFingerprint(kpiQuotePrices),
-            exchangeRate,
-          ].join(':')
-        : '',
-    [metricsData, kpiQuotePrices, exchangeRate],
-  );
+  const extendedFingerprint = useMemo(() => {
+    if (!metricsData) return '';
+    // Portfolio *count* alone misses holding qty/value/asset-class edits (same length, new marks).
+    // Without holdings content, phase-2 allocation stays stale and live overlay only rescales
+    // Cash/Commodities/Sukuk — equity amounts vanish from Allocation by Asset Class system-wide.
+    const holdingsFp = (metricsData.investments ?? [])
+      .map((p) => {
+        const hs = (p.holdings ?? [])
+          .map(
+            (h) =>
+              `${h.id ?? ''}:${String(h.symbol ?? '').toUpperCase()}:${Number(h.quantity) || 0}:${Number(h.currentValue) || 0}:${Number(h.currentPrice) || 0}:${String(h.assetClass ?? '')}`,
+          )
+          .join(',');
+        return `${p.id}:${hs}`;
+      })
+      .join('|');
+    const commoditiesFp = (metricsData.commodityHoldings ?? [])
+      .map((c) => `${c.id ?? ''}:${Number(c.quantity) || 0}:${Number(c.currentValue) || 0}`)
+      .join(',');
+    const sukukFp = (metricsData.sukukPositions ?? [])
+      .map((s) => `${s.id ?? ''}:${Number(s.outstandingPrincipal) || 0}:${String(s.status ?? '')}`)
+      .join(',');
+    return [
+      metricsData.accounts?.length ?? 0,
+      metricsData.transactions?.length ?? 0,
+      metricsData.investmentTransactions?.length ?? 0,
+      metricsData.investments?.length ?? 0,
+      holdingsFp,
+      commoditiesFp,
+      sukukFp,
+      Object.keys(kpiQuotePrices).length,
+      compactQuotePriceFingerprint(kpiQuotePrices),
+      exchangeRate,
+    ].join(':');
+  }, [metricsData, kpiQuotePrices, exchangeRate]);
 
   useEffect(() => {
     if (!metricsData) return;

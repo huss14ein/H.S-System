@@ -1,6 +1,10 @@
 export function normalizeInvestmentAssetClassBucket(assetClassRaw: string | undefined): string {
   const normalized = String(assetClassRaw || '').trim().toLowerCase();
   if (!normalized) return 'Other';
+  // Legacy imports / statements often label equities as Equity/Equities.
+  if (normalized === 'stock' || normalized === 'stocks' || normalized === 'equity' || normalized === 'equities') {
+    return 'Stock';
+  }
   // Sukuk is a fixed-income bucket, not commodity exposure.
   if (normalized === 'sukuk' || normalized === 'sukuks' || normalized.includes('islamic bond')) return 'Sukuk';
   if (normalized === 'commodity' || normalized === 'commodities') return 'Commodities';

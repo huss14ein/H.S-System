@@ -86,6 +86,13 @@ describe('trusted holding market price persistence', () => {
     expect(context).toContain('row.current_price ?? row.currentPrice');
     expect(context).toContain('row.price_updated_at ?? row.priceUpdatedAt');
     expect(context).toContain('row.unrealized_pnl ?? row.unrealizedPnL');
+    // Portfolio hydrate path uses normalizeHolding (not only insert select).
+    const hydrateNormStart = context.indexOf('const normalizeHolding = (holding: any): Holding =>');
+    expect(hydrateNormStart).toBeGreaterThan(-1);
+    const hydrateNorm = context.slice(hydrateNormStart, context.indexOf('const normalizeInvestmentTransaction', hydrateNormStart));
+    expect(hydrateNorm).toContain('holding.currentPrice ?? holding.current_price');
+    expect(hydrateNorm).toContain('holding.priceUpdatedAt ?? holding.price_updated_at');
+    expect(hydrateNorm).toContain('holding.unrealizedPnL ?? holding.unrealized_pnl');
     const types = read('types.ts');
     expect(types).toContain('currentPrice?: number');
     expect(types).toContain('priceUpdatedAt?: string');
