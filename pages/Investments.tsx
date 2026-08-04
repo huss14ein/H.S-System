@@ -3530,6 +3530,8 @@ const PlatformCardInner: React.FC<{
                                                                   hSym,
                                                                   portfolioCurrency,
                                                                   sarPerUsd,
+                                                                  new Date(),
+                                                                  simulatedPrices as Record<string, unknown>,
                                                               )
                                                             : 0;
                                                     const hasLivePrice =

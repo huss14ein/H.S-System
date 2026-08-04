@@ -15,9 +15,8 @@ function holdingUsesTadawulQuoteSanitize(
     const s = symbol.trim().toUpperCase();
     if (bookCurrency === 'SAR' && /^[A-Z]{3,6}$/.test(s) && !s.includes('.') && quoteMap) {
         const keys = Object.keys(quoteMap).map((k) => k.toUpperCase());
-        const hasDirect = keys.includes(s);
-        const hasSuffixed = keys.some((k) => k === `${s}.SR` || k === `${s}.SA` || k === `${s}.SE`);
-        return hasSuffixed && !hasDirect;
+        // Suffixed alias wins even when expandLiveQuotes also wrote the bare key.
+        return keys.some((k) => k === `${s}.SR` || k === `${s}.SA` || k === `${s}.SE`);
     }
     return false;
 }

@@ -71,6 +71,30 @@ describe('marketSimulatorHoldingPersist', () => {
         ]);
     });
 
+    it('bare Tadawul letters with expanded bare+.SR keys persist SAR notional (no USD FX)', () => {
+        const portfolios: InvestmentPortfolio[] = [
+            {
+                id: 'p1',
+                currency: 'SAR',
+                holdings: [
+                    {
+                        id: 'h-reit',
+                        symbol: 'REITF',
+                        quantity: 100,
+                        holdingType: 'ticker',
+                    } as any,
+                ],
+            } as any,
+        ];
+        const trusted = {
+            REITF: { price: 20, change: 0, changePercent: 0 },
+            'REITF.SR': { price: 20, change: 0, changePercent: 0 },
+        };
+        expect(buildEquityHoldingValueUpdatesFromTrustedSnapshot(portfolios, trusted, sarPerUsd)).toEqual([
+            { id: 'h-reit', currentValue: 2000, currentPrice: 20 },
+        ]);
+    });
+
     it('skips updates above MAX_HOLDING_BOOK_NOTIONAL (corrupt upstream)', () => {
         const portfolios: InvestmentPortfolio[] = [
             {
