@@ -17,6 +17,8 @@ import {
   describeTransferDeleteCascade,
   isInvestmentReconciliationCashAdjustment,
   INVESTMENT_RECONCILIATION_NOTE_PREFIX,
+  investmentLedgerTypeLabel,
+  isInvestmentLedgerTypeCapitalOutflow,
   isNoopDelta,
   isReconciliationLedgerCategory,
   isValidReason,
@@ -400,6 +402,18 @@ describe('broker-cash reconcile is not capital withdrawal/deposit', () => {
 
     const flows = flowsFromInvestmentTransactionsInSAR([realDeposit, reconcileWdr], 3.75);
     expect(flows).toEqual([{ date: '2026-01-01', amount: -10_000 }]);
+  });
+
+  it('labels downward broker-cash reconcile as RECONCILE↓ not WITHDRAWAL', () => {
+    const row = buildBrokerCashReconcileInvestmentRow({
+      accountId: platformId,
+      delta: -500,
+      currency: 'SAR',
+      reason: 'Match statement',
+    });
+    expect(investmentLedgerTypeLabel(row)).toBe('RECONCILE↓');
+    expect(isInvestmentLedgerTypeCapitalOutflow(row)).toBe(false);
+    expect(isInvestmentLedgerTypeCapitalOutflow({ type: 'withdrawal', note: 'Wire to bank' })).toBe(true);
   });
 });
 

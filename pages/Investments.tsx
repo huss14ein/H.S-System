@@ -17,7 +17,7 @@ import HoldingsQtyIntegrityPanel from '../components/investments/HoldingsQtyInte
 import HoldingLotsPanel from '../components/investments/HoldingLotsPanel';
 import ReconcileQuantityModal from '../components/reconciliation/ReconcileQuantityModal';
 import ReconcileBalanceModal from '../components/reconciliation/ReconcileBalanceModal';
-import { portfolioIdsForAccount } from '../services/reconciliation';
+import { portfolioIdsForAccount, investmentLedgerTypeLabel, isInvestmentLedgerTypeCapitalInflow, isInvestmentLedgerTypeCapitalOutflow } from '../services/reconciliation';
 import { toast } from '../context/ToastContext';
 import CorporateActionWizard from '../components/investments/corporateActions/CorporateActionWizard';
 import {
@@ -2239,6 +2239,7 @@ const HoldingDetailModal: React.FC<{
                                 type="button"
                                 onClick={onReconcileQuantity}
                                 className="px-4 py-2 text-sm font-semibold rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors"
+                                title="Correct broker share count without posting a sell or withdrawal"
                             >
                                 Reconcile quantity / avg cost…
                             </button>
@@ -2257,6 +2258,7 @@ const HoldingDetailModal: React.FC<{
                                 type="button"
                                 onClick={onRecordSell}
                                 className="px-4 py-2 text-sm font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                                title="Posts a real sell with cash proceeds — use only for actual sales, not quantity corrections"
                             >
                                 Record sell for {holding.symbol}
                             </button>
@@ -2727,7 +2729,7 @@ const TransactionHistoryModal: React.FC<{
                             return (
                                 <tr key={t.id} className="hover:bg-gray-50">
                                     <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{new Date(t.date).toLocaleDateString()}</td>
-                                    <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${t.type === 'buy' || t.type === 'deposit' ? 'text-green-600' : t.type === 'sell' || t.type === 'withdrawal' ? 'text-red-600' : 'text-blue-600'}`}>{t.type.toUpperCase()}</td>
+                                    <td className={`px-4 py-2 whitespace-nowrap text-sm font-medium ${isInvestmentLedgerTypeCapitalInflow(t) ? 'text-green-600' : isInvestmentLedgerTypeCapitalOutflow(t) ? 'text-red-600' : 'text-blue-600'}`}>{investmentLedgerTypeLabel(t)}</td>
                                     <td className="px-4 py-2 whitespace-nowrap text-sm font-semibold text-dark">{t.symbol === 'CASH' ? '—' : t.symbol}</td>
                                     <td className={`px-4 py-2 whitespace-nowrap text-xs ${pfId ? 'text-slate-600' : 'text-amber-800 font-medium'}`}>{pfLabel}</td>
                                     <td className="px-3 py-2 whitespace-nowrap text-center text-sm text-slate-700">
@@ -6331,7 +6333,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                     actualValue: qty,
                     targetBookCost: qty * avg,
                     alignLotCostsToBook: true,
-                    reason: 'Align open lots to holding book (trim sold qty + match WAC cost)',
+                    reason: 'Align open lots to holding book (trim excess open qty + match WAC cost)',
                   });
                   if (!result.ok) {
                     toast(result.error || 'Align lots failed', 'error');
@@ -6361,7 +6363,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         {canReconcile && (
         <p className="text-xs text-slate-500 mt-2">
           To match a broker share count, open that holding and use <span className="font-semibold text-emerald-700">Reconcile quantity…</span>{' '}
-          — it rebuilds that symbol only (never a bulk rewrite) and is recorded in the reconciliation audit log.
+          — non-cash book correction only (never a sell or withdrawal), rebuilds that symbol only, and is recorded in the reconciliation audit log.
         </p>
         )}
 
@@ -6472,7 +6474,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                             actualValue: qty,
                             targetBookCost: qty * avg,
                             alignLotCostsToBook: true,
-                            reason: 'Align open lots to holding book (trim sold qty + match WAC cost)',
+                            reason: 'Align open lots to holding book (trim excess open qty + match WAC cost)',
                         });
                         if (!result.ok) throw new Error(result.error || 'Align lots failed');
                         toast(result.noop ? 'Open lots already match the book.' : 'Open lots aligned to book.', result.noop ? 'info' : 'success');

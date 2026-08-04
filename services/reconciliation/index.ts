@@ -29,6 +29,9 @@ import {
   isCashReconcileEligibleAccount,
   mechanismForEntity,
   isInvestmentReconciliationCashAdjustment,
+  investmentLedgerTypeLabel,
+  isInvestmentLedgerTypeCapitalInflow,
+  isInvestmentLedgerTypeCapitalOutflow,
   INVESTMENT_RECONCILIATION_NOTE_PREFIX,
 } from './cashDelta';
 import {
@@ -102,6 +105,9 @@ export {
   buildCashReconcileLedgerTransaction,
   buildBrokerCashReconcileInvestmentRow,
   isInvestmentReconciliationCashAdjustment,
+  investmentLedgerTypeLabel,
+  isInvestmentLedgerTypeCapitalInflow,
+  isInvestmentLedgerTypeCapitalOutflow,
   INVESTMENT_RECONCILIATION_NOTE_PREFIX,
   pendingApprovalsBlockAccount,
   isCashReconcileEligibleAccount,
