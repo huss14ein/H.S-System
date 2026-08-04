@@ -65,6 +65,11 @@ export function effectiveHoldingValueInBookCurrency(
     if (priceInfo && Number.isFinite(priceInfo.price) && qty > 0) {
         return quoteNotionalInBookCurrency(priceInfo.price as number, qty, sym, bookCurrency, sarPerUsd, simulatedPrices);
     }
+    /** Trusted unit price last persisted with the mark — same source of truth as share price storage. */
+    const storedUnit = Number(h.currentPrice);
+    if (Number.isFinite(storedUnit) && storedUnit > 0 && qty > 0) {
+        return quoteNotionalInBookCurrency(storedUnit, qty, sym, bookCurrency, sarPerUsd, simulatedPrices);
+    }
     const marketValue = clampStoredMarketValue(Number(h.currentValue || 0), Number.isFinite(avgCost) && Number.isFinite(qty) ? avgCost * qty : 0);
     const costValue = Number.isFinite(avgCost) && Number.isFinite(qty) ? avgCost * qty : 0;
     if (marketValue > 0) return marketValue;
@@ -100,6 +105,16 @@ export function effectiveHoldingUnitPriceInBookCurrency(
     if (priceInfo && Number.isFinite(priceInfo.price) && (priceInfo.price as number) > 0) {
         return convertBetweenTradeCurrencies(
             priceInfo.price as number,
+            resolveInstrumentCurrencyForQuote(symRaw || sym, bookCurrency, simulatedPrices),
+            bookCurrency,
+            sarPerUsd,
+        );
+    }
+
+    const storedUnit = Number(h.currentPrice);
+    if (Number.isFinite(storedUnit) && storedUnit > 0) {
+        return convertBetweenTradeCurrencies(
+            storedUnit,
             resolveInstrumentCurrencyForQuote(symRaw || sym, bookCurrency, simulatedPrices),
             bookCurrency,
             sarPerUsd,

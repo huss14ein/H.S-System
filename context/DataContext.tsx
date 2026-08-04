@@ -279,7 +279,7 @@ interface DataContextType {
    * Partial market update only: never writes quantity or average cost.
    */
   batchUpdateHoldingValues: (
-    updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string }[],
+    updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string; unrealizedPnL?: number }[],
   ) => Promise<void>;
   recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string, opts?: RecordWriteOptions) => Promise<{
     insertedInvestmentTransactionId: string | null;
@@ -858,6 +858,10 @@ function normalizeHoldingFromRow(row: any): Holding {
                 ? Number(row.current_price ?? row.currentPrice)
                 : undefined,
         priceUpdatedAt: row.price_updated_at ?? row.priceUpdatedAt ?? undefined,
+        unrealizedPnL:
+            row.unrealized_pnl != null || row.unrealizedPnL != null
+                ? roundMoney(Number(row.unrealized_pnl ?? row.unrealizedPnL))
+                : undefined,
         realizedPnL: roundMoney(Number(row.realized_pnl ?? row.realizedPnL ?? 0)),
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
         assetClass: row.asset_class ?? row.assetClass,
@@ -5022,7 +5026,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const batchUpdateHoldingValues = async (
-        updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string }[],
+        updates: {
+            id: string;
+            currentValue: number;
+            currentPrice: number;
+            priceUpdatedAt?: string;
+            unrealizedPnL?: number;
+        }[],
     ): Promise<void> => {
         if (!supabase || !auth?.user) return;
         const db = supabase;
@@ -5045,7 +5055,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         lastHoldingMarketValuePersistMsRef.current = fallbackNowMs;
         const byId = new Map<
             string,
-            { id: string; currentValue: number; currentPrice: number; priceUpdatedAt: string }
+            {
+                id: string;
+                currentValue: number;
+                currentPrice: number;
+                priceUpdatedAt: string;
+                unrealizedPnL: number | null;
+            }
         >();
         for (const update of updates) {
             const id = String(update.id ?? '').trim();
@@ -5053,6 +5069,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const currentPrice = Number(update.currentPrice);
             const suppliedMs = update.priceUpdatedAt ? Date.parse(update.priceUpdatedAt) : Number.NaN;
             const quoteMs = Number.isFinite(suppliedMs) ? suppliedMs : fallbackNowMs;
+            const unrealizedPnL = Number.isFinite(Number(update.unrealizedPnL))
+                ? roundMoney(Number(update.unrealizedPnL))
+                : null;
             if (
                 !id ||
                 !Number.isFinite(currentValue) ||
@@ -5079,6 +5098,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 currentValue,
                 currentPrice,
                 priceUpdatedAt: new Date(effectiveMs).toISOString(),
+                unrealizedPnL,
             });
         }
         const safeUpdates = [...byId.values()];
@@ -5089,6 +5109,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             current_value: u.currentValue,
             current_price: u.currentPrice,
             price_updated_at: u.priceUpdatedAt,
+            unrealized_pnl: u.unrealizedPnL,
         }));
 
         // One RPC call avoids N holdings PATCH requests and applies only market columns.
@@ -5105,6 +5126,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             currentValue: number;
             currentPrice: number;
             priceUpdatedAt: string;
+            unrealizedPnL: number | null;
         }[] = safeUpdates;
 
         if (missingRpc) {
@@ -5117,11 +5139,32 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             current_value: u.current_value,
                             current_price: u.current_price,
                             price_updated_at: u.price_updated_at,
+                            unrealized_pnl: u.unrealized_pnl,
                         })
                         .match({ id: u.id, user_id: userId }),
                 ),
             );
             persistError = modernResults.find((r) => r.error)?.error ?? null;
+
+            const missingUnrealized =
+                persistError?.code === '42703' ||
+                persistError?.code === 'PGRST204' ||
+                String(persistError?.message ?? '').toLowerCase().includes('unrealized_pnl');
+            if (missingUnrealized) {
+                const withoutUnrealized = await Promise.all(
+                    payload.map((u) =>
+                        db
+                            .from('holdings')
+                            .update({
+                                current_value: u.current_value,
+                                current_price: u.current_price,
+                                price_updated_at: u.price_updated_at,
+                            })
+                            .match({ id: u.id, user_id: userId }),
+                    ),
+                );
+                persistError = withoutUnrealized.find((r) => r.error)?.error ?? null;
+            }
 
             const missingColumns =
                 persistError?.code === '42703' ||
@@ -5155,7 +5198,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 // Partial skip: re-read so in-memory marks match what the RPC actually persisted.
                 const { data: rows, error: readError } = await db
                     .from('holdings')
-                    .select('id, current_value, current_price, price_updated_at')
+                    .select('id, current_value, current_price, price_updated_at, unrealized_pnl')
                     .in(
                         'id',
                         safeUpdates.map((u) => u.id),
@@ -5171,6 +5214,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const currentPrice = Number(row.current_price);
                         const priceUpdatedAt =
                             typeof row.price_updated_at === 'string' ? row.price_updated_at : '';
+                        const unrealizedPnL = roundMoney(
+                            row.unrealized_pnl != null
+                                ? Number(row.unrealized_pnl)
+                                : currentValue,
+                        );
                         if (
                             !row.id ||
                             !Number.isFinite(currentValue) ||
@@ -5184,6 +5232,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             currentValue,
                             currentPrice,
                             priceUpdatedAt,
+                            unrealizedPnL,
                         };
                     })
                     .filter((u): u is NonNullable<typeof u> => u != null);
@@ -5211,6 +5260,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                   currentValue: update.currentValue,
                                   currentPrice: update.currentPrice,
                                   priceUpdatedAt: update.priceUpdatedAt,
+                                  ...(update.unrealizedPnL != null
+                                      ? { unrealizedPnL: update.unrealizedPnL }
+                                      : {}),
                               }
                             : h;
                     }),
@@ -5218,6 +5270,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }));
         });
     };
+
     const recordTrade = async (
         trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
         executedPlanId?: string,
