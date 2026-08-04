@@ -108,6 +108,7 @@ import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenter
 import SpendingCommandCenter from '../components/spending/SpendingCommandCenter';
 import {
     budgetAppliesToFinancialView,
+    canonicalBudgetStorageMonth,
     dedupeBudgetRowsForFinancialView,
     addMonthsToKey,
     calendarMonthRangeFromIsoKey,
@@ -325,7 +326,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             summarizeBudgetForConfirm({
                 category,
                 limit: rawLimit,
-                month,
+                month: isYearly ? 1 : month,
                 year,
                 isEdit: !!budgetToEdit,
             }),
@@ -336,7 +337,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({ isOpen, onClose, onSave, budg
             await onSave({
                 category,
                 limit: rawLimit,
-                month,
+                month: isYearly ? 1 : month,
                 year,
                 period,
                 tier,
@@ -3890,7 +3891,14 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                         else failed++;
                                                     } else {
                                                         const ok = await addBudget(
-                                                            { category: cat.category, limit: cat.limit, month: bulkAddTargetMonth, year: bulkAddTargetYear, period: cat.period, tier: cat.tier },
+                                                            {
+                                                                category: cat.category,
+                                                                limit: cat.limit,
+                                                                month: canonicalBudgetStorageMonth(cat.period, bulkAddTargetMonth),
+                                                                year: bulkAddTargetYear,
+                                                                period: cat.period,
+                                                                tier: cat.tier,
+                                                            },
                                                             { confirmed: true },
                                                         );
                                                         if (ok) created++;

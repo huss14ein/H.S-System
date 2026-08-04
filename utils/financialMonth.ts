@@ -350,13 +350,34 @@ export function budgetAppliesToFinancialView(
 }
 
 /**
+ * Canonical `month` to persist for a budget period.
+ * Yearly rows are year-scoped and always stored as month `1` so they uniquely key
+ * (category, year, month) and remain visible in every financial month of that year.
+ */
+export function canonicalBudgetStorageMonth(
+  period: string | null | undefined,
+  viewMonth: number,
+): number {
+  const p = String(period ?? 'monthly').toLowerCase();
+  if (p === 'yearly') return 1;
+  const m = Number(viewMonth);
+  if (Number.isFinite(m) && m >= 1 && m <= 12) return Math.round(m);
+  return 1;
+}
+
+/**
  * How well a persisted budget row matches the selected financial view (higher = preferred).
  * Used to pick one row per category when legacy calendar-index rows overlap the same window.
+ *
+ * Yearly-period rows apply to the whole plan year (`budgetAppliesToFinancialView`) but are often
+ * stored as `month: 1`. They must score ≥ 0 for every financial month of that year — otherwise
+ * `dedupeBudgetRowsForFinancialView` drops them and Add Budget / household yearly rows never appear.
  */
 export function budgetRowViewMatchScore(
   b: { year: number; month: number; period?: string | null },
   viewKey: FinancialMonthKey,
   monthStartDay: unknown,
+  budgetView: BudgetViewPeriod = 'Monthly',
 ): number {
   const year = Number(b.year);
   const month = Number(b.month);
@@ -364,7 +385,14 @@ export function budgetRowViewMatchScore(
   if (year !== viewKey.year) return -1;
 
   const period = b.period ?? 'monthly';
-  if (month === viewKey.month && period !== 'yearly') return 200;
+
+  // Year-scoped envelopes: visible in every month of the plan year.
+  if (period === 'yearly') {
+    // Prefer a true yearly row over annualizing a monthly envelope when viewing Yearly.
+    return budgetView === 'Yearly' ? 250 : 150;
+  }
+
+  if (month === viewKey.month) return 200;
 
   const anchor = new Date(year, month - 1, 15);
   const rowFinKey = financialMonthKey(anchor, monthStartDay);
@@ -375,6 +403,11 @@ export function budgetRowViewMatchScore(
   const viewRange = financialMonthRangeFromKey(viewKey, monthStartDay);
   const cal = calendarMonthInterval(year, month);
   if (dateRangesOverlap(viewRange, cal)) return 20;
+
+  // Yearly UI includes all year-matching rows in apply(); keep a low positive score so
+  // January-only monthly categories still appear when navigating August in Yearly view.
+  if (budgetView === 'Yearly') return 10;
+
   return -1;
 }
 
@@ -400,10 +433,10 @@ export function dedupeBudgetRowsForFinancialView<
   const out: T[] = [];
   for (const group of byCategory.values()) {
     let best = group[0];
-    let bestScore = budgetRowViewMatchScore(best, viewKey, monthStartDay);
+    let bestScore = budgetRowViewMatchScore(best, viewKey, monthStartDay, budgetView);
     for (let i = 1; i < group.length; i++) {
       const candidate = group[i];
-      const score = budgetRowViewMatchScore(candidate, viewKey, monthStartDay);
+      const score = budgetRowViewMatchScore(candidate, viewKey, monthStartDay, budgetView);
       if (
         score > bestScore ||
         (score === bestScore && Number(candidate.limit) > Number(best.limit))
@@ -412,7 +445,8 @@ export function dedupeBudgetRowsForFinancialView<
         bestScore = score;
       }
     }
-    if (bestScore >= 0) out.push(best);
+    // Group already passed budgetAppliesToFinancialView — always keep a winner.
+    out.push(best);
   }
   return out;
 }

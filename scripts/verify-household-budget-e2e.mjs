@@ -75,6 +75,11 @@ expectContains(smartFill, '{ confirmed: true }', 'pages/Budgets.tsx smart-fill c
 const bulkSection = sliceBetween(budgets, 'Household engine: Bulk add budgets', 'Create/update');
 expectContains(bulkSection, 'await addBudget', 'pages/Budgets.tsx bulk add await');
 expectContains(bulkSection, '{ confirmed: true }', 'pages/Budgets.tsx bulk add confirmed');
+expectContains(bulkSection, 'canonicalBudgetStorageMonth', 'pages/Budgets.tsx bulk yearly month=1');
+
+expectContains(read('utils/financialMonth.ts'), 'canonicalBudgetStorageMonth', 'utils/financialMonth.ts yearly storage month');
+expectContains(read('utils/financialMonth.ts'), "return budgetView === 'Yearly' ? 250 : 150", 'utils/financialMonth.ts yearly match score');
+expectContains(addBudgetBody, 'canonicalBudgetStorageMonth', 'context/DataContext.tsx addBudget yearly month');
 
 expectContains(budgets, 'householdEngineRequested', 'pages/Budgets.tsx engine request gate');
 expectContains(budgets, 'setHouseholdEngineRequested(true)', 'pages/Budgets.tsx engine request on expand/setup');

@@ -18,6 +18,7 @@ import {
   DEFAULT_FINANCIAL_MONTH_START_DAY,
   budgetAppliesToFinancialView,
   budgetRowViewMatchScore,
+  canonicalBudgetStorageMonth,
   dedupeBudgetRowsForFinancialView,
   financialMonthKeyFromTransactionDate,
   financialMonthDaysRemaining,
@@ -113,6 +114,60 @@ describe('budgetAppliesToFinancialView', () => {
       budgetAppliesToFinancialView({ year: 2025, month: 1, period: 'yearly' }, viewKey, monthStartDay, 'Yearly'),
     ).toBe(false);
   });
+
+  it('yearly rows apply in Monthly view for any month of the same year', () => {
+    expect(
+      budgetAppliesToFinancialView({ year: 2026, month: 1, period: 'yearly' }, viewKey, monthStartDay, 'Monthly'),
+    ).toBe(true);
+  });
+});
+
+describe('budgetRowViewMatchScore yearly visibility', () => {
+  const monthStartDay = 28;
+  const august = { year: 2026, month: 8 };
+
+  it('scores yearly month=1 positive while viewing August (not dropped by dedupe)', () => {
+    const score = budgetRowViewMatchScore(
+      { year: 2026, month: 1, period: 'yearly' },
+      august,
+      monthStartDay,
+      'Monthly',
+    );
+    expect(score).toBeGreaterThanOrEqual(0);
+    expect(score).toBe(150);
+  });
+
+  it('prefers current-month monthly over yearly in Monthly view', () => {
+    const monthly = budgetRowViewMatchScore(
+      { year: 2026, month: 8, period: 'monthly' },
+      august,
+      monthStartDay,
+      'Monthly',
+    );
+    const yearly = budgetRowViewMatchScore(
+      { year: 2026, month: 1, period: 'yearly' },
+      august,
+      monthStartDay,
+      'Monthly',
+    );
+    expect(monthly).toBeGreaterThan(yearly);
+  });
+
+  it('prefers yearly over monthly when viewing Yearly', () => {
+    const monthly = budgetRowViewMatchScore(
+      { year: 2026, month: 8, period: 'monthly' },
+      august,
+      monthStartDay,
+      'Yearly',
+    );
+    const yearly = budgetRowViewMatchScore(
+      { year: 2026, month: 1, period: 'yearly' },
+      august,
+      monthStartDay,
+      'Yearly',
+    );
+    expect(yearly).toBeGreaterThan(monthly);
+  });
 });
 
 describe('dedupeBudgetRowsForFinancialView', () => {
@@ -127,9 +182,24 @@ describe('dedupeBudgetRowsForFinancialView', () => {
     const deduped = dedupeBudgetRowsForFinancialView(rows, viewKey, monthStartDay, 'Monthly');
     expect(deduped).toHaveLength(1);
     expect(deduped[0].limit).toBe(600);
-    expect(budgetRowViewMatchScore(rows[0], viewKey, monthStartDay)).toBeGreaterThan(
-      budgetRowViewMatchScore(rows[1], viewKey, monthStartDay),
+    expect(budgetRowViewMatchScore(rows[0], viewKey, monthStartDay, 'Monthly')).toBeGreaterThan(
+      budgetRowViewMatchScore(rows[1], viewKey, monthStartDay, 'Monthly'),
     );
+  });
+
+  it('keeps Housing yearly (month=1) when viewing August Monthly — Add Budget / household bug', () => {
+    const rows = [
+      { id: 'y', category: 'Housing', year: 2026, month: 1, period: 'yearly' as const, limit: 18000 },
+    ];
+    const deduped = dedupeBudgetRowsForFinancialView(rows, { year: 2026, month: 8 }, monthStartDay, 'Monthly');
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0].id).toBe('y');
+    expect(deduped[0].limit).toBe(18000);
+  });
+
+  it('canonicalBudgetStorageMonth forces yearly to month 1', () => {
+    expect(canonicalBudgetStorageMonth('yearly', 8)).toBe(1);
+    expect(canonicalBudgetStorageMonth('monthly', 8)).toBe(8);
   });
 });
 

@@ -150,6 +150,7 @@ import {
     effectiveMonthStartDate,
     addMonthsToKey,
     budgetAppliesToFinancialView,
+    canonicalBudgetStorageMonth,
     financialMonthRange,
     financialMonthRangeFromKey,
     resolveMonthStartDayFromData,
@@ -2622,11 +2623,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return false;
       }
       const db = supabase;
+      const periodNorm = (budget as Budget).period;
+      const storageMonth = canonicalBudgetStorageMonth(periodNorm, budget.month);
       /** Only DB columns — never spread camelCase client fields (goalId, destinationAccountId) into insert. */
       const payload: Record<string, unknown> = {
         user_id: auth.user.id,
         category: budget.category,
-        month: budget.month,
+        month: storageMonth,
         year: budget.year,
         limit: budget.limit,
       };
@@ -2658,6 +2661,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (newBudget) {
         const withPeriod = {
           ...newBudget,
+          month: Number((newBudget as any).month) || storageMonth,
           period: 'period' in persistedPayload ? (budget as Budget).period : (newBudget as any).period,
           tier: 'tier' in persistedPayload ? (budget as Budget).tier : (newBudget as any).tier,
           destinationAccountId:

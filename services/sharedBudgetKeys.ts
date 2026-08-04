@@ -154,6 +154,7 @@ export function dedupeSharedBudgetRowsForFinancialView<T extends SharedBudgetLik
       { year: bestResolved.year, month: bestResolved.month, period: best.period },
       viewKey,
       monthStartDay,
+      budgetView,
     );
     for (let i = 1; i < group.length; i++) {
       const candidate = group[i];
@@ -162,6 +163,7 @@ export function dedupeSharedBudgetRowsForFinancialView<T extends SharedBudgetLik
         { year: resolved.year, month: resolved.month, period: candidate.period },
         viewKey,
         monthStartDay,
+        budgetView,
       );
       if (
         score > bestScore ||
@@ -171,7 +173,7 @@ export function dedupeSharedBudgetRowsForFinancialView<T extends SharedBudgetLik
         bestScore = score;
       }
     }
-    if (bestScore >= 0) out.push(best);
+    out.push(best);
   }
   return out;
 }
