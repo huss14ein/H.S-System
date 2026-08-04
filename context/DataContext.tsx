@@ -5198,7 +5198,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 // Partial skip: re-read so in-memory marks match what the RPC actually persisted.
                 const { data: rows, error: readError } = await db
                     .from('holdings')
-                    .select('id, current_value, current_price, price_updated_at, unrealized_pnl')
+                    .select('id, current_value, current_price, price_updated_at, unrealized_pnl, quantity, avg_cost')
                     .in(
                         'id',
                         safeUpdates.map((u) => u.id),
@@ -5214,11 +5214,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const currentPrice = Number(row.current_price);
                         const priceUpdatedAt =
                             typeof row.price_updated_at === 'string' ? row.price_updated_at : '';
-                        const unrealizedPnL = roundMoney(
-                            row.unrealized_pnl != null
-                                ? Number(row.unrealized_pnl)
-                                : currentValue,
-                        );
+                        // Match SQL coalesce: never treat null P/L as the full position notional.
+                        const qty = Number(row.quantity);
+                        const avgCost = Number(row.avg_cost);
+                        const unrealizedPnL =
+                            row.unrealized_pnl != null && Number.isFinite(Number(row.unrealized_pnl))
+                                ? roundMoney(Number(row.unrealized_pnl))
+                                : Number.isFinite(qty) && Number.isFinite(avgCost)
+                                  ? roundMoney(currentValue - qty * avgCost)
+                                  : null;
                         if (
                             !row.id ||
                             !Number.isFinite(currentValue) ||

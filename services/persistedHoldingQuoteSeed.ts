@@ -8,6 +8,7 @@
  * a fabricated change would show up as a fake daily P/L.
  */
 import type { InvestmentPortfolio } from '../types';
+import { inferInstrumentCurrencyFromSymbol } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { canonicalQuoteLookupKey } from './finnhubService';
 import { loadQuoteCacheRows, saveQuoteCacheRows, type CachedQuoteRow } from './quotePriceCache';
@@ -26,8 +27,10 @@ function cacheKeysForSymbol(symbol: string): string[] {
 }
 
 /** Pure merge: DB price wins only when strictly newer than every local alias row.
- * When `currentPrice` is missing, derive unit price from `currentValue / quantity` so
- * legacy rows still seed the session and stop showing perpetual "Stored" after refresh.
+ * When `currentPrice` is missing and book currency matches instrument currency, derive
+ * unit price from `currentValue / quantity` so legacy same-currency rows still seed the
+ * session. Never divide book notional for a foreign-listed symbol — that yields book
+ * currency per share, which the quote cache would treat as instrument currency.
  */
 export function buildQuoteCacheRowsFromPersistedHoldingPrices(
   portfolios: InvestmentPortfolio[],
@@ -46,11 +49,14 @@ export function buildQuoteCacheRowsFromPersistedHoldingPrices(
       let price = Number(holding.currentPrice);
       let persistedMs = holding.priceUpdatedAt ? Date.parse(holding.priceUpdatedAt) : Number.NaN;
       if ((!Number.isFinite(price) || price <= 0) && Number.isFinite(qty) && qty > 0) {
-        const value = Number(holding.currentValue);
-        if (Number.isFinite(value) && value > 0) {
-          price = value / qty;
-          // Epoch so any real live/cache quote still wins over a derived mark.
-          if (!Number.isFinite(persistedMs) || persistedMs <= 0) persistedMs = 1;
+        // current_value is portfolio book currency; CachedQuoteRow.price is instrument currency.
+        if (inferInstrumentCurrencyFromSymbol(symbol) === book) {
+          const value = Number(holding.currentValue);
+          if (Number.isFinite(value) && value > 0) {
+            price = value / qty;
+            // Epoch so any real live/cache quote still wins over a derived mark.
+            if (!Number.isFinite(persistedMs) || persistedMs <= 0) persistedMs = 1;
+          }
         }
       }
       if (

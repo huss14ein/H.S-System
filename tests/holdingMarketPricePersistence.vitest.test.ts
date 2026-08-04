@@ -46,7 +46,8 @@ describe('trusted holding market price persistence', () => {
     expect(block).toContain('current_price');
     expect(block).toContain('price_updated_at');
     expect(block).toContain('unrealized_pnl');
-    expect(block).not.toContain('avg_cost');
+    // Re-read may select avg_cost/quantity to recompute null P/L; never write them.
+    expect(block).not.toMatch(/avg_cost\s*:/);
     expect(block).not.toMatch(/update\(\{[^}]*quantity/);
   });
 
@@ -57,7 +58,10 @@ describe('trusted holding market price persistence', () => {
     expect(block).toContain('const affected = Number(rpcResult.data)');
     expect(block).toContain('affected === 0');
     expect(block).toContain('affected < safeUpdates.length');
-    expect(block).toContain(".select('id, current_value, current_price, price_updated_at, unrealized_pnl')");
+    expect(block).toContain(
+      ".select('id, current_value, current_price, price_updated_at, unrealized_pnl, quantity, avg_cost')",
+    );
+    expect(block).toContain('currentValue - qty * avgCost');
     expect(block).toContain('appliedUpdates');
   });
 
@@ -214,6 +218,16 @@ describe('persisted holding price seeds the quote path', () => {
     );
     expect(result.changed).toBe(true);
     expect(result.rows.MSFT?.price).toBe(420);
+  });
+
+  it('does not derive unit price from book notional for cross-currency holdings', () => {
+    const sarBook: InvestmentPortfolio = {
+      ...portfolioWith([holding({ symbol: 'AAPL', quantity: 10, currentValue: 7500, currentPrice: undefined })]),
+      currency: 'SAR',
+    };
+    const result = buildQuoteCacheRowsFromPersistedHoldingPrices([sarBook], {});
+    expect(result.changed).toBe(false);
+    expect(result.rows.AAPL).toBeUndefined();
   });
 
   it('seed helper returns merged rows for the restore path', () => {
