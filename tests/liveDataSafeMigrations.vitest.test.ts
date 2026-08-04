@@ -24,6 +24,7 @@ const REQUIRED_INVESTMENT_MIGRATIONS = [
   '20260722120000_holdings_unique_per_portfolio_symbol.sql',
   '20260725120000_holdings_market_price_persistence.sql',
   '20260802120000_market_quote_cache.sql',
+  '20260804120000_holdings_unrealized_pnl_persistence.sql',
   '20260726120000_reconciliation_adjustment_engine.sql',
   '20260726140000_corporate_action_stock_dividend.sql',
 ];

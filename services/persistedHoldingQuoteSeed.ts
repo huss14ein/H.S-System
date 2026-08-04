@@ -25,7 +25,10 @@ function cacheKeysForSymbol(symbol: string): string[] {
   return Array.from(new Set([raw, raw.toUpperCase(), canonicalQuoteLookupKey(raw)])).filter(Boolean);
 }
 
-/** Pure merge: DB price wins only when strictly newer than every local alias row. */
+/** Pure merge: DB unit price wins only when strictly newer than every local alias row.
+ * Only seed from persisted `currentPrice` (instrument currency). Never derive from
+ * book-currency `currentValue / quantity` — that double-applies FX on the next persist.
+ */
 export function buildQuoteCacheRowsFromPersistedHoldingPrices(
   portfolios: InvestmentPortfolio[],
   rows: Record<string, CachedQuoteRow>,

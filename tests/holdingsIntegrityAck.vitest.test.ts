@@ -32,7 +32,7 @@ describe('holdingsIntegrityAck', () => {
     });
   });
 
-  it('Keep stored ack dismisses matching drift row and invalidates when qty changes', () => {
+  it('Keep stored ack dismisses matching drift row and invalidates when qty or ledger changes', () => {
     const userId = 'user-1';
     acknowledgeHoldingsIntegrity({
       userId,
@@ -40,6 +40,7 @@ describe('holdingsIntegrityAck', () => {
       symbol: 'LARGE.CAP',
       kind: 'keep_stored',
       storedQty: 295.418,
+      ledgerQty: 0,
     });
     const acks = loadHoldingsIntegrityAcks(userId);
     expect(
@@ -49,21 +50,52 @@ describe('holdingsIntegrityAck', () => {
         symbol: 'LARGE.CAP',
         kind: 'keep_stored',
         storedQty: 295.418,
+        ledgerQty: 0,
       }),
     ).toBe(true);
 
     const rows = [
-      { portfolioId: 'pf1', symbol: 'LARGE.CAP', storedQuantity: 295.418 },
-      { portfolioId: 'pf1', symbol: '4163.SR', storedQuantity: 10 },
+      { portfolioId: 'pf1', symbol: 'LARGE.CAP', storedQuantity: 295.418, ledgerQuantity: 0 },
+      { portfolioId: 'pf1', symbol: '4163.SR', storedQuantity: 10, ledgerQuantity: 8 },
     ];
     expect(filterUnackedDriftRows(rows, acks)).toEqual([
-      { portfolioId: 'pf1', symbol: '4163.SR', storedQuantity: 10 },
+      { portfolioId: 'pf1', symbol: '4163.SR', storedQuantity: 10, ledgerQuantity: 8 },
     ]);
 
     // After a trade changes stored qty, ack no longer matches — drift resurfaces.
     expect(
-      filterUnackedDriftRows([{ portfolioId: 'pf1', symbol: 'LARGE.CAP', storedQuantity: 300 }], acks),
+      filterUnackedDriftRows(
+        [{ portfolioId: 'pf1', symbol: 'LARGE.CAP', storedQuantity: 300, ledgerQuantity: 0 }],
+        acks,
+      ),
     ).toHaveLength(1);
+
+    // Ledger side change also resurfaces.
+    expect(
+      filterUnackedDriftRows(
+        [{ portfolioId: 'pf1', symbol: 'LARGE.CAP', storedQuantity: 295.418, ledgerQuantity: 10 }],
+        acks,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('reconciled / rebuilt kinds dismiss the same drift pair as Keep stored', () => {
+    const userId = 'user-2';
+    acknowledgeHoldingsIntegrity({
+      userId,
+      portfolioId: 'pf1',
+      symbol: '1831.SR',
+      kind: 'reconciled',
+      storedQty: 12631,
+      ledgerQty: 0,
+    });
+    const acks = loadHoldingsIntegrityAcks(userId);
+    expect(
+      filterUnackedDriftRows(
+        [{ portfolioId: 'pf1', symbol: '1831.SR', storedQuantity: 12631, ledgerQuantity: 0 }],
+        acks,
+      ),
+    ).toEqual([]);
   });
 
   it('Keep closed ack dismisses matching ledger-net missing row and invalidates when ledger changes', () => {
@@ -108,11 +140,13 @@ describe('holdingsIntegrityAck', () => {
     expect(loadHoldingsIntegrityAcks('u')['pf1:X']?.symbol).toBe('X');
   });
 
-  it('panel wires Keep stored to acknowledgeHoldingsIntegrity + toast (not message-only)', () => {
+  it('panel wires Keep stored / Rebuild to durable ack (final, not message-only)', () => {
     const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
     expect(panel).toContain('acknowledgeHoldingsIntegrityDurable');
     expect(panel).toContain("kind: 'keep_stored'");
     expect(panel).toContain("kind: 'keep_closed'");
+    expect(panel).toContain("kind: 'rebuilt'");
+    expect(panel).toContain('ledgerQty:');
     expect(panel).toContain('filterUnackedDriftRows');
     expect(panel).toContain('filterUnackedMissingRows');
     expect(panel).toContain('data-testid={`keep-stored-');
@@ -120,6 +154,8 @@ describe('holdingsIntegrityAck', () => {
     expect(panel).toContain('cursor-pointer');
     // Must not be the old no-op that only setRebuildMessage.
     expect(panel).not.toContain('No ledger rebuild.');
+    // Rebuild must ack (final), not clear the dismissal.
+    expect(panel).not.toContain('clearHoldingsIntegrityAckDurable');
   });
 
   it('Investments and SystemHealth still mount integrity panel; KPIs use stored quantity', () => {

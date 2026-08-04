@@ -12,7 +12,8 @@ export const INVESTMENT_RECONCILIATION_NOTE_PREFIX = 'reconciliation:reconcile_b
 
 /**
  * Broker-cash Reconcile Balance posts as deposit/withdrawal so Σ(ledger) can move with balance,
- * but those rows are **not** economic capital in/out (ROI / invested / withdrawn / period external).
+ * but those rows are **not** economic capital in/out (ROI / Invested / Withdrawn). Period MTM may
+ * still include them so cash-balance corrections do not look like performance.
  */
 export function isInvestmentReconciliationCashAdjustment(tx: {
   type?: string | null;
@@ -30,6 +31,49 @@ export function isInvestmentReconciliationCashAdjustment(tx: {
   if (/reconciliation adjustment/i.test(desc)) return true;
   if (category.toLowerCase() === RECONCILIATION_ADJUSTMENT_CATEGORY.toLowerCase()) return true;
   return false;
+}
+
+/**
+ * Trade-log label for investment ledger rows. Broker-cash reconcile uses deposit/withdrawal
+ * types for cash identity only — never show those as economic WITHDRAWAL/DEPOSIT in the UI.
+ */
+export function investmentLedgerTypeLabel(tx: {
+  type?: string | null;
+  note?: string | null;
+  description?: string | null;
+  category?: string | null;
+}): string {
+  const typ = String(tx.type ?? '').trim().toLowerCase();
+  if (isInvestmentReconciliationCashAdjustment(tx)) {
+    if (typ === 'withdrawal') return 'RECONCILE↓';
+    if (typ === 'deposit') return 'RECONCILE↑';
+    return 'RECONCILE';
+  }
+  return typ.toUpperCase() || '—';
+}
+
+export function isInvestmentLedgerTypeCapitalOutflow(tx: {
+  type?: string | null;
+  note?: string | null;
+  description?: string | null;
+  category?: string | null;
+}): boolean {
+  const typ = String(tx.type ?? '').trim().toLowerCase();
+  if (typ !== 'sell' && typ !== 'withdrawal') return false;
+  if (typ === 'withdrawal' && isInvestmentReconciliationCashAdjustment(tx)) return false;
+  return true;
+}
+
+export function isInvestmentLedgerTypeCapitalInflow(tx: {
+  type?: string | null;
+  note?: string | null;
+  description?: string | null;
+  category?: string | null;
+}): boolean {
+  const typ = String(tx.type ?? '').trim().toLowerCase();
+  if (typ !== 'buy' && typ !== 'deposit') return false;
+  if (typ === 'deposit' && isInvestmentReconciliationCashAdjustment(tx)) return false;
+  return true;
 }
 
 /** Signed ledger amount: income positive, expense negative (matches account Σ(tx.amount)). */

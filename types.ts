@@ -430,6 +430,11 @@ export interface Holding {
   currentPrice?: number;
   /** ISO timestamp when currentPrice/currentValue were last persisted from a trusted quote. */
   priceUpdatedAt?: string;
+  /**
+   * Unrealized P/L in portfolio book currency from the last trusted mark
+   * (`currentValue − quantity × avgCost`). Kept in sync with share price persistence.
+   */
+  unrealizedPnL?: number;
   goalId?: string;
   assetClass?: HoldingAssetClass;
   percentage?: number;
@@ -704,8 +709,10 @@ export interface Settings {
         {
           portfolioId: string;
           symbol: string;
-          kind: 'keep_stored' | 'keep_closed';
+          kind: 'keep_stored' | 'keep_closed' | 'reconciled' | 'rebuilt';
           storedQtyFingerprint: number;
+          /** When set, dismissal is bound to this ledger qty as well. */
+          ledgerQtyFingerprint?: number;
           at: string;
         }
       >;

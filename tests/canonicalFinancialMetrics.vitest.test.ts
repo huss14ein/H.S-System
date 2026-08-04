@@ -184,5 +184,8 @@ describe('computeCanonicalFinancialMetrics', () => {
     expect(merged.investmentsTotalSar).toBe(merged.investmentExposure!.totalExposureSar);
     expect(merged.investmentAllocation.portfolioAllocation.length).toBeGreaterThan(0);
     expect(merged.investmentAllocation.totalSar).toBe(merged.investmentsTotalSar);
+    expect(merged.investmentAllocation.assetClassAllocation.some((r) => r.name === 'Stock' || r.name === 'Other')).toBe(
+      true,
+    );
   });
 });

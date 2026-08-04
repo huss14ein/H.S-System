@@ -262,7 +262,15 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       const info = lookupLiveQuoteForSymbol(pricesForDailyPnL, symRaw);
       if (!info) return;
       const changePerShare = resolveQuoteChangePerShare(info);
-      const d = quoteDailyPnLInBookCurrency(changePerShare, qty, symRaw.toUpperCase(), cur, rate, asOf);
+      const d = quoteDailyPnLInBookCurrency(
+        changePerShare,
+        qty,
+        symRaw.toUpperCase(),
+        cur,
+        rate,
+        asOf,
+        pricesForDailyPnL as Record<string, unknown>,
+      );
       if (cur === 'SAR') dailySar += d;
       else dailyUsd += d;
     });

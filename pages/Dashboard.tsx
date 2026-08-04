@@ -71,6 +71,7 @@ import {
     budgetsForFinancialMonthView,
     financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
+import { budgetCardCategoryNames } from '../utils/budgetCardCategories';
 import { buildPersonalInvestmentTreemapRows } from '../services/wealthSummaryReportModel';
 import { PAGE_INTROS, GETTING_STARTED_STEPS } from '../content/plainLanguage';
 import PlanCompareContextBanner from '../components/PlanCompareContextBanner';
@@ -946,7 +947,19 @@ const DashboardContent: React.FC<{
                 isOpen={isReviewModalOpen}
                 onClose={() => setIsReviewModalOpen(false)}
                 transactions={uncategorizedTransactions}
-                budgetCategories={(data?.budgets ?? []).map(b => b.category)}
+                budgetCategories={(() => {
+                    const monthStartDay = resolveMonthStartDayFromData(data);
+                    return budgetCardCategoryNames({
+                        budgets: data?.budgets ?? [],
+                        viewKey: financialMonthKey(new Date(), monthStartDay),
+                        monthStartDay,
+                        userRole: 'Admin',
+                        finalizedNewCategoryNames: (data?.budgetRequests ?? [])
+                            .filter((r) => r.status === 'Finalized' && r.requestType === 'NewCategory')
+                            .map((r) => String(r.categoryName || '').trim())
+                            .filter(Boolean),
+                    });
+                })()}
             />
         </div>
     );

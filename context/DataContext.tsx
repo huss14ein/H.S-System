@@ -279,7 +279,7 @@ interface DataContextType {
    * Partial market update only: never writes quantity or average cost.
    */
   batchUpdateHoldingValues: (
-    updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string }[],
+    updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string; unrealizedPnL?: number }[],
   ) => Promise<void>;
   recordTrade: (trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number }, executedPlanId?: string, opts?: RecordWriteOptions) => Promise<{
     insertedInvestmentTransactionId: string | null;
@@ -858,6 +858,10 @@ function normalizeHoldingFromRow(row: any): Holding {
                 ? Number(row.current_price ?? row.currentPrice)
                 : undefined,
         priceUpdatedAt: row.price_updated_at ?? row.priceUpdatedAt ?? undefined,
+        unrealizedPnL:
+            row.unrealized_pnl != null || row.unrealizedPnL != null
+                ? roundMoney(Number(row.unrealized_pnl ?? row.unrealizedPnL))
+                : undefined,
         realizedPnL: roundMoney(Number(row.realized_pnl ?? row.realizedPnL ?? 0)),
         zakahClass: row.zakah_class ?? row.zakahClass ?? 'Zakatable',
         assetClass: row.asset_class ?? row.assetClass,
@@ -1073,6 +1077,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const normalizeHolding = (holding: any): Holding => {
         const holdingType = holding.holdingType ?? holding.holding_type ?? 'ticker';
+        const currentPriceRaw = holding.currentPrice ?? holding.current_price;
+        const unrealizedRaw = holding.unrealizedPnL ?? holding.unrealized_pnl;
         return {
             ...holding,
             portfolio_id: holding.portfolio_id || holding.portfolioId,
@@ -1081,6 +1087,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             quantity: roundQuantity(Number(holding.quantity ?? 0)),
             avgCost: roundAvgCostPerUnit(Number(holding.avgCost ?? holding.avg_cost ?? 0)),
             currentValue: roundMoney(Number(holding.currentValue ?? holding.current_value ?? 0)),
+            currentPrice:
+                currentPriceRaw != null && Number.isFinite(Number(currentPriceRaw))
+                    ? Number(currentPriceRaw)
+                    : undefined,
+            priceUpdatedAt: holding.priceUpdatedAt ?? holding.price_updated_at ?? undefined,
+            unrealizedPnL:
+                unrealizedRaw != null && Number.isFinite(Number(unrealizedRaw))
+                    ? roundMoney(Number(unrealizedRaw))
+                    : undefined,
             goalId: holding.goalId ?? holding.goal_id,
             assetClass: holding.assetClass ?? holding.asset_class,
             realizedPnL: roundMoney(Number(holding.realizedPnL ?? holding.realized_pnl ?? 0)),
@@ -4082,6 +4097,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         },
     ) => {
         if (!auth?.user) return;
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const userId = auth.user.id;
         const snapshot = dataRef.current;
         const portfolio = (snapshot?.investments ?? []).find((p) => p.id === portfolioId);
         if (!portfolio) return;
@@ -4099,7 +4116,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             addHolding,
             deleteHolding,
             supabase,
-            userId: auth.user.id,
+            userId,
             holdingsBaselineMode: overrides.holdingsBaselineMode ?? 'replay_derived',
             holdingsReplayEvents: overrides.holdingsReplayEvents,
             symbols,
@@ -4203,6 +4220,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     backfillRealizedPnLForAllPortfoliosRef.current = backfillRealizedPnLForAllPortfolios;
 
+
     const applyCorporateActionEvent = async (args: {
         portfolioId: string;
         symbol: string;
@@ -4211,6 +4229,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         linkedSymbol?: string;
     }) => {
         if (!supabase || !auth?.user) return;
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const db = supabase;
+        const userId = auth.user.id;
         if (corporateActionInFlightRef.current) {
             throw new Error('A corporate action is already in progress. Please wait.');
         }
@@ -4240,7 +4261,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             action: args.action,
             linkedSymbol: args.linkedSymbol,
         });
-        const row = withUser({
+        const row = {
             portfolio_id: payload.portfolio_id,
             action_type: payload.action_type,
             symbol: payload.symbol,
@@ -4254,8 +4275,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             metadata: payload.metadata ?? {},
             idempotency_key: payload.idempotency_key,
             status: payload.status ?? 'applied',
-        });
-        const { data: inserted, error } = await supabase.from('corporate_action_events').insert(row).select().single();
+            user_id: userId,
+        };
+        const { data: inserted, error } = await db.from('corporate_action_events').insert(row).select().single();
         if (error) {
             if (error.code === 'PGRST205') {
                 console.warn('corporate_action_events table missing — apply migration 20260706130000_corporate_actions_and_cost_lots.sql');
@@ -4337,13 +4359,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const removeCorporateActionCashDeposits = async (idempotencyKey: string) => {
         if (!supabase || !auth?.user) return;
+        const db = supabase;
+        const userId = auth.user.id;
         const keys = corporateActionCashDepositIdempotencyKeysForEvent(idempotencyKey);
         const snapshot = dataRef.current;
 
-        const { data: dbRows, error: fetchErr } = await supabase
+        const { data: dbRows, error: fetchErr } = await db
             .from('investment_transactions')
             .select('*')
-            .eq('user_id', auth.user.id)
+            .eq('user_id', userId)
             .eq('type', 'deposit')
             .in('idempotency_key', keys);
         if (fetchErr && fetchErr.code !== 'PGRST205') {
@@ -4363,10 +4387,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         for (const deposit of depositsById.values()) {
             if (!deposit.id) continue;
-            const { error } = await supabase
+            const { error } = await db
                 .from('investment_transactions')
                 .delete()
-                .match({ id: deposit.id, user_id: auth.user.id });
+                .match({ id: deposit.id, user_id: userId });
             if (error) {
                 console.warn('Corporate action deposit reversal failed:', error);
                 continue;
@@ -4385,6 +4409,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const reverseCorporateActionEvent = async (eventId: string) => {
         if (!supabase || !auth?.user) return;
+        /** Narrowed for nested async callbacks (TS does not preserve guard narrowing into closures). */
+        const db = supabase;
+        const userId = auth.user.id;
         if (corporateActionInFlightRef.current) {
             throw new Error('A corporate action is already in progress. Please wait.');
         }
@@ -4410,10 +4437,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Ledger-backed undo: mark original reversed and exclude from replay — do NOT insert an inverse event
         // (that would reverse-split an already-unsplit buy history).
         if (!manualOnly) {
-            const { error: markErr } = await supabase
+            const { error: markErr } = await db
                 .from('corporate_action_events')
                 .update({ status: 'reversed', reversed_by_event_id: null })
-                .match({ id: eventId, user_id: auth.user.id });
+                .match({ id: eventId, user_id: userId });
             if (markErr && markErr.code !== 'PGRST205') throw markErr;
 
             const mergedEvents = (snapshot?.corporateActionEvents ?? []).map((e) =>
@@ -4435,7 +4462,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 action: buildReverseCorporateAction(corporateActionFromEvent(ev)),
                 portfolioId: ev.portfolioId,
             });
-            await insertReconciliationAudit(supabase, auth.user.id, {
+            await insertReconciliationAudit(db, userId, {
                 kind: 'corporate_action',
                 mechanism: 'corporate_action_undo',
                 entityType: 'corporate_action',
@@ -4456,22 +4483,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             action: reverseAction,
             linkedSymbol: ev.linkedSymbol ?? undefined,
         });
-        const reverseRow = withUser({
+        const reverseRow = {
             ...payload,
             idempotency_key: `${payload.idempotency_key}|reverse|${eventId}`,
             status: 'applied',
-        });
-        const { data: inserted, error: insertErr } = await supabase
+            user_id: userId,
+        };
+        const { data: inserted, error: insertErr } = await db
             .from('corporate_action_events')
             .insert(reverseRow)
             .select()
             .single();
         if (insertErr && insertErr.code !== 'PGRST205' && insertErr.code !== '23505') throw insertErr;
 
-        const { error: markErr } = await supabase
+        const { error: markErr } = await db
             .from('corporate_action_events')
             .update({ status: 'reversed', reversed_by_event_id: inserted?.id ?? null })
-            .match({ id: eventId, user_id: auth.user.id });
+            .match({ id: eventId, user_id: userId });
         if (markErr && markErr.code !== 'PGRST205') throw markErr;
 
         const reversalEv = normalizeCorporateActionEventRow(
@@ -4922,12 +4950,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 Math.abs(Number(input.actualValue) - holdingMeta.beforeQty) > 1e-6
               ) {
                 /** Skip align-lots / cost-only applies — they must not silent-dismiss qty warnings. */
+                const fresh = dataRef.current ?? data;
+                const scoped = (fresh?.investmentTransactions ?? []).filter(
+                  (t) => t.portfolioId === holdingMeta.portfolioId,
+                );
+                let ledgerQty = 0;
+                const sym = String(holdingMeta.symbol).trim().toUpperCase();
+                for (const t of scoped) {
+                  if (String(t.symbol ?? '').trim().toUpperCase() !== sym) continue;
+                  if (t.type === 'buy') ledgerQty += Math.max(0, Number(t.quantity) || 0);
+                  if (t.type === 'sell') ledgerQty -= Math.max(0, Number(t.quantity) || 0);
+                }
                 await acknowledgeHoldingsIntegrityDurable({
                   userId,
                   portfolioId: holdingMeta.portfolioId,
                   symbol: holdingMeta.symbol,
-                  kind: 'keep_stored',
+                  kind: 'reconciled',
                   storedQty: Number(input.actualValue),
+                  ledgerQty,
                   currentUiAcks: (dataRef.current ?? data)?.settings?.uiAcks,
                   persistUiAcks,
                 });
@@ -5068,7 +5108,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const batchUpdateHoldingValues = async (
-        updates: { id: string; currentValue: number; currentPrice: number; priceUpdatedAt?: string }[],
+        updates: {
+            id: string;
+            currentValue: number;
+            currentPrice: number;
+            priceUpdatedAt?: string;
+            unrealizedPnL?: number;
+        }[],
     ): Promise<void> => {
         if (!supabase || !auth?.user) return;
         const db = supabase;
@@ -5091,7 +5137,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         lastHoldingMarketValuePersistMsRef.current = fallbackNowMs;
         const byId = new Map<
             string,
-            { id: string; currentValue: number; currentPrice: number; priceUpdatedAt: string }
+            {
+                id: string;
+                currentValue: number;
+                currentPrice: number;
+                priceUpdatedAt: string;
+                unrealizedPnL: number | null;
+            }
         >();
         for (const update of updates) {
             const id = String(update.id ?? '').trim();
@@ -5099,6 +5151,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const currentPrice = Number(update.currentPrice);
             const suppliedMs = update.priceUpdatedAt ? Date.parse(update.priceUpdatedAt) : Number.NaN;
             const quoteMs = Number.isFinite(suppliedMs) ? suppliedMs : fallbackNowMs;
+            const unrealizedPnL = Number.isFinite(Number(update.unrealizedPnL))
+                ? roundMoney(Number(update.unrealizedPnL))
+                : null;
             if (
                 !id ||
                 !Number.isFinite(currentValue) ||
@@ -5125,6 +5180,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 currentValue,
                 currentPrice,
                 priceUpdatedAt: new Date(effectiveMs).toISOString(),
+                unrealizedPnL,
             });
         }
         const safeUpdates = [...byId.values()];
@@ -5135,6 +5191,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             current_value: u.currentValue,
             current_price: u.currentPrice,
             price_updated_at: u.priceUpdatedAt,
+            unrealized_pnl: u.unrealizedPnL,
         }));
 
         // One RPC call avoids N holdings PATCH requests and applies only market columns.
@@ -5151,6 +5208,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             currentValue: number;
             currentPrice: number;
             priceUpdatedAt: string;
+            unrealizedPnL: number | null;
         }[] = safeUpdates;
 
         if (missingRpc) {
@@ -5163,11 +5221,32 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             current_value: u.current_value,
                             current_price: u.current_price,
                             price_updated_at: u.price_updated_at,
+                            unrealized_pnl: u.unrealized_pnl,
                         })
                         .match({ id: u.id, user_id: userId }),
                 ),
             );
             persistError = modernResults.find((r) => r.error)?.error ?? null;
+
+            const missingUnrealized =
+                persistError?.code === '42703' ||
+                persistError?.code === 'PGRST204' ||
+                String(persistError?.message ?? '').toLowerCase().includes('unrealized_pnl');
+            if (missingUnrealized) {
+                const withoutUnrealized = await Promise.all(
+                    payload.map((u) =>
+                        db
+                            .from('holdings')
+                            .update({
+                                current_value: u.current_value,
+                                current_price: u.current_price,
+                                price_updated_at: u.price_updated_at,
+                            })
+                            .match({ id: u.id, user_id: userId }),
+                    ),
+                );
+                persistError = withoutUnrealized.find((r) => r.error)?.error ?? null;
+            }
 
             const missingColumns =
                 persistError?.code === '42703' ||
@@ -5201,7 +5280,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 // Partial skip: re-read so in-memory marks match what the RPC actually persisted.
                 const { data: rows, error: readError } = await db
                     .from('holdings')
-                    .select('id, current_value, current_price, price_updated_at')
+                    .select('id, current_value, current_price, price_updated_at, unrealized_pnl')
                     .in(
                         'id',
                         safeUpdates.map((u) => u.id),
@@ -5217,6 +5296,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         const currentPrice = Number(row.current_price);
                         const priceUpdatedAt =
                             typeof row.price_updated_at === 'string' ? row.price_updated_at : '';
+                        const unrealizedPnL = roundMoney(
+                            row.unrealized_pnl != null
+                                ? Number(row.unrealized_pnl)
+                                : currentValue,
+                        );
                         if (
                             !row.id ||
                             !Number.isFinite(currentValue) ||
@@ -5230,6 +5314,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             currentValue,
                             currentPrice,
                             priceUpdatedAt,
+                            unrealizedPnL,
                         };
                     })
                     .filter((u): u is NonNullable<typeof u> => u != null);
@@ -5257,6 +5342,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                   currentValue: update.currentValue,
                                   currentPrice: update.currentPrice,
                                   priceUpdatedAt: update.priceUpdatedAt,
+                                  ...(update.unrealizedPnL != null
+                                      ? { unrealizedPnL: update.unrealizedPnL }
+                                      : {}),
                               }
                             : h;
                     }),
@@ -5264,6 +5352,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }));
         });
     };
+
     const recordTrade = async (
         trade: { portfolioId?: string, name?: string, manualCurrentValue?: number, holdingType?: string, transferGroupId?: string } & Omit<InvestmentTransaction, 'id' | 'user_id'> & { total?: number },
         executedPlanId?: string,

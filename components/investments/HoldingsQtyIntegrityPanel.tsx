@@ -17,7 +17,6 @@ import {
 } from '../../services/holdingsIntegrityAck';
 import {
   acknowledgeHoldingsIntegrityDurable,
-  clearHoldingsIntegrityAckDurable,
   resolveHoldingsIntegrityAcks,
 } from '../../services/uiAcks';
 import {
@@ -114,12 +113,13 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
           symbol: r.symbol,
           kind: 'keep_stored',
           storedQty: r.storedQuantity,
+          ledgerQty: r.ledgerQuantity,
           currentUiAcks: data.settings?.uiAcks,
           persistUiAcks,
         });
         setAcks(next);
         toast(
-          `Kept stored ${String(r.symbol).slice(0, 32)}: ${r.storedQuantity.toLocaleString()} shares (KPIs use this book).`,
+          `Kept stored ${String(r.symbol).slice(0, 32)}: ${r.storedQuantity.toLocaleString()} shares — this warning will not return until the book or ledger changes.`,
           'success',
         );
       } catch (err) {
@@ -176,10 +176,19 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
     setRebuildBusyKey(key);
     try {
       await ctx.rebuildHoldingsFromLedgerForSymbols({ portfolioId, symbols: [symbol] });
-      const next = await clearHoldingsIntegrityAckDurable({
+      const fresh = ctx.data;
+      const rebuiltHolding = (fresh?.investments ?? [])
+        .find((p) => p.id === portfolioId)
+        ?.holdings?.find((h) => String(h.symbol ?? '').trim().toUpperCase() === String(symbol).trim().toUpperCase());
+      const storedAfter = Number(rebuiltHolding?.quantity) || 0;
+      const ledgerAfter = opts?.expectedLedgerQty ?? storedAfter;
+      const next = await acknowledgeHoldingsIntegrityDurable({
         userId,
         portfolioId,
         symbol,
+        kind: 'rebuilt',
+        storedQty: storedAfter,
+        ledgerQty: ledgerAfter,
         currentUiAcks: data.settings?.uiAcks,
         persistUiAcks,
       });
@@ -189,7 +198,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
           ? `Restored ${symbol} holding from ledger.`
           : opts?.reopenSold
             ? `Re-opened ${symbol} from ledger.`
-            : `Rebuilt ${symbol} from ledger.`,
+            : `Rebuilt ${symbol} from ledger — warning dismissed until book or ledger changes.`,
         'success',
       );
     } catch (err) {
@@ -217,10 +226,17 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
       for (const [portfolioId, symbols] of byPortfolio) {
         await ctx.rebuildHoldingsFromLedgerForSymbols({ portfolioId, symbols });
         for (const symbol of symbols) {
-          nextMap = await clearHoldingsIntegrityAckDurable({
+          const row = likelyOpenMissing.find((r) => r.portfolioId === portfolioId && r.symbol === symbol);
+          const freshHolding = (ctx.data?.investments ?? [])
+            .find((p) => p.id === portfolioId)
+            ?.holdings?.find((h) => String(h.symbol ?? '').trim().toUpperCase() === symbol);
+          nextMap = await acknowledgeHoldingsIntegrityDurable({
             userId,
             portfolioId,
             symbol,
+            kind: 'rebuilt',
+            storedQty: Number(freshHolding?.quantity) || Number(row?.ledgerNet) || 0,
+            ledgerQty: Number(row?.ledgerNet) || 0,
             currentUiAcks: {
               ...(data.settings?.uiAcks ?? {}),
               holdingsQtyIntegrity: nextMap,
@@ -316,11 +332,12 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
         Holdings quantity integrity
       </h4>
       <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-        KPIs and net worth use <strong>stored holdings</strong> (single source of truth). If a symbol has trades in the
-        log but no holding row, restore it here. Ledger scope is{' '}
-        <code className="text-[11px]">portfolio_id</code> (not the whole platform account). To match broker share counts
-        without restoring a missing row, use <strong>Reconcile quantity</strong> on that holding (audited delta —
-        not a bulk rewrite).
+        KPIs and net worth use <strong>stored holdings</strong> (single source of truth). Actions below are{' '}
+        <strong>final</strong> for the current book vs ledger pair — Keep stored, Reconcile quantity, and Rebuild
+        dismiss this warning until either quantity changes. Ledger scope is{' '}
+        <code className="text-[11px]">portfolio_id</code> (untagged account trades are not counted). To match broker
+        share counts without rewriting the ledger, use <strong>Reconcile quantity</strong> (audited non-cash delta —
+        not a sell or withdrawal).
       </p>
 
       {likelyOpenMissing.length > 0 && (

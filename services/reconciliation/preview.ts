@@ -87,6 +87,15 @@ export function previewCashAccountReconcile(args: {
     blockedReason = 'Reason is required (at least 3 characters).';
   } else if (args.account.type === 'Investment') {
     impacts.push('Broker uninvested cash will move by the delta via an investment ledger row.');
+    if (delta < 0) {
+      impacts.push(
+        'Downward cash reconcile posts a tagged ledger balancing row (not economic capital withdrawn — Invested / Withdrawn KPIs ignore it).',
+      );
+    } else if (delta > 0) {
+      impacts.push(
+        'Upward cash reconcile posts a tagged ledger balancing row (not economic capital deposited — Invested / Withdrawn KPIs ignore it).',
+      );
+    }
   } else {
     impacts.push(
       `A ${RECONCILIATION_ADJUSTMENT_CATEGORY} ${delta >= 0 ? 'income' : 'expense'} of ${Math.abs(delta).toFixed(2)} ${currency} will be posted.`,
@@ -284,13 +293,14 @@ export function previewHoldingQuantityReconcile(args: {
   const forceLotAlign = args.alignLotCostsToBook === true && actual > 0;
   const impacts: string[] = [
     'Symbol-only holding book update; market marks unchanged.',
-    'Open lots are trimmed FIFO for any sold / reduced quantity, then cost-aligned to the restated book when requested.',
+    'Non-cash correction only — no sell, deposit, or withdrawal is posted, so Invested / Withdrawn and cashflow KPIs are unchanged.',
+    'Open lots are trimmed FIFO when quantity decreases, then cost-aligned to the restated book when requested.',
   ];
   if (!qtyNoop) {
     impacts.push(
       delta > 0
         ? `Quantity ${before} → ${actual} (+${roundMoney(delta)} shares).`
-        : `Quantity ${before} → ${actual} (${roundMoney(delta)} shares — treated as sold for open lots).`,
+        : `Quantity ${before} → ${actual} (${roundMoney(delta)} shares — book reduction only, not a cash withdrawal).`,
     );
   }
   if (!costNoop) {

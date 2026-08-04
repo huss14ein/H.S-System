@@ -1,7 +1,7 @@
 /**
  * Weekly digest salary-invest path — cash txs + settings must reach computeSalaryInvestmentKpis.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildFinancialDataForWeeklyDigest } from '../services/digestFinancialData';
@@ -18,6 +18,10 @@ function currentMonthDay(day: number): string {
 }
 
 describe('weekly digest salary investment wiring', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('edge function fetches cash transactions and settings with salary column fallback', () => {
     const src = read('supabase/functions/send-weekly-digest/index.ts');
     expect(src).toContain(".from('transactions')");
@@ -28,6 +32,9 @@ describe('weekly digest salary investment wiring', () => {
   });
 
   it('digest builder maps cash txs + account roles into non-zero salary KPIs', () => {
+    // Fixtures are dated July 2026; freeze "now" so current financial month matches.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 15, 12, 0, 0));
     const data = buildFinancialDataForWeeklyDigest({
       accountsRaw: [
         {
