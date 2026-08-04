@@ -6,7 +6,10 @@ import {
   type CanonicalFinancialMetrics,
 } from '../services/canonicalFinancialMetrics';
 import type { SimulatedPriceMap } from '../services/investmentPlatformCardMetrics';
-import { rescaleHeadlineInvestmentAllocation } from '../services/headlineInvestmentAllocation';
+import {
+  buildHeadlineInvestmentAllocationSlices,
+  rescaleHeadlineInvestmentAllocation,
+} from '../services/headlineInvestmentAllocation';
 
 export type UseCanonicalFinancialMetricsResult = CanonicalFinancialMetrics & {
   data: FinancialData | null;
@@ -106,6 +109,11 @@ export function buildCanonicalFinancialMetricsResult(args: {
 /**
  * Phase-2 async metrics (wealth summary) can lag behind quote ticks.
  * Always overlay the fast sync tier so live prices reach every page.
+ *
+ * Allocation charts are rebuilt from live holdings + quotes (not merely rescaled).
+ * Rescale-only left equity rows missing when phase-2 was built before holdings had
+ * a markable value, then live quotes raised platforms rollup — Cash/Commodities/Sukuk
+ * absorbed the stock share of the total across Overview, Dashboard, and Analytics.
  */
 export function overlayLiveQuoteTierOntoExtendedMetrics(
   extended: UseCanonicalFinancialMetricsResult,
@@ -120,11 +128,21 @@ export function overlayLiveQuoteTierOntoExtendedMetrics(
         sukukPositionsValueSar: investmentExposure.sukukPositionsValueSar,
       }
     : live.headlineExposureParts;
-  const investmentAllocation =
+  const hasExtendedAlloc =
     extended.investmentAllocation.portfolioAllocation.length > 0 ||
-    extended.investmentAllocation.assetClassAllocation.length > 0
-      ? rescaleHeadlineInvestmentAllocation(extended.investmentAllocation, headlineExposureParts)
-      : live.investmentAllocation;
+    extended.investmentAllocation.assetClassAllocation.length > 0;
+  const investmentAllocation =
+    live.data != null
+      ? buildHeadlineInvestmentAllocationSlices(
+          live.data,
+          headlineExposureParts,
+          live.sarPerUsd,
+          live.investableCashTotalSar,
+          live.simulatedPrices,
+        )
+      : hasExtendedAlloc
+        ? rescaleHeadlineInvestmentAllocation(extended.investmentAllocation, headlineExposureParts)
+        : live.investmentAllocation;
   return {
     ...extended,
     simulatedPrices: live.simulatedPrices,

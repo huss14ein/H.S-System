@@ -92,6 +92,9 @@ describe('system-wide lag completion E2E', () => {
     expect(ctx).toContain('overlayLiveQuoteTierOntoExtendedMetrics');
     expect(ctx).toContain('financialDataHasHydrated(data)');
     expect(ctx).toContain('compactQuotePriceFingerprint');
+    expect(ctx).toContain('holdingsFp');
+    expect(ctx).toContain('commoditiesFp');
+    expect(ctx).toContain('sukukFp');
     expect(ctx).toMatch(
       /}, \[extendedFingerprint, metricsData, exchangeRate, getAvailableCashForAccount, kpiQuotePrices\]\)/,
     );

@@ -17,4 +17,10 @@ describe('InvestmentOverview asset-class bucket normalization', () => {
     expect(normalizeAssetClassBucket('')).toBe('Other');
     expect(normalizeAssetClassBucket(undefined)).toBe('Other');
   });
+
+  it('maps Equity / Equities aliases to Stock', () => {
+    expect(normalizeAssetClassBucket('Equity')).toBe('Stock');
+    expect(normalizeAssetClassBucket('equities')).toBe('Stock');
+    expect(normalizeAssetClassBucket('Stock')).toBe('Stock');
+  });
 });
