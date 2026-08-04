@@ -21,7 +21,8 @@ describe('portfolio sync + KPI completion', () => {
     expect(read('context/MarketDataContext.tsx')).toContain('refreshPricesForPortfolio');
     expect(read('components/MarketSimulator.tsx')).toContain('scopeIsPortfolio');
     expect(read('components/MarketSimulator.tsx')).toContain('skipCacheSeed');
-    expect(read('components/MarketSimulator.tsx')).toContain('allowCacheFallback');
+    expect(read('components/MarketSimulator.tsx')).toContain('buildQuoteCacheRowsFromPersistedHoldingPrices');
+    expect(read('components/MarketSimulator.tsx')).toContain('applyStoredQuoteFallback');
     expect(read('pages/Investments.tsx')).toContain('refreshPricesForPortfolio');
     expect(read('pages/Investments.tsx')).toContain('portfolioHasRefreshableQuoteSymbols');
     expect(read('pages/Investments.tsx')).not.toContain('refreshPricesForPlatform(');
@@ -172,6 +173,6 @@ describe('portfolio sync + KPI completion', () => {
       { '2222.SR': { price: 3200, change: 0, changePercent: 0 } },
       3.75,
     );
-    expect(updates).toEqual([{ id: 'h1', currentValue: 3200, currentPrice: 32 }]);
+    expect(updates).toEqual([{ id: 'h1', currentValue: 3200, currentPrice: 32, unrealizedPnL: 0 }]);
   });
 });

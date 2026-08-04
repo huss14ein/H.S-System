@@ -17,6 +17,7 @@ import {
     buildDisplayMapFromCachedRows,
     resolveSymbolsToLiveFetch,
     symbolsNeedingLiveFetch,
+    saveQuoteCacheRows,
 } from '../services/quotePriceCache';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { portfolioBelongsToAccount, resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
@@ -41,7 +42,10 @@ import { scheduleIdleWork, scheduleIdleWorkAsync, waitUntilBackgroundWorkResumed
 import { yieldToMain } from '../utils/yieldToMain';
 import { computeRestoreCachedQuotesPatch, collectTrackedQuoteSymbols, sessionTimestampsForTrackedSymbols, rehydrateSessionPricesFromQuoteCache, latestQuoteCacheTimestamp, symbolTimestampsFromCacheRows } from '../services/cachedQuoteRestore';
 import type { CachedQuoteRow } from '../services/quotePriceCache';
-import { seedQuoteCacheFromPersistedHoldingPrices } from '../services/persistedHoldingQuoteSeed';
+import {
+    buildQuoteCacheRowsFromPersistedHoldingPrices,
+    seedQuoteCacheFromPersistedHoldingPrices,
+} from '../services/persistedHoldingQuoteSeed';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { registerQuoteRefreshKick } from '../utils/quoteRefreshBridge';
 import { nextQuotesPriceSourceAfterTick, quotesPriceSourceAfterCacheRehydrate } from '../services/quoteSessionStatus';
@@ -525,16 +529,36 @@ const MarketSimulator: React.FC = () => {
                         networkFetchedThisTick = true;
                     }
 
+                    const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
+                    /**
+                     * Manual force skips *pre-fetch* cache seed so every symbol is attempted live.
+                     * After the live attempt, always fill misses from cache (+ DB-seeded rows) so
+                     * holdings do not stick on the "Stored" badge when a last trusted quote exists.
+                     */
+                    {
+                        const holdingSeed = buildQuoteCacheRowsFromPersistedHoldingPrices(
+                            portfoliosInScope,
+                            cacheRows,
+                        );
+                        if (holdingSeed.changed) {
+                            cacheRows = holdingSeed.rows;
+                            saveQuoteCacheRows(cacheRows);
+                        }
+                    }
+                    for (const symbol of allTickerSymbols) {
+                        const row = lookupLiveQuoteForSymbol(newPrices, symbol);
+                        if (row && row.price > 0) continue;
+                        applyStoredQuoteFallback(symbol, newPrices, cacheRows);
+                    }
+
+                    // Trusted marks = network/cache only (before RNG simulation fills).
                     trustedQuoteSnapshot = { ...newPrices };
                     trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
 
-                    const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
-                    const allowCacheFallback = !(forceFetch && priceScope.manual === true);
                     let anyEquitySimulated = false;
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
-                        if (allowCacheFallback && applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;
@@ -580,16 +604,30 @@ const MarketSimulator: React.FC = () => {
                         console.error('Commodity price fetch failed during fallback:', commodityErr);
                     }
 
+                    const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
+                    {
+                        const holdingSeed = buildQuoteCacheRowsFromPersistedHoldingPrices(
+                            portfoliosInScope,
+                            cacheRows,
+                        );
+                        if (holdingSeed.changed) {
+                            cacheRows = holdingSeed.rows;
+                            saveQuoteCacheRows(cacheRows);
+                        }
+                    }
+                    for (const symbol of allTickerSymbols) {
+                        const row = lookupLiveQuoteForSymbol(newPrices, symbol);
+                        if (row && row.price > 0) continue;
+                        applyStoredQuoteFallback(symbol, newPrices, cacheRows);
+                    }
+
                     trustedQuoteSnapshot = { ...newPrices };
                     trustedQuoteUpdatedAt = sessionTimestampsForTrackedSymbols(uniqueSymbols, cacheRows);
 
-                    const allTickerSymbols = Array.from(new Set([...uniqueSymbols, ...commoditySymbols]));
-                    const allowCacheFallback = !(forceFetch && priceScope.manual === true);
                     let anyEquitySimulated = false;
                     for (const symbol of allTickerSymbols) {
                         const row = lookupLiveQuoteForSymbol(newPrices, symbol);
                         if (row && row.price > 0) continue;
-                        if (allowCacheFallback && applyStoredQuoteFallback(symbol, newPrices, cacheRows)) continue;
                         if (isTadawulQuoteSymbol(symbol)) continue;
                         simulateSymbol(symbol);
                         if (uniqueSymbols.includes(symbol)) anyEquitySimulated = true;

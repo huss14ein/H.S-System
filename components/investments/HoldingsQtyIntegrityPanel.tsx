@@ -336,7 +336,8 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
         <strong>final</strong> for the current book vs ledger pair — Keep stored, Reconcile quantity, and Rebuild
         dismiss this warning until either quantity changes. Ledger scope is{' '}
         <code className="text-[11px]">portfolio_id</code> (untagged account trades are not counted). To match broker
-        share counts without rewriting the ledger, use <strong>Reconcile quantity</strong> (audited non-cash delta).
+        share counts without rewriting the ledger, use <strong>Reconcile quantity</strong> (audited non-cash delta —
+        not a sell or withdrawal).
       </p>
 
       {likelyOpenMissing.length > 0 && (

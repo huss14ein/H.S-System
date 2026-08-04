@@ -105,6 +105,22 @@ describe('holding cost reconcile preview', () => {
     });
     expect(blocked.blockedReason).toMatch(/cost/i);
   });
+
+  it('qty-down preview is explicit non-cash (not a withdrawal / sell)', () => {
+    const preview = previewHoldingQuantityReconcile({
+      holdingId: 'h1',
+      beforeQty: 250,
+      actualQty: 200,
+      beforeAvgCost: 5,
+      reason: 'Match broker statement qty',
+    });
+    expect(preview.delta).toBe(-50);
+    expect(preview.blockedReason).toBeUndefined();
+    expect(preview.impacts.some((i) => /non-cash/i.test(i))).toBe(true);
+    expect(preview.impacts.some((i) => /not a cash withdrawal/i.test(i))).toBe(true);
+    expect(preview.impacts.every((i) => !/\bwithdrawn action\b/i.test(i))).toBe(true);
+    expect(preview.impacts.every((i) => !/treated as sold/i.test(i))).toBe(true);
+  });
 });
 
 describe('holding reconcile UI wiring', () => {
@@ -134,6 +150,22 @@ describe('holding reconcile UI wiring', () => {
     expect(inv).toContain('alignLotCostsToBook');
     expect(inv).toContain('onAlignLotsToBook');
     expect(inv).toContain('Reconcile quantity / avg cost');
+  });
+
+  it('holding qty apply path never posts broker cash withdrawal/deposit', () => {
+    const orch = read('services/reconciliation/orchestrator.ts');
+    const start = orch.indexOf('async function applyHoldingQty');
+    const end = orch.indexOf('\nexport async function orchestrateReverseReconciliation', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const body = orch.slice(start, end);
+    expect(body).toContain('non-cash book correction');
+    // Invocation sites only — comments may mention cash helpers as negatives.
+    expect(body).not.toMatch(/deps\.recordBrokerCashAdjust\s*\(/);
+    expect(body).not.toMatch(/deps\.addTransaction\s*\(/);
+    expect(body).not.toMatch(/buildBrokerCashReconcileInvestmentRow\s*\(/);
+    expect(body).not.toMatch(/type:\s*'withdrawal'/);
+    expect(body).not.toMatch(/type:\s*'deposit'/);
   });
 
   it('syncLotsAfterTrade aligns open lots to holding qty after rebuild', () => {

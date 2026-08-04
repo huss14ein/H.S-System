@@ -7,6 +7,7 @@ import {
   inferInstrumentCurrencyFromSymbol,
   quoteDailyPnLInBookCurrency,
   quoteNotionalInBookCurrency,
+  resolveInstrumentCurrencyForQuote,
   resolveSarPerUsd,
   toSAR,
   totalLiquidCashSARFromAccounts,
@@ -77,6 +78,28 @@ describe('currencyMath', () => {
     // 10 shares @ $110 → 1100 USD → 4125 SAR
     expect(quoteNotionalInBookCurrency(110, 10, 'AAPL', 'SAR', rate)).toBeCloseTo(4125, 8);
     expect(quoteNotionalInBookCurrency(35, 100, '2222.SR', 'SAR', rate)).toBeCloseTo(3500, 8);
+  });
+
+  it('bare Tadawul letter ticker stays SAR after expandLiveQuotes writes both bare and .SR keys', () => {
+    const rate = 3.75;
+    // expandLiveQuotesForRequestedSymbols copies REITF.SR → REITF; old logic treated that as USD.
+    const expanded = {
+      REITF: { price: 20 },
+      'REITF.SR': { price: 20 },
+      'REITF.SA': { price: 20 },
+    };
+    expect(resolveInstrumentCurrencyForQuote('REITF', 'SAR', expanded)).toBe('SAR');
+    expect(quoteNotionalInBookCurrency(20, 100, 'REITF', 'SAR', rate, expanded)).toBeCloseTo(2000, 8);
+    expect(
+      quoteDailyPnLInBookCurrency(0.1, 100, 'REITF', 'SAR', rate, new Date('2026-06-03T15:00:00Z'), expanded),
+    ).toBeCloseTo(10, 8);
+  });
+
+  it('US bare ticker in SAR book stays USD when quote map has no Tadawul suffix', () => {
+    const rate = 3.75;
+    const map = { AAPL: { price: 110 } };
+    expect(resolveInstrumentCurrencyForQuote('AAPL', 'SAR', map)).toBe('USD');
+    expect(quoteNotionalInBookCurrency(110, 10, 'AAPL', 'SAR', rate, map)).toBeCloseTo(4125, 8);
   });
 
   it('quoteDailyPnLInBookCurrency converts instrument-currency delta into book', () => {

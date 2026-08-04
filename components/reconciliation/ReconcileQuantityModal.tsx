@@ -171,9 +171,10 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
     <Modal isOpen={isOpen} onClose={onClose} title={`Reconcile holding — ${symbol}`}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <p className="text-sm text-slate-600">
-          Match quantity and cost basis to your broker statement. Market prices are not changed. Reducing shares
-          consumes open lots FIFO (sold quantity). Restating average cost / book cost realigns open-lot costs when
-          enabled below.
+          Match quantity and cost basis to your broker statement. Market prices are not changed. This is a{' '}
+          <strong>non-cash book correction</strong> — reducing shares does <strong>not</strong> post a sell or
+          withdrawal, so Invested / Withdrawn and cashflow KPIs stay unchanged. Open lots are trimmed FIFO when
+          quantity decreases; restating average / book cost realigns lot costs when enabled below.
         </p>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm tabular-nums space-y-1">
           <div className="flex justify-between gap-2">
@@ -252,8 +253,8 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
             onChange={(e) => setAlignLotCosts(e.target.checked)}
           />
           <span>
-            Align open lots to this book — trim sold excess FIFO, then scale lot costs so open-lot book cost matches
-            average cost × quantity.
+            Align open lots to this book — trim excess open quantity FIFO (non-cash; not a withdrawal), then scale
+            lot costs so open-lot book cost matches average cost × quantity.
           </span>
         </label>
         {preview?.impacts?.length ? (

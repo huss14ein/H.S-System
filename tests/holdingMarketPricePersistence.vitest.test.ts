@@ -45,6 +45,7 @@ describe('trusted holding market price persistence', () => {
     expect(block).toContain('current_value');
     expect(block).toContain('current_price');
     expect(block).toContain('price_updated_at');
+    expect(block).toContain('unrealized_pnl');
     expect(block).not.toContain('avg_cost');
     expect(block).not.toMatch(/update\(\{[^}]*quantity/);
   });
@@ -56,7 +57,7 @@ describe('trusted holding market price persistence', () => {
     expect(block).toContain('const affected = Number(rpcResult.data)');
     expect(block).toContain('affected === 0');
     expect(block).toContain('affected < safeUpdates.length');
-    expect(block).toContain(".select('id, current_value, current_price, price_updated_at')");
+    expect(block).toContain(".select('id, current_value, current_price, price_updated_at, unrealized_pnl')");
     expect(block).toContain('appliedUpdates');
   });
 
@@ -73,18 +74,30 @@ describe('trusted holding market price persistence', () => {
     expect(migration).not.toContain('avg_cost =');
   });
 
+  it('unrealized P/L migration stores P/L with market marks', () => {
+    const migration = read('supabase/migrations/20260804120000_holdings_unrealized_pnl_persistence.sql');
+    expect(migration).toContain('add column if not exists unrealized_pnl');
+    expect(migration).toContain('unrealized_pnl = coalesce');
+    expect(migration).toContain('update_holding_market_values');
+  });
+
   it('Holding normalizes persisted price and timestamp after hydrate', () => {
     const context = read('context/DataContext.tsx');
     expect(context).toContain('row.current_price ?? row.currentPrice');
     expect(context).toContain('row.price_updated_at ?? row.priceUpdatedAt');
+    expect(context).toContain('row.unrealized_pnl ?? row.unrealizedPnL');
     const types = read('types.ts');
     expect(types).toContain('currentPrice?: number');
     expect(types).toContain('priceUpdatedAt?: string');
+    expect(types).toContain('unrealizedPnL?: number');
   });
 
   it('migration is documented as safe and required', () => {
     expect(read('supabase/README_DB_MIGRATIONS.md')).toContain(
       '20260725120000_holdings_market_price_persistence.sql',
+    );
+    expect(read('supabase/README_DB_MIGRATIONS.md')).toContain(
+      '20260804120000_holdings_unrealized_pnl_persistence.sql',
     );
   });
 
@@ -174,7 +187,7 @@ describe('persisted holding price seeds the quote path', () => {
     expect(result.rows.MSFT?.price).toBe(433);
   });
 
-  it('skips manual funds and holdings without a persisted price', () => {
+  it('skips manual funds and holdings without a usable mark', () => {
     const result = buildQuoteCacheRowsFromPersistedHoldingPrices(
       [
         portfolioWith([
@@ -184,14 +197,23 @@ describe('persisted holding price seeds the quote path', () => {
             currentPrice: 12,
             priceUpdatedAt: '2026-07-24T15:00:00.000Z',
           }),
-          holding({ symbol: 'TSLA' }),
-          holding({ symbol: 'AMD', currentPrice: 0, priceUpdatedAt: '2026-07-24T15:00:00.000Z' }),
+          holding({ symbol: 'TSLA', currentValue: 0, currentPrice: undefined, priceUpdatedAt: undefined }),
+          holding({ symbol: 'AMD', currentPrice: 0, priceUpdatedAt: '2026-07-24T15:00:00.000Z', currentValue: 0 }),
         ]),
       ],
       {},
     );
     expect(result.changed).toBe(false);
     expect(result.seededSymbols).toEqual([]);
+  });
+
+  it('does not derive unit price from book currentValue (avoids FX double-apply)', () => {
+    const result = buildQuoteCacheRowsFromPersistedHoldingPrices(
+      [portfolioWith([holding({ symbol: 'MSFT', quantity: 10, currentValue: 4200, currentPrice: undefined })])],
+      {},
+    );
+    expect(result.changed).toBe(false);
+    expect(result.rows.MSFT).toBeUndefined();
   });
 
   it('seed helper returns merged rows for the restore path', () => {
