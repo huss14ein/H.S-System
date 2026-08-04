@@ -35,11 +35,16 @@ import {
   type LotSellAllocation,
 } from './investmentCostLots';
 import { isCostLotUuid } from './investmentCostLotDb';
+import { fetchPeriodStartPriceMap } from './periodStartMarks';
 
 export type PortfolioPeriodPnLBreakdown = {
   /** Realized on sells + dividends − fees/vat in the window (ledger, SAR). */
   ledgerSar: number;
-  /** Mark-to-market since period start: (end live − start cost) − ledger − external flows. */
+  /**
+   * Open-position mark move in the window: total − ledger.
+   * Start holdings are marked at period-open prices (historical close when available;
+   * otherwise live — never cost basis, so Week/Month are not lifetime unrealized).
+   */
   marketEstimateSar: number;
   /** ledger + marketEstimate — same as endValue − startValue − netDepositsWithdrawals. */
   totalSar: number;
@@ -459,6 +464,11 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
   data: FinancialData;
   sarPerUsd: number;
   simulatedPrices: SimulatedPriceMap;
+  /**
+   * Unit prices for holdings at period open (historical close preferred).
+   * When omitted, falls back to live `simulatedPrices` so Week/Month do not report lifetime unrealized vs cost.
+   */
+  periodStartPrices?: SimulatedPriceMap;
   /** When non-empty for this portfolio, realized sells use FIFO instead of WAC replay. */
   costLots?: InvestmentCostLot[];
 }): PortfolioPeriodPnLBreakdown {
@@ -477,13 +487,14 @@ export function computePortfolioMarkToMarketPeriodPnLSar(args: {
     args.sarPerUsd,
     { excludeSymbols: inPeriodBuySymbols },
   );
+  /** Period-open mark (historical or live) — never avg-cost, which inflated Week/Month to lifetime P/L. */
+  const startMarks = args.periodStartPrices ?? args.simulatedPrices;
   const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: startState,
     sarPerUsd: args.sarPerUsd,
-    simulatedPrices: args.simulatedPrices,
-    /** Cost basis at period start — end uses live mark so week/month P/L reflects price movement. */
-    useLiveMark: false,
+    simulatedPrices: startMarks,
+    useLiveMark: true,
     includeCash: false,
   });
 
@@ -720,8 +731,9 @@ function financialMonthWindowMs(now: Date, monthStartDay: number): { startMs: nu
 
 /**
  * Per-portfolio weekly & monthly P/L (SAR) — single source of truth:
- * end live value − start-of-period cost snapshot − net deposits/withdrawals;
+ * end live value − period-open mark − net deposits/withdrawals;
  * ledger = realized sells, dividends, fees; market = residual open-position MTM.
+ * Pass `weekPeriodStartPrices` / `monthPeriodStartPrices` from dated closes when available.
  */
 export function computePortfolioPeriodPnLSummary(args: {
   data: FinancialData;
@@ -732,6 +744,10 @@ export function computePortfolioPeriodPnLSummary(args: {
   monthStartDay: number;
   getAvailableCashForAccount?: (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
   now?: Date;
+  /** Historical (or proxy) unit prices at week open. */
+  weekPeriodStartPrices?: SimulatedPriceMap;
+  /** Historical (or proxy) unit prices at financial-month open. */
+  monthPeriodStartPrices?: SimulatedPriceMap;
 }): PortfolioPeriodPnLSummary {
   const {
     data,
@@ -742,6 +758,8 @@ export function computePortfolioPeriodPnLSummary(args: {
     monthStartDay,
     getAvailableCashForAccount,
     now = new Date(),
+    weekPeriodStartPrices,
+    monthPeriodStartPrices,
   } = args;
 
   const allTx = getPersonalInvestmentTransactionsForKpis(data);
@@ -856,6 +874,7 @@ export function computePortfolioPeriodPnLSummary(args: {
         data,
         sarPerUsd,
         simulatedPrices,
+        periodStartPrices: weekPeriodStartPrices,
         costLots: allCostLots,
       });
       const monthly = computePortfolioMarkToMarketPeriodPnLSar({
@@ -872,6 +891,7 @@ export function computePortfolioPeriodPnLSummary(args: {
         data,
         sarPerUsd,
         simulatedPrices,
+        periodStartPrices: monthPeriodStartPrices,
         costLots: allCostLots,
       });
 
@@ -1155,6 +1175,8 @@ function buildPortfolioDailySeriesInWindow(args: {
   data: FinancialData;
   sarPerUsd: number;
   simulatedPrices: SimulatedPriceMap;
+  /** Period-open marks (historical preferred). Falls back to live simulatedPrices. */
+  periodStartPrices?: SimulatedPriceMap;
   locale?: string;
 }): PortfolioPnLDailyPoint[] {
   const days = eachCalendarDayIsoInRange(args.startMs, args.endMs);
@@ -1179,12 +1201,13 @@ function buildPortfolioDailySeriesInWindow(args: {
     args.sarPerUsd,
     { excludeSymbols: inPeriodBuySymbols },
   );
+  const startMarks = args.periodStartPrices ?? args.simulatedPrices;
   const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: replayState,
     sarPerUsd: args.sarPerUsd,
-    simulatedPrices: args.simulatedPrices,
-    useLiveMark: false,
+    simulatedPrices: startMarks,
+    useLiveMark: true,
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);
@@ -1328,6 +1351,8 @@ export function computePortfolioPnLDailySeries(args: {
   getAvailableCashForAccount?: (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
   now?: Date;
   locale?: string;
+  weekPeriodStartPrices?: SimulatedPriceMap;
+  monthPeriodStartPrices?: SimulatedPriceMap;
   /** When provided, skips recomputing {@link computePortfolioPeriodPnLSummary}. */
   summary?: PortfolioPeriodPnLSummary;
 }): PortfolioPnLDailySeries {
@@ -1395,6 +1420,7 @@ export function computePortfolioPnLDailySeries(args: {
         data: args.data,
         sarPerUsd: args.sarPerUsd,
         simulatedPrices: args.simulatedPrices,
+        periodStartPrices: args.weekPeriodStartPrices,
         locale: args.locale,
       });
       const monthly = buildPortfolioDailySeriesInWindow({
@@ -1411,6 +1437,7 @@ export function computePortfolioPnLDailySeries(args: {
         data: args.data,
         sarPerUsd: args.sarPerUsd,
         simulatedPrices: args.simulatedPrices,
+        periodStartPrices: args.monthPeriodStartPrices,
         locale: args.locale,
       });
       weeklyByPortfolioId.set(p.id, weekly);
@@ -1473,12 +1500,13 @@ async function buildPortfolioDailySeriesInWindowAsync(
     args.sarPerUsd,
     { excludeSymbols: inPeriodBuySymbols },
   );
+  const startMarks = args.periodStartPrices ?? args.simulatedPrices;
   const holdingsStartSar = computePortfolioSnapshotValueSar({
     portfolio: args.portfolio,
     state: replayState,
     sarPerUsd: args.sarPerUsd,
-    simulatedPrices: args.simulatedPrices,
-    useLiveMark: false,
+    simulatedPrices: startMarks,
+    useLiveMark: true,
     includeCash: false,
   });
   const endCashSar = Math.max(0, args.endCashSar ?? 0);
@@ -1609,6 +1637,16 @@ export async function computePortfolioPeriodPnLSummaryAsync(
   const week = weekWindowMs(now);
   const month = financialMonthWindowMs(now, monthStartDay);
 
+  // Historical closes at period open — true week/month P/L (not lifetime vs cost).
+  const weekPeriodStartPrices =
+    args.weekPeriodStartPrices ??
+    (await fetchPeriodStartPriceMap(portfolios, Math.max(0, week.startMs - 1)));
+  if (await cooperativeCheckpoint(signal)) return null;
+  const monthPeriodStartPrices =
+    args.monthPeriodStartPrices ??
+    (await fetchPeriodStartPriceMap(portfolios, Math.max(0, month.startMs - 1)));
+  if (await cooperativeCheckpoint(signal)) return null;
+
   const byAccount = new Map<string, InvestmentPortfolio[]>();
   for (const p of portfolios) {
     const list = byAccount.get(p.accountId) ?? [];
@@ -1717,6 +1755,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         data,
         sarPerUsd,
         simulatedPrices,
+        periodStartPrices: weekPeriodStartPrices,
         costLots: allCostLots,
       });
       const monthly = computePortfolioMarkToMarketPeriodPnLSar({
@@ -1733,6 +1772,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
         data,
         sarPerUsd,
         simulatedPrices,
+        periodStartPrices: monthPeriodStartPrices,
         costLots: allCostLots,
       });
 
@@ -1767,22 +1807,31 @@ export async function computePortfolioPnLDailySeriesAsync(
   args: Parameters<typeof computePortfolioPnLDailySeries>[0],
   signal?: PortfolioPnLComputeSignal,
 ): Promise<PortfolioPnLDailySeries | null> {
-  const summary =
-    args.summary ??
-    (await computePortfolioPeriodPnLSummaryAsync(args, signal));
-  if (!summary) return null;
-
-  const allTx = getPersonalInvestmentTransactionsForKpis(args.data);
-  const allInvestments = args.data.investments ?? [];
   const week = weekWindowMs(args.now ?? new Date());
   const month = financialMonthWindowMs(args.now ?? new Date(), args.monthStartDay);
+  const weekPeriodStartPrices =
+    args.weekPeriodStartPrices ??
+    (await fetchPeriodStartPriceMap(args.portfolios, Math.max(0, week.startMs - 1)));
+  if (await cooperativeCheckpoint(signal)) return null;
+  const monthPeriodStartPrices =
+    args.monthPeriodStartPrices ??
+    (await fetchPeriodStartPriceMap(args.portfolios, Math.max(0, month.startMs - 1)));
+  if (await cooperativeCheckpoint(signal)) return null;
+  const enrichedArgs = { ...args, weekPeriodStartPrices, monthPeriodStartPrices };
+
+  const summary =
+    enrichedArgs.summary ?? (await computePortfolioPeriodPnLSummaryAsync(enrichedArgs, signal));
+  if (!summary) return null;
+
+  const allTx = getPersonalInvestmentTransactionsForKpis(enrichedArgs.data);
+  const allInvestments = enrichedArgs.data.investments ?? [];
 
   const weeklyByPortfolioId = new Map<string, PortfolioPnLDailyPoint[]>();
   const weeklyParts: PortfolioPnLDailyPoint[][] = [];
   const monthlyParts: PortfolioPnLDailyPoint[][] = [];
 
   const byAccount = new Map<string, InvestmentPortfolio[]>();
-  for (const p of args.portfolios) {
+  for (const p of enrichedArgs.portfolios) {
     const list = byAccount.get(p.accountId) ?? [];
     list.push(p);
     byAccount.set(p.accountId, list);
@@ -1793,17 +1842,18 @@ export async function computePortfolioPnLDailySeriesAsync(
 
     const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     const accountId = sorted[0]?.accountId ?? '';
-    const account = args.accounts.find((a) => a.id === accountId);
+    const account = enrichedArgs.accounts.find((a) => a.id === accountId);
     if (!account) continue;
     const accountTx = allTx.filter(
-      (t) => resolveInvestmentTransactionAccountId(t, args.accounts, allInvestments) === accountId,
+      (t) =>
+        resolveInvestmentTransactionAccountId(t, enrichedArgs.accounts, allInvestments) === accountId,
     );
     const scope = buildInvestmentAccountKpiScope({
       account,
       personalPortfolios: sorted,
-      data: args.data,
+      data: enrichedArgs.data,
       accountTransactions: accountTx,
-      getAvailableCashForAccount: args.getAvailableCashForAccount,
+      getAvailableCashForAccount: enrichedArgs.getAvailableCashForAccount,
     });
     const accountTxForMetrics = scope.transactionsForMetrics;
 
@@ -1819,8 +1869,8 @@ export async function computePortfolioPnLDailySeriesAsync(
               portfolioIndex: i,
               siblingPortfolios: sorted,
               transactions: accountTxForMetrics,
-              sarPerUsd: args.sarPerUsd,
-              simulatedPrices: args.simulatedPrices,
+              sarPerUsd: enrichedArgs.sarPerUsd,
+              simulatedPrices: enrichedArgs.simulatedPrices,
             });
 
       const seriesArgs = {
@@ -1830,21 +1880,31 @@ export async function computePortfolioPnLDailySeriesAsync(
         endCashSar: row.endCashSar,
         singlePortfolioOnAccount: row.singlePortfolioOnAccount,
         includeCash: true as const,
-        accounts: args.accounts,
-        portfolios: args.portfolios,
-        data: args.data,
-        sarPerUsd: args.sarPerUsd,
-        simulatedPrices: args.simulatedPrices,
-        locale: args.locale,
+        accounts: enrichedArgs.accounts,
+        portfolios: enrichedArgs.portfolios,
+        data: enrichedArgs.data,
+        sarPerUsd: enrichedArgs.sarPerUsd,
+        simulatedPrices: enrichedArgs.simulatedPrices,
+        locale: enrichedArgs.locale,
       };
 
       const weekly = await buildPortfolioDailySeriesInWindowAsync(
-        { ...seriesArgs, startMs: week.startMs, endMs: week.endMs },
+        {
+          ...seriesArgs,
+          startMs: week.startMs,
+          endMs: week.endMs,
+          periodStartPrices: weekPeriodStartPrices,
+        },
         signal,
       );
       if (!weekly) return null;
       const monthly = await buildPortfolioDailySeriesInWindowAsync(
-        { ...seriesArgs, startMs: month.startMs, endMs: month.endMs },
+        {
+          ...seriesArgs,
+          startMs: month.startMs,
+          endMs: month.endMs,
+          periodStartPrices: monthPeriodStartPrices,
+        },
         signal,
       );
       if (!monthly) return null;
