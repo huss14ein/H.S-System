@@ -795,6 +795,8 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 }
                 if (typeof parsed?.expectedMonthlySalary === 'number' && parsed.expectedMonthlySalary > 0) {
                     setExpectedMonthlySalary(parsed.expectedMonthlySalary);
+                } else if (parsed && Object.prototype.hasOwnProperty.call(parsed, 'expectedMonthlySalary')) {
+                    setExpectedMonthlySalary('');
                 }
             }
         } catch {
@@ -854,7 +856,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 kids: householdKids,
                 overrides: householdOverrides,
                 profile: engineProfile,
-                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+                expectedMonthlySalary: typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : null,
             }));
         } catch {
             // no-op
@@ -870,7 +872,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
             kids: householdKids,
             overrides: householdOverrides,
             profile: engineProfile,
-            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' ? expectedMonthlySalary : undefined,
+            expectedMonthlySalary: typeof expectedMonthlySalary === 'number' && expectedMonthlySalary > 0 ? expectedMonthlySalary : null,
         };
         const t = window.setTimeout(async () => {
             try {
