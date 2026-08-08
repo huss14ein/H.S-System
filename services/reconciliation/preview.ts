@@ -22,6 +22,19 @@ export function isNoopDelta(delta: number): boolean {
   return Math.abs(Number(delta) || 0) < NOOP_EPS;
 }
 
+/**
+ * Parse statement balance text for Reconcile Balance.
+ * Rejects garbage that {@link roundMoney} would coerce to 0 (e.g. `abc` → 0).
+ */
+export function parseReconcileActualBalanceInput(raw: string): number | null {
+  const cleaned = String(raw ?? '').replace(/,/g, '').trim();
+  if (!cleaned) return null;
+  if (!/^[+-]?\d+(\.\d+)?$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return roundMoney(n);
+}
+
 /** Broker platform history lives in the investment ledger, so cash rows alone cannot prove a platform is untouched. */
 export interface BrokerLedgerActivitySource {
   investmentTransactions?: { accountId?: string; portfolioId?: string }[];
@@ -247,46 +260,29 @@ export function previewHoldingQuantityReconcile(args: {
     blockedReason = 'Actual quantity must be a non-negative finite number.';
   }
 
-  const hasTargetBook =
-    args.targetBookCost != null && Number.isFinite(Number(args.targetBookCost)) && Number(args.targetBookCost) >= 0;
-  const hasTargetAvg =
-    args.targetAvgCost != null && Number.isFinite(Number(args.targetAvgCost)) && Number(args.targetAvgCost) >= 0;
-  const hasAddCost =
-    args.costBasisTotal != null && Number.isFinite(Number(args.costBasisTotal)) && Number(args.costBasisTotal) >= 0;
+  const resolved = resolveHoldingReconcileBook({
+    beforeQty: before,
+    actualQty: actual,
+    beforeAvgCost: beforeAvg,
+    costBasisTotal: args.costBasisTotal,
+    targetBookCost: args.targetBookCost,
+    targetAvgCost: args.targetAvgCost,
+  });
 
-  if (delta > 0 && !hasAddCost && !hasTargetBook) {
+  if (delta > 0 && resolved.mode === 'keep_wac') {
     blockedReason =
       blockedReason ??
       'Increasing quantity requires total cost basis for the added shares (or a full restated book cost).';
   }
-  if (actual > 0 && hasTargetBook && Number(args.targetBookCost) < 0) {
+  if (actual > 0 && args.targetBookCost != null && Number(args.targetBookCost) < 0) {
     blockedReason = blockedReason ?? 'Target book cost cannot be negative.';
   }
   if (args.reason != null && !isValidReason(args.reason)) {
     blockedReason = blockedReason ?? 'Reason is required (at least 3 characters).';
   }
 
-  let nextAvg = beforeAvg;
-  let nextBook = beforeBook;
-  if (actual <= 0) {
-    nextAvg = 0;
-    nextBook = 0;
-  } else if (hasTargetBook) {
-    nextBook = roundMoney(Number(args.targetBookCost));
-    nextAvg = roundAvgCostPerUnit(nextBook / actual);
-  } else if (hasTargetAvg && delta <= 0) {
-    nextAvg = roundAvgCostPerUnit(Number(args.targetAvgCost));
-    nextBook = roundMoney(nextAvg * actual);
-  } else if (delta > 0 && hasAddCost) {
-    nextBook = roundMoney(beforeBook + Number(args.costBasisTotal));
-    nextAvg = roundAvgCostPerUnit(nextBook / actual);
-  } else if (hasTargetAvg) {
-    nextAvg = roundAvgCostPerUnit(Number(args.targetAvgCost));
-    nextBook = roundMoney(nextAvg * actual);
-  } else {
-    nextBook = roundMoney(beforeAvg * actual);
-    nextAvg = beforeAvg;
-  }
+  const nextAvg = resolved.avgCost;
+  const nextBook = resolved.bookCost;
 
   const qtyNoop = Math.abs(delta) < 1e-9;
   const costNoop = Math.abs(nextBook - beforeBook) < 0.005 && Math.abs(nextAvg - beforeAvg) < 1e-6;
@@ -323,6 +319,81 @@ export function previewHoldingQuantityReconcile(args: {
     noop: qtyNoop && costNoop && !forceLotAlign,
     impacts,
     blockedReason,
+  };
+}
+
+/**
+ * Single source of truth for holding qty-reconcile cost math (preview + apply).
+ * Callers must only pass targetBookCost / targetAvgCost when the user explicitly edited those fields —
+ * never an auto-derived proportional book from a qty-only change.
+ */
+export function resolveHoldingReconcileBook(args: {
+  beforeQty: number;
+  actualQty: number;
+  beforeAvgCost: number;
+  costBasisTotal?: number;
+  targetBookCost?: number;
+  targetAvgCost?: number;
+}): {
+  avgCost: number;
+  bookCost: number;
+  beforeBook: number;
+  mode: 'zero' | 'target_book' | 'add_cost' | 'target_avg' | 'keep_wac';
+} {
+  const beforeQty = Number(args.beforeQty) || 0;
+  const actualQty = Number(args.actualQty);
+  const beforeAvg = Number(args.beforeAvgCost) || 0;
+  const beforeBook = roundMoney(beforeQty * beforeAvg);
+  const delta = actualQty - beforeQty;
+
+  const hasTargetBook =
+    args.targetBookCost != null && Number.isFinite(Number(args.targetBookCost)) && Number(args.targetBookCost) >= 0;
+  const hasTargetAvg =
+    args.targetAvgCost != null && Number.isFinite(Number(args.targetAvgCost)) && Number(args.targetAvgCost) >= 0;
+  const hasAddCost =
+    args.costBasisTotal != null && Number.isFinite(Number(args.costBasisTotal)) && Number(args.costBasisTotal) >= 0;
+
+  if (!Number.isFinite(actualQty) || actualQty <= 0) {
+    return { avgCost: 0, bookCost: 0, beforeBook, mode: 'zero' };
+  }
+
+  /**
+   * Qty-up with add-share cost: prefer blending over a proportional target book.
+   * Full book restatement still wins when add-cost is absent (user restated the whole book).
+   */
+  if (delta > 0 && hasAddCost) {
+    const bookCost = roundMoney(beforeBook + Number(args.costBasisTotal));
+    return {
+      avgCost: roundAvgCostPerUnit(bookCost / actualQty),
+      bookCost,
+      beforeBook,
+      mode: 'add_cost',
+    };
+  }
+  if (hasTargetBook) {
+    const bookCost = roundMoney(Number(args.targetBookCost));
+    return {
+      avgCost: roundAvgCostPerUnit(bookCost / actualQty),
+      bookCost,
+      beforeBook,
+      mode: 'target_book',
+    };
+  }
+  if (hasTargetAvg) {
+    const avgCost = roundAvgCostPerUnit(Number(args.targetAvgCost));
+    return {
+      avgCost,
+      bookCost: roundMoney(avgCost * actualQty),
+      beforeBook,
+      mode: 'target_avg',
+    };
+  }
+  // Qty-down (or unchanged) without cost restatement: keep WAC.
+  return {
+    avgCost: beforeAvg,
+    bookCost: roundMoney(beforeAvg * actualQty),
+    beforeBook,
+    mode: 'keep_wac',
   };
 }
 

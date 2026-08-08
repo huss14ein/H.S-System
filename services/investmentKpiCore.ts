@@ -13,7 +13,7 @@ import {
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
-import { isInvestmentReconciliationCashAdjustment } from './reconciliation/cashDelta';
+import { isCapitalInvestmentDeposit, isCapitalInvestmentWithdrawal } from './reconciliation/cashDelta';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
   computePersonalPlatformsRollupSAR,
@@ -151,10 +151,8 @@ export function computePersonalInvestmentKpiBreakdown(
     return toSAR(amount, inferInvestmentTransactionCurrency(t as any, accounts, investments), sarPerUsd);
   };
 
-  const isCapitalDeposit = (t: InvestmentTransaction) =>
-    isInvestmentTransactionType(t.type, 'deposit') && !isInvestmentReconciliationCashAdjustment(t);
-  const isCapitalWithdrawal = (t: InvestmentTransaction) =>
-    isInvestmentTransactionType(t.type, 'withdrawal') && !isInvestmentReconciliationCashAdjustment(t);
+  const isCapitalDeposit = (t: InvestmentTransaction) => isCapitalInvestmentDeposit(t);
+  const isCapitalWithdrawal = (t: InvestmentTransaction) => isCapitalInvestmentWithdrawal(t);
 
   /** Economic capital in/out — excludes broker-cash Reconcile Balance adjustments. */
   const depositsRecordedSar = invTx.filter(isCapitalDeposit).reduce((sum, t) => sum + invTxSar(t), 0);

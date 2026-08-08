@@ -173,14 +173,35 @@ export function filterUnackedDriftRows<
 export function filterUnackedMissingRows<
   T extends { portfolioId: string; symbol: string; ledgerNet: number },
 >(rows: T[], acks: HoldingsIntegrityAckMap): T[] {
-  return rows.filter(
-    (r) =>
-      !isHoldingsIntegrityAcked({
+  return rows.filter((r) => {
+    if (
+      isHoldingsIntegrityAcked({
         acks,
         portfolioId: r.portfolioId,
         symbol: r.symbol,
         kind: 'keep_closed',
         storedQty: r.ledgerNet,
-      }),
-  );
+        ledgerQty: r.ledgerNet,
+      })
+    ) {
+      return false;
+    }
+    /**
+     * Qty reconcile to 0 writes `reconciled` with storedQty 0. That must also clear Critical
+     * missing when the fingerprint still matches this ledger residual.
+     */
+    if (
+      isHoldingsIntegrityAcked({
+        acks,
+        portfolioId: r.portfolioId,
+        symbol: r.symbol,
+        kind: 'reconciled',
+        storedQty: 0,
+        ledgerQty: r.ledgerNet,
+      })
+    ) {
+      return false;
+    }
+    return true;
+  });
 }

@@ -148,6 +148,100 @@ describe('missing holdings vs trade log', () => {
     ]);
   });
 
+  it('applied reconcile_quantity clears missing holding even when buy−sell residual remains', () => {
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'b1',
+        portfolioId: 'pf1',
+        accountId: 'acc1',
+        date: '2026-01-01',
+        type: 'buy',
+        symbol: 'ATYR',
+        quantity: 1000,
+        price: 1,
+        total: 1000,
+      },
+      {
+        id: 's1',
+        portfolioId: 'pf1',
+        accountId: 'acc1',
+        date: '2026-06-01',
+        type: 'sell',
+        symbol: 'ATYR',
+        quantity: 593,
+        price: 1,
+        total: 593,
+      },
+    ];
+    const withoutAdj = classifyMissingLedgerHoldings({ portfolio, transactions: txs });
+    expect(withoutAdj.find((r) => r.symbol === 'ATYR')?.ledgerNet).toBe(407);
+
+    const adjustments = [
+      {
+        portfolioId: 'pf1',
+        symbol: 'ATYR',
+        mechanism: 'reconcile_quantity' as const,
+        status: 'applied' as const,
+        delta: -407,
+      },
+    ];
+    const withAdj = classifyMissingLedgerHoldings({
+      portfolio,
+      transactions: txs,
+      adjustments,
+    });
+    expect(withAdj.find((r) => r.symbol === 'ATYR')).toBeUndefined();
+
+    const { net } = ledgerNetAndLastLegForSymbol({
+      portfolioId: 'pf1',
+      symbol: 'ATYR',
+      transactions: txs,
+      adjustments,
+    });
+    expect(net).toBe(0);
+  });
+
+  it('qty reconcile then sell (effective net 0) clears critical missing', () => {
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'b1',
+        portfolioId: 'pf1',
+        accountId: 'acc1',
+        date: '2026-01-01',
+        type: 'buy',
+        symbol: 'ATYR',
+        quantity: 407,
+        price: 1,
+        total: 407,
+      },
+      {
+        id: 's1',
+        portfolioId: 'pf1',
+        accountId: 'acc1',
+        date: '2026-08-08',
+        type: 'sell',
+        symbol: 'ATYR',
+        quantity: 50,
+        price: 1,
+        total: 50,
+      },
+    ];
+    const rows = classifyMissingLedgerHoldings({
+      portfolio,
+      transactions: txs,
+      adjustments: [
+        {
+          portfolioId: 'pf1',
+          symbol: 'ATYR',
+          mechanism: 'reconcile_quantity',
+          status: 'applied',
+          delta: -357,
+        },
+      ],
+    });
+    expect(rows.find((r) => r.symbol === 'ATYR')).toBeUndefined();
+  });
+
   it('listMissingLedgerHoldingsAcrossPortfolios sorts likelyOpen first', () => {
     const data = {
       investments: [portfolio],
@@ -196,6 +290,14 @@ describe('missing holdings vs trade log', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('did not create an open holding');
     expect(ctx).toContain('Rolling back the trade so the ledger and positions stay aligned');
+  });
+
+  it('integrity panel passes reconciliationAdjustments into drift + missing builders', () => {
+    const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
+    expect(panel).toContain('reconciliationAdjustments: data.reconciliationAdjustments');
+    expect(panel).toContain('corporateActionEvents: data.corporateActionEvents');
+    expect(panel).toContain('buildHoldingsIntegrityFingerprint');
+    expect(panel).toContain('buys − sells plus applied');
   });
 
   it('integrity panel exposes Restore holding for likely-open gaps', () => {

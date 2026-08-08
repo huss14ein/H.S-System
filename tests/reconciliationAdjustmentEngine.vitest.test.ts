@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildInvestmentTradeInsertVariants } from '../services/investmentTradeInsertPayload';
 import {
   appCalendarTodayYmd,
   assertCanReverseAdjustment,
@@ -414,6 +415,31 @@ describe('broker-cash reconcile is not capital withdrawal/deposit', () => {
     expect(investmentLedgerTypeLabel(row)).toBe('RECONCILE↓');
     expect(isInvestmentLedgerTypeCapitalOutflow(row)).toBe(false);
     expect(isInvestmentLedgerTypeCapitalOutflow({ type: 'withdrawal', note: 'Wire to bank' })).toBe(true);
+  });
+
+  it('insert variants persist reconcile note so History never shows WITHDRAWAL', () => {
+    const row = buildBrokerCashReconcileInvestmentRow({
+      accountId: platformId,
+      delta: -50,
+      currency: 'USD',
+      reason: 'Match cash',
+      idempotencyKey: 'u|account|a|2026-08-08|reconcile_balance|d|n',
+    });
+    const variants = buildInvestmentTradeInsertVariants({
+      accountId: row.accountId,
+      portfolioId: row.portfolioId,
+      date: row.date,
+      type: row.type,
+      symbol: 'CASH',
+      quantity: 0,
+      price: 0,
+      total: row.total,
+      currency: row.currency,
+      note: row.note,
+      idempotencyKey: row.idempotencyKey,
+    });
+    expect(variants[0].note).toMatch(/^reconciliation:reconcile_balance:/);
+    expect(variants[0].type).toBe('withdrawal');
   });
 });
 

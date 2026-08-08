@@ -318,7 +318,10 @@ export const CorporateActionWizard: React.FC<Props> = ({
             )}
             {!previewLoading && preview && preview.replaySymbols.length > 0 && (
               <div>
-                <p className="text-xs font-semibold text-slate-600 mb-1">Portfolio replay (after apply)</p>
+                <p className="text-xs font-semibold text-slate-600 mb-1">Affected positions after apply</p>
+                <p className="text-[11px] text-slate-500 mb-1">
+                  Only these symbols change. Other holdings in the portfolio stay as they are.
+                </p>
                 <ul className="text-xs space-y-1 max-h-32 overflow-y-auto">
                   {preview.replaySymbols.map((r) => (
                     <li key={r.symbol} className="flex justify-between gap-2 rounded bg-white px-2 py-1 border border-slate-100">

@@ -20,6 +20,8 @@ import {
   accountHasLedgerActivity,
   resolveCashReconcileMechanism,
   portfolioIdsForAccount,
+  resolveHoldingReconcileBook,
+  parseReconcileActualBalanceInput,
 } from './preview';
 import { buildIdempotencyKey, reasonHash } from './idempotency';
 import {
@@ -32,6 +34,8 @@ import {
   investmentLedgerTypeLabel,
   isInvestmentLedgerTypeCapitalInflow,
   isInvestmentLedgerTypeCapitalOutflow,
+  isCapitalInvestmentDeposit,
+  isCapitalInvestmentWithdrawal,
   INVESTMENT_RECONCILIATION_NOTE_PREFIX,
 } from './cashDelta';
 import {
@@ -100,6 +104,8 @@ export {
   accountHasLedgerActivity,
   resolveCashReconcileMechanism,
   portfolioIdsForAccount,
+  resolveHoldingReconcileBook,
+  parseReconcileActualBalanceInput,
   buildIdempotencyKey,
   reasonHash,
   buildCashReconcileLedgerTransaction,
@@ -109,6 +115,8 @@ export {
   isInvestmentLedgerTypeCapitalInflow,
   isInvestmentLedgerTypeCapitalOutflow,
   INVESTMENT_RECONCILIATION_NOTE_PREFIX,
+  isCapitalInvestmentDeposit,
+  isCapitalInvestmentWithdrawal,
   pendingApprovalsBlockAccount,
   isCashReconcileEligibleAccount,
   mechanismForEntity,

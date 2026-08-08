@@ -487,6 +487,11 @@ export interface InvestmentTransaction {
   linkedCashAccountId?: string;
   /** Idempotent replay guard for system-generated rows (DRIP, corporate actions). */
   idempotencyKey?: string;
+  /**
+   * Optional ledger annotation. Broker-cash reconcile rows use
+   * `reconciliation:reconcile_balance:` so capital Invested/Withdrawn/ROI exclude them.
+   */
+  note?: string;
 }
 
 export type CorporateActionDbType =
@@ -873,6 +878,9 @@ export interface ReconciliationAdjustmentRecord {
   mechanism: string;
   entityType: string;
   entityId: string;
+  portfolioId?: string | null;
+  accountId?: string | null;
+  symbol?: string | null;
   effectiveDate: string;
   currency: string;
   beforeValue: number;
@@ -883,6 +891,7 @@ export interface ReconciliationAdjustmentRecord {
   status: string;
   reversedByAdjustmentId?: string | null;
   reversesAdjustmentId?: string | null;
+  generatedInvestmentTransactionId?: string | null;
   createdAt?: string;
 }
 

@@ -108,6 +108,10 @@ export function investmentTransactionToRow(
   if (idem) {
     row.idempotency_key = idem;
   }
+  const note = tx.note != null && String(tx.note).trim() !== '' ? String(tx.note).trim().slice(0, 200) : '';
+  if (note) {
+    row.note = note;
+  }
   return row;
 }
 

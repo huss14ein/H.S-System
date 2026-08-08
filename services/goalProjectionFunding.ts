@@ -8,6 +8,7 @@ import {
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
 import { averageRollingMonthlyNetSurplus, GOAL_NET_CASHFLOW_LOOKBACK_MONTHS } from './goalResolvedTotals';
+import { isCapitalInvestmentDeposit } from './reconciliation/cashDelta';
 
 /** Monthly SAR equivalent of a budget row limit (matches Budgets page cards). */
 export function budgetMonthlyEquivalentSar(b: Budget): number {
@@ -180,7 +181,7 @@ export function goalMonthlyInvestmentContributionSar(
   const txs = (data.investmentTransactions ?? []).filter((t) => {
     const pid = String(t.portfolioId ?? (t as { portfolio_id?: string }).portfolio_id ?? '').trim();
     if (!pid || !sharesByPortfolioId.has(pid)) return false;
-    return t.type === 'deposit';
+    return isCapitalInvestmentDeposit(t);
   });
 
   const now = new Date();
