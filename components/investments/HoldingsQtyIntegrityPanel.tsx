@@ -20,6 +20,7 @@ import {
   resolveHoldingsIntegrityAcks,
 } from '../../services/uiAcks';
 import {
+  buildHoldingsIntegrityFingerprint,
   buildHoldingsQtyDriftReport,
   holdingsQtyDriftNeedsAttention,
   listMissingLedgerHoldingsAcrossPortfolios,
@@ -63,6 +64,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
     await updateSettings({ uiAcks: partial ?? {} });
   };
 
+  const integrityFp = buildHoldingsIntegrityFingerprint(data);
   const driftAttention = useMemo(() => {
     if (!data) return [] as HoldingsQtyDriftRow[];
     return filterUnackedDriftRows(
@@ -71,11 +73,15 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
           investments: data.investments,
           investmentTransactions: data.investmentTransactions,
           accounts: data.accounts,
+          reconciliationAdjustments: data.reconciliationAdjustments,
+          corporateActionEvents: data.corporateActionEvents,
         }),
       ),
       acks,
     );
-  }, [data?.investments, data?.investmentTransactions, data?.accounts, acks]);
+    // Fingerprint ignores mark-to-market — do not depend on full `investments` identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- integrityFp gates qty/ledger inputs
+  }, [integrityFp, acks]);
 
   const missingFromHoldings = useMemo(() => {
     if (!data) return [] as MissingLedgerHoldingRow[];
@@ -83,10 +89,13 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
       listMissingLedgerHoldingsAcrossPortfolios({
         investments: data.investments,
         investmentTransactions: data.investmentTransactions,
+        reconciliationAdjustments: data.reconciliationAdjustments,
+        corporateActionEvents: data.corporateActionEvents,
       }),
       acks,
     );
-  }, [data?.investments, data?.investmentTransactions, acks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- integrityFp gates qty/ledger inputs
+  }, [integrityFp, acks]);
 
   const likelyOpenMissing = useMemo(
     () => missingFromHoldings.filter((r) => r.likelyOpen),
@@ -334,7 +343,8 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
       <p className="text-xs text-slate-600 mt-1 leading-relaxed">
         KPIs and net worth use <strong>stored holdings</strong> (single source of truth). Actions below are{' '}
         <strong>final</strong> for the current book vs ledger pair — Keep stored, Reconcile quantity, and Rebuild
-        dismiss this warning until either quantity changes. Ledger scope is{' '}
+        dismiss this warning until either quantity changes. Ledger qty is buys − sells plus applied{' '}
+        <strong>Reconcile quantity</strong> adjustments (not trade lots alone). Scope is{' '}
         <code className="text-[11px]">portfolio_id</code> (untagged account trades are not counted). To match broker
         share counts without rewriting the ledger, use <strong>Reconcile quantity</strong> (audited non-cash delta —
         not a sell or withdrawal).

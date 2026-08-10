@@ -176,11 +176,64 @@ describe('corporateActionWizardModel', () => {
     const replayAapl = preview.replaySymbols.find((r) => r.symbol === 'AAPL');
     expect(replayAapl?.quantity).toBeCloseTo(20, 4);
   });
+
+  it('preview replaySymbols lists only the CA symbol — not untouched portfolio peers', async () => {
+    const multi: InvestmentPortfolio = {
+      ...portfolio,
+      holdings: [
+        ...portfolio.holdings,
+        {
+          id: 'h2',
+          symbol: 'AMZN',
+          name: 'Amazon',
+          quantity: 10,
+          avgCost: 200,
+          currentValue: 2000,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          assetClass: 'Stock',
+        },
+        {
+          id: 'h3',
+          symbol: 'BABA',
+          name: 'Alibaba',
+          quantity: 10,
+          avgCost: 100,
+          currentValue: 1000,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          assetClass: 'Stock',
+        },
+      ],
+    };
+    const preview = await previewCorporateActionWizard({
+      state: createInitialWizardState({
+        portfolioId: 'p1',
+        symbol: 'AAPL',
+        actionType: 'reverse_stock_split',
+        ratioNumerator: '1',
+        ratioDenominator: '20',
+        step: 'preview',
+      }),
+      portfolio: multi,
+      transactions: [],
+      corporateActionEvents: [],
+    });
+    expect(preview.errors).toHaveLength(0);
+    expect(preview.replaySymbols.map((r) => r.symbol)).toEqual(['AAPL']);
+    expect(preview.replaySymbols.find((r) => r.symbol === 'AMZN')).toBeUndefined();
+  });
 });
 
 describe('corporateActionsWizard wiring', () => {
   it('wizard shell and step components exist', () => {
     expect(read('components/investments/corporateActions/CorporateActionWizard.tsx')).toContain('CorporateActionWizard');
+    expect(read('components/investments/corporateActions/CorporateActionWizard.tsx')).toContain(
+      'Affected positions after apply',
+    );
+    expect(read('components/investments/corporateActions/CorporateActionWizard.tsx')).not.toContain(
+      'Portfolio replay (after apply)',
+    );
     expect(read('components/investments/corporateActions/SplitWizardSteps.tsx')).toContain('SplitWizardSteps');
     expect(read('components/investments/corporateActions/SpinoffMergerWizardSteps.tsx')).toContain('SpinoffMergerWizardSteps');
     expect(read('components/investments/corporateActions/CashInLieuWizardSteps.tsx')).toContain('CashInLieuWizardSteps');

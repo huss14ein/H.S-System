@@ -17,6 +17,8 @@ export type InvestmentTradeInsertInput = {
   idempotency_key?: string | null;
   linkedCashAccountId?: string | null;
   linked_cash_account_id?: string | null;
+  /** Broker-cash reconcile stamp — required so capital KPIs exclude deposit/withdrawal rows. */
+  note?: string | null;
 };
 
 function dedupePayloadRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -50,26 +52,41 @@ export function buildInvestmentTradeInsertVariants(trade: InvestmentTradeInsertI
   const idem = trade.idempotencyKey ?? trade.idempotency_key;
   const currency = trade.currency === 'SAR' || trade.currency === 'USD' ? trade.currency : null;
   const linkedCash = trade.linkedCashAccountId ?? trade.linked_cash_account_id;
+  const note = trade.note != null && String(trade.note).trim() !== '' ? String(trade.note).trim().slice(0, 200) : null;
 
-  const withOptional = (row: Record<string, unknown>, opts: { portfolio?: boolean; currency?: boolean; linked?: boolean; idem?: boolean }) => {
+  const withOptional = (
+    row: Record<string, unknown>,
+    opts: { portfolio?: boolean; currency?: boolean; linked?: boolean; idem?: boolean; note?: boolean },
+  ) => {
     const next = { ...row };
     if (opts.portfolio && portfolioId) next.portfolio_id = portfolioId;
     if (opts.currency && currency) next.currency = currency;
     if (opts.linked && linkedCash) next.linked_cash_account_id = linkedCash;
     if (opts.idem && idem) next.idempotency_key = idem;
+    if (opts.note && note) next.note = note;
     return next;
   };
 
   const variants: Record<string, unknown>[] = [
-    withOptional(core, { portfolio: true, currency: true, linked: true, idem: true }),
-    withOptional(core, { portfolio: true, currency: true, linked: false, idem: true }),
-    withOptional(core, { portfolio: false, currency: true, linked: true, idem: true }),
-    withOptional(core, { portfolio: false, currency: true, linked: false, idem: true }),
-    withOptional(core, { portfolio: true, currency: false, linked: true, idem: true }),
-    withOptional(core, { portfolio: true, currency: false, linked: false, idem: true }),
-    withOptional(core, { portfolio: false, currency: false, linked: true, idem: true }),
-    withOptional(core, { portfolio: false, currency: false, linked: false, idem: true }),
-    withOptional(core, { portfolio: false, currency: false, linked: false, idem: false }),
+    // Prefer note on the first variants so reconcile stamps persist when the column exists.
+    withOptional(core, { portfolio: true, currency: true, linked: true, idem: true, note: true }),
+    withOptional(core, { portfolio: true, currency: true, linked: false, idem: true, note: true }),
+    withOptional(core, { portfolio: false, currency: true, linked: true, idem: true, note: true }),
+    withOptional(core, { portfolio: false, currency: true, linked: false, idem: true, note: true }),
+    withOptional(core, { portfolio: true, currency: false, linked: true, idem: true, note: true }),
+    withOptional(core, { portfolio: true, currency: false, linked: false, idem: true, note: true }),
+    withOptional(core, { portfolio: false, currency: false, linked: true, idem: true, note: true }),
+    withOptional(core, { portfolio: false, currency: false, linked: false, idem: true, note: true }),
+    // Legacy fallbacks without note (PGRST204 when column missing).
+    withOptional(core, { portfolio: true, currency: true, linked: true, idem: true, note: false }),
+    withOptional(core, { portfolio: true, currency: true, linked: false, idem: true, note: false }),
+    withOptional(core, { portfolio: false, currency: true, linked: true, idem: true, note: false }),
+    withOptional(core, { portfolio: false, currency: true, linked: false, idem: true, note: false }),
+    withOptional(core, { portfolio: true, currency: false, linked: true, idem: true, note: false }),
+    withOptional(core, { portfolio: true, currency: false, linked: false, idem: true, note: false }),
+    withOptional(core, { portfolio: false, currency: false, linked: true, idem: true, note: false }),
+    withOptional(core, { portfolio: false, currency: false, linked: false, idem: true, note: false }),
+    withOptional(core, { portfolio: false, currency: false, linked: false, idem: false, note: false }),
     core,
   ];
   return dedupePayloadRows(variants);

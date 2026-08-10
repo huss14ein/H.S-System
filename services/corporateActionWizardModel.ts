@@ -346,9 +346,16 @@ export async function previewCorporateActionWizard(args: {
     })(),
   });
 
+  /** Only symbols this CA touches — apply persists the same scope; other holdings are unchanged. */
+  const affectedSymbols = new Set(
+    [sym, args.state.linkedSymbol, grant?.symbol]
+      .map((s) => String(s ?? '').trim().toUpperCase())
+      .filter(Boolean),
+  );
+
   const replaySymbols = Array.from(replayed.entries())
     .map(([symbol, r]) => ({ symbol, quantity: r.quantity, avgCost: r.avgCost }))
-    .filter((r) => r.quantity > 1e-9)
+    .filter((r) => affectedSymbols.has(r.symbol.toUpperCase()))
     .sort((a, b) => a.symbol.localeCompare(b.symbol));
 
   return {

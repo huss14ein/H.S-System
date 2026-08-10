@@ -35,6 +35,7 @@ import {
   normalizeReason,
   pendingApprovalsBlockAccount,
   previewFromInput,
+  resolveHoldingReconcileBook,
   replayAffectedPortfolioSymbols,
   reverseTargets,
   type ApplyReconciliationInput,
@@ -62,6 +63,7 @@ export interface ReconciliationOrchestratorDeps {
     portfolioId?: string;
     currency: 'SAR' | 'USD';
     note: string;
+    idempotencyKey?: string;
   }) => Promise<{ id: string | null }>;
   updatePlatform: (account: Account, opts?: { fromTransactionDelta?: boolean }) => Promise<void>;
   updateAsset: (asset: Asset) => Promise<void>;
@@ -291,28 +293,29 @@ async function applyCashAccount(
           if (liabRow) liabilityPatch = { ...liab, amount: Number((liabRow as any).amount) };
         }
       }
-      deps.applyFinancialDataPatch((prev) => ({
-        ...prev,
-        accounts: accRow
-          ? prev.accounts.map((a) =>
-              a.id === account.id ? { ...a, balance: Number((accRow as any).balance) } : a,
-            )
-          : prev.accounts,
-        transactions: Array.isArray(txs)
-          ? [
-              ...((txs as any[]) || []).map((t) => ({
-                ...t,
-                accountId: t.account_id ?? t.accountId,
-              })),
-              ...prev.transactions.filter(
-                (t) => !(txs as any[])?.some((n) => String(n.id) === String(t.id)),
-              ),
-            ]
-          : prev.transactions,
-        liabilities: liabilityPatch
-          ? prev.liabilities.map((l) => (l.id === liabilityPatch!.id ? liabilityPatch! : l))
-          : prev.liabilities,
-      }));
+      deps.applyFinancialDataPatch((prev) => {
+        const incoming = Array.isArray(txs)
+          ? ((txs as any[]) || []).map((t) => ({
+              ...t,
+              accountId: t.account_id ?? t.accountId,
+            }))
+          : [];
+        const incomingIds = new Set(incoming.map((t) => String(t.id)));
+        return {
+          ...prev,
+          accounts: accRow
+            ? prev.accounts.map((a) =>
+                a.id === account.id ? { ...a, balance: Number((accRow as any).balance) } : a,
+              )
+            : prev.accounts,
+          transactions: Array.isArray(txs)
+            ? [...incoming, ...prev.transactions.filter((t) => !incomingIds.has(String(t.id)))]
+            : prev.transactions,
+          liabilities: liabilityPatch
+            ? prev.liabilities.map((l) => (l.id === liabilityPatch!.id ? liabilityPatch! : l))
+            : prev.liabilities,
+        };
+      });
       const adjId = String((rpcData as any).adjustmentId ?? '');
       await afterApplyRefresh(deps, {
         effectiveDate,
@@ -379,6 +382,7 @@ async function applyCashAccount(
       currency: preview.currency,
       effectiveDate,
       reason,
+      idempotencyKey,
     });
     const inserted = await deps.recordBrokerCashAdjust(row);
     generatedInvestmentTransactionId = inserted.id;
@@ -690,42 +694,32 @@ async function applyHoldingQty(
   const newQty = roundQuantity(preview.actualValue);
   if (newQty < 0) return { ok: false, error: 'Quantity cannot be negative.' };
   const beforeAvg = Number(holding.avgCost) || 0;
-  const beforeBook = roundMoney(beforeAvg * preview.beforeValue);
-  let avgCost = beforeAvg;
+  const resolved = resolveHoldingReconcileBook({
+    beforeQty: preview.beforeValue,
+    actualQty: newQty,
+    beforeAvgCost: beforeAvg,
+    costBasisTotal: input.costBasisTotal,
+    targetBookCost: input.targetBookCost,
+    targetAvgCost: input.targetAvgCost,
+  });
+  const beforeBook = resolved.beforeBook;
+  const avgCost = resolved.avgCost;
 
-  const hasTargetBook =
-    input.targetBookCost != null && Number.isFinite(Number(input.targetBookCost)) && Number(input.targetBookCost) >= 0;
-  const hasTargetAvg =
-    input.targetAvgCost != null && Number.isFinite(Number(input.targetAvgCost)) && Number(input.targetAvgCost) >= 0;
-  const hasAddCost =
-    input.costBasisTotal != null && Number.isFinite(Number(input.costBasisTotal)) && Number(input.costBasisTotal) >= 0;
-
-  if (newQty <= 0) {
-    avgCost = 0;
-  } else if (hasTargetBook) {
-    avgCost = roundAvgCostPerUnit(Number(input.targetBookCost) / newQty);
-  } else if (preview.delta > 0) {
-    if (hasAddCost) {
-      const oldCost = beforeAvg * preview.beforeValue;
-      avgCost = roundAvgCostPerUnit((oldCost + Number(input.costBasisTotal)) / newQty);
-    } else {
-      return { ok: false, error: 'Increasing quantity requires total cost basis for added shares (or target book cost).' };
-    }
-  } else if (hasTargetAvg) {
-    avgCost = roundAvgCostPerUnit(Number(input.targetAvgCost));
+  if (preview.delta > 0 && resolved.mode === 'keep_wac') {
+    return { ok: false, error: 'Increasing quantity requires total cost basis for added shares (or target book cost).' };
   }
-  // qty-down without cost restatement: keep WAC avgCost (standard accounting).
 
+  const markUnit =
+    Number(holding.currentPrice) > 0
+      ? Number(holding.currentPrice)
+      : preview.beforeValue > 0
+        ? Number(holding.currentValue || 0) / preview.beforeValue
+        : 0;
   const updated: Holding = {
     ...holding,
     quantity: newQty,
     avgCost,
-    currentValue:
-      newQty <= 0
-        ? 0
-        : Number(holding.currentPrice) > 0
-          ? roundMoney(newQty * Number(holding.currentPrice))
-          : holding.currentValue,
+    currentValue: newQty <= 0 ? 0 : roundMoney(newQty * markUnit),
   };
   await deps.updateHolding(updated);
   deps.bumpHoldingsBookGeneration?.();
@@ -824,13 +818,18 @@ async function applyHoldingQty(
     reason,
     clientNonce,
   });
-  const storedCostBasis = hasTargetBook
-    ? Number(input.targetBookCost)
-    : hasAddCost
-      ? Number(input.costBasisTotal)
-      : hasTargetAvg && newQty > 0
-        ? roundMoney(Number(input.targetAvgCost) * newQty)
-        : input.costBasisTotal ?? null;
+  const bookCurrency: 'SAR' | 'USD' = portfolio.currency === 'SAR' ? 'SAR' : 'USD';
+  const afterBook = roundMoney(avgCost * newQty);
+  const storedCostBasis =
+    resolved.mode === 'target_book'
+      ? Number(input.targetBookCost)
+      : resolved.mode === 'add_cost'
+        ? Number(input.costBasisTotal)
+        : resolved.mode === 'target_avg' && newQty > 0
+          ? afterBook
+          : preview.delta < 0
+            ? beforeBook
+            : afterBook;
   const { data: adj, error: adjErr } = await insertReconciliationAdjustment(deps.db, deps.userId, {
     mechanism: 'reconcile_quantity',
     entityType: 'holding',
@@ -839,7 +838,7 @@ async function applyHoldingQty(
     symbol: holding.symbol,
     accountId: portfolio.accountId,
     effectiveDate,
-    currency: 'SAR',
+    currency: bookCurrency,
     beforeValue: preview.beforeValue,
     actualValue: preview.actualValue,
     delta: preview.delta,
@@ -888,9 +887,9 @@ async function applyHoldingQty(
     mechanism: 'reconcile_quantity',
   });
   const costRestated =
-    hasTargetBook ||
-    hasTargetAvg ||
-    (preview.delta > 0 && hasAddCost) ||
+    resolved.mode === 'target_book' ||
+    resolved.mode === 'target_avg' ||
+    resolved.mode === 'add_cost' ||
     Math.abs(avgCost - beforeAvg) > 1e-9;
   deps.toast?.(
     costRestated ? 'Holding quantity / cost basis reconciled.' : 'Holding quantity reconciled.',
@@ -1027,10 +1026,16 @@ export async function orchestrateReverseReconciliation(
           ...h,
           quantity: restoredQty,
           avgCost,
-          currentValue:
-            restoredQty > 0 && Number(h.currentPrice) > 0
-              ? roundMoney(restoredQty * Number(h.currentPrice))
-              : h.currentValue,
+          currentValue: (() => {
+            if (restoredQty <= 0) return 0;
+            const markUnit =
+              Number(h.currentPrice) > 0
+                ? Number(h.currentPrice)
+                : Number(h.quantity) > 0
+                  ? Number(h.currentValue || 0) / Number(h.quantity)
+                  : 0;
+            return roundMoney(restoredQty * markUnit);
+          })(),
         });
         deps.bumpHoldingsBookGeneration?.();
         if (deps.syncLotsForSymbols) {

@@ -11,7 +11,7 @@ import {
   sumOpenLotQuantity,
   summarizeSymbolTradeQuantities,
 } from '../services/alignOpenLotsToHolding';
-import { previewHoldingQuantityReconcile } from '../services/reconciliation';
+import { previewHoldingQuantityReconcile, resolveHoldingReconcileBook } from '../services/reconciliation';
 import type { InvestmentCostLot, InvestmentTransaction } from '../types';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
@@ -106,6 +106,36 @@ describe('holding cost reconcile preview', () => {
     expect(blocked.blockedReason).toMatch(/cost/i);
   });
 
+  it('qty-down without cost restatement keeps WAC (does not force proportional book)', () => {
+    const preview = previewHoldingQuantityReconcile({
+      holdingId: 'h1',
+      beforeQty: 150,
+      actualQty: 50,
+      beforeAvgCost: 10,
+      reason: 'Match broker qty after sell',
+    });
+    expect(preview.blockedReason).toBeUndefined();
+    expect(preview.delta).toBe(-100);
+    // Book shrinks with qty but avg stays 10 — impacts should still mention cost basis change.
+    expect(preview.impacts.some((i) => /avg 10\.0000 → 10\.0000/i.test(i) || /Cost basis 1500\.00 → 500\.00/i.test(i))).toBe(
+      true,
+    );
+  });
+
+  it('qty-up prefers add-share cost over a proportional target book', () => {
+    const resolved = resolveHoldingReconcileBook({
+      beforeQty: 100,
+      actualQty: 120,
+      beforeAvgCost: 10,
+      // Proportional auto book would be 1200 — wrong when adds cost 300.
+      targetBookCost: 1200,
+      costBasisTotal: 300,
+    });
+    expect(resolved.mode).toBe('add_cost');
+    expect(resolved.bookCost).toBe(1300);
+    expect(resolved.avgCost).toBeCloseTo(1300 / 120, 4);
+  });
+
   it('qty-down preview is explicit non-cash (not a withdrawal / sell)', () => {
     const preview = previewHoldingQuantityReconcile({
       holdingId: 'h1',
@@ -124,8 +154,13 @@ describe('holding cost reconcile preview', () => {
 });
 
 describe('holding reconcile UI wiring', () => {
-  it('ReconcileQuantityModal exposes avg cost and book cost fields', () => {
+  it('ReconcileQuantityModal only sends cost restatement when avg/book are user-dirty', () => {
     const modal = read('components/reconciliation/ReconcileQuantityModal.tsx');
+    expect(modal).toContain('avgDirty');
+    expect(modal).toContain('bookDirty');
+    expect(modal).toContain('does not mark book dirty');
+    expect(modal).toContain('not applied unless you edit it');
+    expect(modal).toContain('roundQuantity');
     expect(modal).toContain('Average cost');
     expect(modal).toContain('Total cost basis');
     expect(modal).toContain('targetAvgCost');
@@ -133,6 +168,8 @@ describe('holding reconcile UI wiring', () => {
     expect(modal).toContain('alignLotCostsToBook');
     expect(modal).toContain('alignLotCostsToBook: alignLotCosts');
     expect(modal).toContain('Reconcile holding');
+    // Must not treat any bookStr ≠ beforeBook as intentional (old bug).
+    expect(modal).not.toContain('Math.abs(targetBookCost - beforeBook) > 0.004');
   });
 
   it('HoldingLotsPanel shows sold ledger summary and align action', () => {
@@ -150,6 +187,7 @@ describe('holding reconcile UI wiring', () => {
     expect(inv).toContain('alignLotCostsToBook');
     expect(inv).toContain('onAlignLotsToBook');
     expect(inv).toContain('Reconcile quantity / avg cost');
+    expect(inv).toContain('liveReconcileQtyHolding');
   });
 
   it('holding qty apply path never posts broker cash withdrawal/deposit', () => {
@@ -160,6 +198,9 @@ describe('holding reconcile UI wiring', () => {
     expect(end).toBeGreaterThan(start);
     const body = orch.slice(start, end);
     expect(body).toContain('non-cash book correction');
+    expect(body).toContain('resolveHoldingReconcileBook');
+    expect(body).toContain('markUnit');
+    expect(body).toContain("portfolio.currency === 'SAR' ? 'SAR' : 'USD'");
     // Invocation sites only — comments may mention cash helpers as negatives.
     expect(body).not.toMatch(/deps\.recordBrokerCashAdjust\s*\(/);
     expect(body).not.toMatch(/deps\.addTransaction\s*\(/);
@@ -196,5 +237,11 @@ describe('holding reconcile UI wiring', () => {
   it('DataContext exposes persistAlignedLotsForPortfolio for reconcile apply', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('persistAlignedLotsForPortfolio');
+  });
+
+  it('ReconcileBalanceModal submits parseReconcileActualBalanceInput so statement amount is exact', () => {
+    const modal = read('components/reconciliation/ReconcileBalanceModal.tsx');
+    expect(modal).toContain('parseReconcileActualBalanceInput');
+    expect(modal).toContain('actualValue: actual');
   });
 });

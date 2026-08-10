@@ -215,6 +215,13 @@ function digestNormalizeInvestmentTransaction(
     type: typeRaw as InvestmentTransaction['type'],
     currency,
     linkedCashAccountId: transaction.linkedCashAccountId ?? transaction.linked_cash_account_id,
+    idempotencyKey: (transaction.idempotencyKey ?? transaction.idempotency_key ?? undefined) as
+      | string
+      | undefined,
+    note:
+      transaction.note != null && String(transaction.note).trim() !== ''
+        ? String(transaction.note).trim().slice(0, 200)
+        : undefined,
   } as InvestmentTransaction;
 }
 

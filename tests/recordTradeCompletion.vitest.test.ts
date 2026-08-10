@@ -60,7 +60,7 @@ describe('recordTradeCompletion', () => {
     expect(ledgerFn).toContain('const snap = dataRef.current ?? data');
   });
 
-  it('buy metadata goes through applyPositionDeltaForTrade; post-check only verifies open holding', () => {
+  it('buy metadata goes through applyPositionDeltaForTrade; post-check verifies buy open holding and sell qty', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('goalId: tradeGoalId');
     expect(ctx).toContain('if (tradeData.type === \'buy\')');
@@ -74,10 +74,13 @@ describe('recordTradeCompletion', () => {
     expect(buySellBlock).toMatch(/await\s+(?:supabase|db)\s*[\s\n]*\.from\(\s*['"]holdings['"]\s*\)/);
     expect(buySellBlock).toMatch(/\.maybeSingle\s*\(/);
     expect(ctx).toContain('did not create an open holding');
+    expect(buySellBlock).toContain('did not update the holding quantity');
+    expect(buySellBlock).toContain("if (tradeData.type === 'sell' && existingHolding)");
     expect(ctx).not.toContain('needsPatch');
     expect(buySellBlock).toContain('manualCurrentValue: manualCv');
     expect(buySellBlock).toContain('goalId: tradeGoalId');
     expect(buySellBlock).toContain('Background lot sync after trade');
+    expect(buySellBlock).toContain('patchHoldingRealizedPnL');
   });
 
   it('Record Trade modal confirms first, then records with success toast', () => {

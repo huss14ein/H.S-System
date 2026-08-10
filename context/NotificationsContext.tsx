@@ -29,6 +29,7 @@ import { useTodosOptional } from './TodosContext';
 import { computeTaskCounts } from '../services/todoModel';
 import { isSupportedPageAction } from '../utils/pageActions';
 import {
+  buildHoldingsIntegrityFingerprint,
   buildHoldingsQtyDriftReport,
   holdingsQtyDriftNeedsAttention,
 } from '../services/holdingsIntegrityRepair';
@@ -462,7 +463,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }
 
     const cashDriftAcks = resolveCashBalanceDriftAcks(auth?.user?.id, data.settings);
-    const holdingsAcks = resolveHoldingsIntegrityAcks(auth?.user?.id, data.settings);
 
     const driftCashAccounts: { id: string; name: string }[] = [];
     const cashDriftRows = accountsForRunway
@@ -504,33 +504,6 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         pageAction: safePageAction('Accounts', `open-reconcile-balance:${primary.id}`),
         severity: 'warning',
         actionHint: 'Opens Reconcile Balance for the first drifted account (append-only delta). Audit trail is under System & APIs Health.',
-      });
-    }
-
-    const qtyDrift = filterUnackedDriftRows(
-      holdingsQtyDriftNeedsAttention(buildHoldingsQtyDriftReport(data)),
-      holdingsAcks,
-    );
-    if (qtyDrift.length > 0) {
-      const primary = qtyDrift[0];
-      const holdingId = getPersonalInvestments(data)
-        .find((p) => p.id === primary.portfolioId)
-        ?.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === primary.symbol)?.id;
-      push({
-        id: 'holdings-qty-integrity-drift',
-        category: 'System',
-        message: `Holding quantity may not match the investment ledger: ${qtyDrift
-          .map((r) => r.symbol)
-          .slice(0, 3)
-          .join(', ')}${qtyDrift.length > 3 ? '…' : ''}.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Investments',
-        pageAction: holdingId
-          ? safePageAction('Investments', `open-reconcile-quantity:${holdingId}`)
-          : undefined,
-        severity: 'warning',
-        actionHint: 'Opens Reconcile quantity for the first drifted holding (symbol-only; audited).',
       });
     }
 
@@ -849,6 +822,48 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     enhancementSignals.budgetDrift.length,
   ]);
 
+  /**
+   * Holdings qty integrity — keyed only on qty/ledger fingerprint, never quote/FX ticks.
+   * Running buildHoldingsQtyDriftReport inside coreNotifications caused main-thread lag on every mark.
+   */
+  const holdingsIntegrityFp = buildHoldingsIntegrityFingerprint(data);
+  const holdingsIntegrityNotifications = useMemo<AppNotification[]>(() => {
+    const list: AppNotification[] = [];
+    if (!data || showHydrateBanner) return list;
+    const holdingsAcks = resolveHoldingsIntegrityAcks(auth?.user?.id, data.settings);
+    const qtyDrift = filterUnackedDriftRows(
+      holdingsQtyDriftNeedsAttention(buildHoldingsQtyDriftReport(data)),
+      holdingsAcks,
+    );
+    if (qtyDrift.length === 0) return list;
+    const now = new Date();
+    const primary = qtyDrift[0];
+    const holdingId = getPersonalInvestments(data)
+      .find((p) => p.id === primary.portfolioId)
+      ?.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === primary.symbol)?.id;
+    const n: AppNotification = {
+      id: 'holdings-qty-integrity-drift',
+      category: 'System',
+      message: `Holding quantity may not match the investment ledger: ${qtyDrift
+        .map((r) => r.symbol)
+        .slice(0, 3)
+        .join(', ')}${qtyDrift.length > 3 ? '…' : ''}.`,
+      date: now.toISOString(),
+      isRead: false,
+      pageLink: 'Investments',
+      pageAction: holdingId
+        ? safePageAction('Investments', `open-reconcile-quantity:${holdingId}`)
+        : undefined,
+      severity: 'warning',
+      actionHint: 'Opens Reconcile quantity for the first drifted holding (symbol-only; audited).',
+    };
+    const sev = n.severity ?? 'info';
+    n.score = severityScore[sev] * 10 + 1;
+    list.push(n);
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- holdingsIntegrityFp gates ledger inputs
+  }, [holdingsIntegrityFp, showHydrateBanner, auth?.user?.id, data?.settings?.uiAcks]);
+
   const priceTriggeredPlanNotifications = useMemo<AppNotification[]>(() => {
     const list: AppNotification[] = [];
     if (!data || showHydrateBanner) return list;
@@ -886,11 +901,11 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   }, [data, showHydrateBanner, debouncedPrices]);
 
   const notifications = useMemo<AppNotification[]>(() => {
-    const merged = [...coreNotifications, ...priceTriggeredPlanNotifications];
+    const merged = [...coreNotifications, ...holdingsIntegrityNotifications, ...priceTriggeredPlanNotifications];
     return merged
       .sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 40);
-  }, [coreNotifications, priceTriggeredPlanNotifications]);
+  }, [coreNotifications, holdingsIntegrityNotifications, priceTriggeredPlanNotifications]);
 
   const notificationsWithRead = useMemo(
     () => notifications.map((n) => ({ ...n, isRead: readIds.has(n.id) })),

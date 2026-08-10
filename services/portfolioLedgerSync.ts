@@ -17,6 +17,10 @@ import { rebuildCostLotsFromEvents } from './portfolioLotReplayEngine';
 import { alignPortfolioOpenLotsToHoldings } from './alignOpenLotsToHolding';
 import type { CorporateActionReplayEvent } from './portfolioReplayEngine';
 import { filterTransactionsForPortfolio } from './portfolioTransactionScope';
+import {
+  buildQtyReconcileDeltaIndex,
+  type QtyReconcileAdjustmentLike,
+} from './holdingsIntegrityRepair';
 import type {
   CorporateActionEvent,
   Holding,
@@ -125,6 +129,11 @@ export async function syncLotsAfterTrade(args: {
   /** Resolve the current holding after position delta (from dataRef). */
   resolveHolding: (symbolUpper: string) => Holding | undefined;
   updateHolding: (h: Holding) => Promise<void>;
+  /**
+   * Prefer this for PnL writes. Full `updateHolding({...h, realizedPnL})` can restore a
+   * stale pre-sell quantity when resolveHolding lags the position book (hydrate/dataRef race).
+   */
+  patchHoldingRealizedPnL?: (holdingId: string, realizedPnL: number) => Promise<void>;
   supabase?: SupabaseClient | null;
   userId?: string;
   onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
@@ -199,12 +208,20 @@ export async function syncLotsAfterTrade(args: {
     if (touched.size > 0 && !touched.has(upper)) continue;
     const h = args.resolveHolding(upper);
     if (!h?.id) continue;
-    if (Math.abs(pnl - (h.realizedPnL ?? 0)) <= 0.01) continue;
-    /** Realized PnL only — never rewrite quantity / avgCost from lots (incl. qty-0 closed rows). */
-    await args.updateHolding({
-      ...h,
-      realizedPnL: roundMoney(pnl),
-    });
+    const roundedPnL = roundMoney(pnl);
+    if (Math.abs(roundedPnL - (h.realizedPnL ?? 0)) <= 0.01) continue;
+    /**
+     * Realized PnL only — never rewrite quantity / avgCost from lots (incl. qty-0 closed rows).
+     * Prefer column-scoped patch so a stale resolveHolding snapshot cannot undo a sell.
+     */
+    if (args.patchHoldingRealizedPnL) {
+      await args.patchHoldingRealizedPnL(h.id, roundedPnL);
+    } else {
+      await args.updateHolding({
+        ...h,
+        realizedPnL: roundedPnL,
+      });
+    }
   }
 
   if (args.supabase && args.userId) {
@@ -247,11 +264,18 @@ export async function rebuildHoldingsFromLedger(args: {
   deleteHolding: (id: string) => Promise<void>;
   /** Prefer fresh lookup after persist (e.g. dataRef). */
   resolveHolding?: (symbolUpper: string) => Holding | undefined;
+  /** PnL-only writer — forwarded to {@link syncLotsAfterTrade} after holdings persist. */
+  patchHoldingRealizedPnL?: (holdingId: string, realizedPnL: number) => Promise<void>;
   supabase?: SupabaseClient | null;
   userId?: string;
   onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
   /** Prior open lots for this portfolio — preserves untouched symbols during symbol-scoped lot sync. */
   existingLots?: InvestmentCostLot[];
+  /**
+   * Applied `reconcile_quantity` rows — Restore/Rebuild must land on effective ledger qty
+   * (buys − sells + audited deltas), not raw trade lots alone.
+   */
+  reconciliationAdjustments?: QtyReconcileAdjustmentLike[] | null;
 }): Promise<{ lots: InvestmentCostLot[]; realizedPnLBySymbol: Map<string, number> }> {
   const symbols = [...normalizeTouchedSymbols(args.symbols)];
   if (symbols.length === 0) {
@@ -259,6 +283,9 @@ export async function rebuildHoldingsFromLedger(args: {
   }
   const portfolioId = args.portfolio.id;
   const scopedTxs = filterTransactionsForPortfolio(portfolioId, args.investmentTransactions);
+  const resolve =
+    args.resolveHolding ??
+    ((sym: string) => args.portfolio.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym));
 
   const replayed = await replayPortfolioHoldingsFromEvents({
     portfolio: args.portfolio,
@@ -277,16 +304,51 @@ export async function rebuildHoldingsFromLedger(args: {
     symbols,
   });
 
+  const adjustments = args.reconciliationAdjustments ?? [];
+  if (adjustments.length > 0) {
+    const deltaIndex = buildQtyReconcileDeltaIndex(adjustments);
+    for (const sym of symbols) {
+      const reconcileDelta = deltaIndex.get(`${portfolioId}:${sym}`) ?? 0;
+      if (Math.abs(reconcileDelta) < 1e-9) continue;
+      /**
+       * Never stack reconcile deltas onto CA-aware replay — catch-up reconciles after splits
+       * would inflate qty (replay already includes the CA). Overlay only when no CA for symbol.
+       */
+      const hasCa = (args.corporateActionEvents ?? []).some(
+        (e) =>
+          e.status !== 'reversed' &&
+          String(e.portfolioId ?? '') === portfolioId &&
+          String(e.symbol ?? '').trim().toUpperCase() === sym,
+      );
+      if (hasCa) continue;
+      const replayQty = Math.max(0, Number(replayed.get(sym)?.quantity) || 0);
+      const qty = roundQuantity(Math.max(0, replayQty + reconcileDelta));
+      const h = resolve(sym);
+      if (!h?.id) continue;
+      if (Math.abs((Number(h.quantity) || 0) - qty) <= 1e-6) continue;
+      const markUnit =
+        Number(h.currentPrice) > 0
+          ? Number(h.currentPrice)
+          : (Number(h.quantity) || 0) > 1e-9
+            ? Number(h.currentValue || 0) / Number(h.quantity)
+            : Number(h.avgCost) || 0;
+      await args.updateHolding({
+        ...h,
+        quantity: qty,
+        currentValue: qty <= 0 ? 0 : roundMoney(qty * markUnit),
+      });
+    }
+  }
+
   return syncLotsAfterTrade({
     portfolio: args.portfolio,
     investmentTransactions: scopedTxs,
     corporateActionEvents: args.corporateActionEvents,
     touchedSymbols: symbols,
     existingLots: args.existingLots ?? [],
-    resolveHolding:
-      args.resolveHolding ??
-      ((sym) => args.portfolio.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym)),
+    resolveHolding: resolve,
     updateHolding: args.updateHolding,
+    patchHoldingRealizedPnL: args.patchHoldingRealizedPnL,
     supabase: args.supabase,
     userId: args.userId,
     onLotsUpdated: args.onLotsUpdated,
@@ -391,6 +453,8 @@ export async function backfillRealizedPnLForPortfolio(args: {
   updateHolding: (h: Holding) => Promise<void>;
   addHolding?: (h: Holding & { portfolio_id?: string }) => Promise<void>;
   resolveHolding?: (symbolUpper: string) => Holding | undefined;
+  /** Prefer PnL-only writes so backfill cannot restore a stale quantity snapshot. */
+  patchHoldingRealizedPnL?: (holdingId: string, realizedPnL: number) => Promise<void>;
   supabase?: SupabaseClient | null;
   userId?: string;
   onLotsUpdated?: (lots: InvestmentCostLot[]) => void;
@@ -435,7 +499,11 @@ export async function backfillRealizedPnLForPortfolio(args: {
     }
     if (!h?.id) continue;
     if (Math.abs(rounded - (h.realizedPnL ?? 0)) <= 0.01) continue;
-    await args.updateHolding({ ...h, realizedPnL: rounded });
+    if (args.patchHoldingRealizedPnL) {
+      await args.patchHoldingRealizedPnL(h.id, rounded);
+    } else {
+      await args.updateHolding({ ...h, realizedPnL: rounded });
+    }
     patchedSymbols += 1;
   }
 

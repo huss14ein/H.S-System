@@ -93,13 +93,21 @@ describe('Analysis SAR normalization', () => {
     const accounts: Account[] = [
       { id: 's', name: 's', type: 'Checking', balance: 0, currency: 'SAR' } as Account,
     ];
+    /** Lookback is rolling months from "today" — pin fixtures inside the window. */
+    const ymdMonthsAgo = (months: number, day: number) => {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - months);
+      d.setDate(Math.min(day, 28));
+      return d.toISOString().slice(0, 10);
+    };
     const txs: Transaction[] = [
-      { id: 'i1', date: '2026-01-05', description: 'salary', amount: 10000, type: 'income', category: 'Salary', accountId: 's' },
-      { id: 'i2', date: '2026-02-05', description: 'salary', amount: 10000, type: 'income', category: 'Salary', accountId: 's' },
-      { id: 'i3', date: '2026-03-05', description: 'salary', amount: 10000, type: 'income', category: 'Salary', accountId: 's' },
-      { id: 'e1', date: '2026-01-10', description: 'rent', amount: -3000, type: 'expense', category: 'Housing', accountId: 's' },
-      { id: 'e2', date: '2026-02-10', description: 'rent', amount: -3000, type: 'expense', category: 'Housing', accountId: 's' },
-      { id: 'e3', date: '2026-03-10', description: 'rent', amount: -3000, type: 'expense', category: 'Housing', accountId: 's' },
+      { id: 'i1', date: ymdMonthsAgo(2, 5), description: 'salary', amount: 10000, type: 'income', category: 'Salary', accountId: 's' },
+      { id: 'i2', date: ymdMonthsAgo(1, 5), description: 'salary', amount: 10000, type: 'income', category: 'Salary', accountId: 's' },
+      { id: 'i3', date: ymdMonthsAgo(0, 5), description: 'salary', amount: 10000, type: 'income', category: 'Salary', accountId: 's' },
+      { id: 'e1', date: ymdMonthsAgo(2, 10), description: 'rent', amount: -3000, type: 'expense', category: 'Housing', accountId: 's' },
+      { id: 'e2', date: ymdMonthsAgo(1, 10), description: 'rent', amount: -3000, type: 'expense', category: 'Housing', accountId: 's' },
+      { id: 'e3', date: ymdMonthsAgo(0, 10), description: 'rent', amount: -3000, type: 'expense', category: 'Housing', accountId: 's' },
     ] as Transaction[];
     const cov = salaryToExpenseCoverageSar(txs, accounts, sarPerUsd, 6);
     expect(cov.ratio).not.toBeNull();

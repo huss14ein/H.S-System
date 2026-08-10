@@ -152,6 +152,9 @@ describe('tradeHoldingsIsolation', () => {
     const updateHolding = vi.fn(async (h: Holding) => {
       Object.assign(holding, h);
     });
+    const patchHoldingRealizedPnL = vi.fn(async (_id: string, pnl: number) => {
+      holding.realizedPnL = pnl;
+    });
 
     await syncLotsAfterTrade({
       portfolio,
@@ -160,13 +163,84 @@ describe('tradeHoldingsIsolation', () => {
       touchedSymbols: ['LCID'],
       resolveHolding: () => holding,
       updateHolding,
+      patchHoldingRealizedPnL,
     });
 
     expect(holding.quantity).toBe(60);
-    for (const call of updateHolding.mock.calls) {
-      const h = call[0] as Holding;
-      expect(h.quantity).toBe(60);
+    expect(updateHolding).not.toHaveBeenCalled();
+    expect(patchHoldingRealizedPnL).toHaveBeenCalled();
+    for (const call of patchHoldingRealizedPnL.mock.calls) {
+      expect(call[0]).toBe('h1');
+      expect(typeof call[1]).toBe('number');
     }
+  });
+
+  it('syncLotsAfterTrade with stale resolveHolding + patchHoldingRealizedPnL cannot restore pre-sell qty', async () => {
+    const liveHolding: Holding = {
+      id: 'h1',
+      symbol: 'SOUN',
+      quantity: 50,
+      avgCost: 10,
+      currentValue: 500,
+      realizedPnL: 0,
+      zakahClass: 'Zakatable',
+    };
+    const staleSnapshot: Holding = {
+      ...liveHolding,
+      quantity: 150,
+      realizedPnL: 0,
+    };
+    const portfolio: InvestmentPortfolio = {
+      id: 'pf1',
+      name: 'T',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [liveHolding],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'b1',
+        portfolioId: 'pf1',
+        accountId: 'acc1',
+        date: '2026-01-01',
+        type: 'buy',
+        symbol: 'SOUN',
+        quantity: 150,
+        price: 10,
+        total: 1500,
+      },
+      {
+        id: 's1',
+        portfolioId: 'pf1',
+        accountId: 'acc1',
+        date: '2026-08-07',
+        type: 'sell',
+        symbol: 'SOUN',
+        quantity: 100,
+        price: 12,
+        total: 1200,
+      },
+    ];
+    const updateHolding = vi.fn(async (h: Holding) => {
+      Object.assign(liveHolding, h);
+    });
+    const patchHoldingRealizedPnL = vi.fn(async (_id: string, pnl: number) => {
+      liveHolding.realizedPnL = pnl;
+    });
+
+    await syncLotsAfterTrade({
+      portfolio,
+      investmentTransactions: txs,
+      corporateActionEvents: [],
+      touchedSymbols: ['SOUN'],
+      resolveHolding: () => staleSnapshot,
+      updateHolding,
+      patchHoldingRealizedPnL,
+    });
+
+    expect(liveHolding.quantity).toBe(50);
+    expect(updateHolding).not.toHaveBeenCalled();
+    expect(patchHoldingRealizedPnL).toHaveBeenCalled();
   });
 
   it('persistHoldingsFromReplayMap with symbols gate does not resurrect untouched closed names', async () => {
@@ -375,7 +449,8 @@ describe('tradeHoldingsIsolation', () => {
     expect(sealBody).toContain('scheduleIdleWork(write, 0)');
     expect(sealBody).not.toContain('4000');
     expect(ctx).toContain('Skipping stale investments hydrate');
-    expect(ctx).toContain('investmentsStale ? prev.investments');
+    expect(ctx).toContain('dataRef.current?.investments ?? base.investments');
+    expect(ctx).toContain('committedPatchEpochRef');
   });
 
   it('trade prep with duplicate LCID keeps exact ledger match qty 500 (never 1890) then applies delta', async () => {

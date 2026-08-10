@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Modal from '../Modal';
 import { isValidReason, previewHoldingQuantityReconcile } from '../../services/reconciliation';
-import { roundMoney } from '../../utils/money';
+import { roundMoney, roundQuantity } from '../../utils/money';
 
 export interface ReconcileQuantityModalProps {
   isOpen: boolean;
@@ -23,6 +23,13 @@ export interface ReconcileQuantityModalProps {
   }) => Promise<void>;
 }
 
+function parseOptionalNumber(raw: string): number | undefined {
+  const trimmed = String(raw ?? '').trim();
+  if (trimmed === '') return undefined;
+  const n = Number(trimmed.replace(/,/g, ''));
+  return Number.isFinite(n) ? n : undefined;
+}
+
 const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
   isOpen,
   onClose,
@@ -37,6 +44,9 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
   const [avgStr, setAvgStr] = useState('');
   const [bookStr, setBookStr] = useState('');
   const [addCostStr, setAddCostStr] = useState('');
+  /** Only user edits of avg/book are sent as restatements — qty-driven preview must not. */
+  const [avgDirty, setAvgDirty] = useState(false);
+  const [bookDirty, setBookDirty] = useState(false);
   const [alignLotCosts, setAlignLotCosts] = useState(true);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -50,16 +60,28 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
     setAvgStr(String(beforeAvgCost ?? ''));
     setBookStr(String(beforeBook || ''));
     setAddCostStr('');
+    setAvgDirty(false);
+    setBookDirty(false);
     setAlignLotCosts(true);
     setReason('');
     setError(null);
   }, [isOpen, beforeQty, beforeAvgCost, beforeBook]);
 
-  const actualQty = Number(String(qtyStr).replace(/,/g, ''));
-  const targetAvgCost = avgStr.trim() === '' ? undefined : Number(String(avgStr).replace(/,/g, ''));
-  const targetBookCost = bookStr.trim() === '' ? undefined : Number(String(bookStr).replace(/,/g, ''));
-  const costBasisTotal = addCostStr.trim() === '' ? undefined : Number(String(addCostStr).replace(/,/g, ''));
+  const actualQtyRaw = parseOptionalNumber(qtyStr);
+  const actualQty = actualQtyRaw != null ? roundQuantity(actualQtyRaw) : NaN;
+  const parsedAvg = parseOptionalNumber(avgStr);
+  const parsedBook = parseOptionalNumber(bookStr);
+  const parsedAddCost = parseOptionalNumber(addCostStr);
   const qtyUp = Number.isFinite(actualQty) && actualQty > beforeQty;
+
+  /** Restatement fields only when the user edited them — never auto-derived proportional book. */
+  const targetBookCost = bookDirty && parsedBook != null && parsedBook >= 0 ? roundMoney(parsedBook) : undefined;
+  const targetAvgCost =
+    !bookDirty && avgDirty && parsedAvg != null && parsedAvg >= 0
+      ? Number(parsedAvg)
+      : undefined;
+  const costBasisTotal =
+    qtyUp && parsedAddCost != null && parsedAddCost >= 0 ? roundMoney(parsedAddCost) : undefined;
 
   const preview = useMemo(() => {
     if (!Number.isFinite(actualQty)) return null;
@@ -67,18 +89,9 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
       holdingId,
       beforeQty,
       actualQty,
-      costBasisTotal: qtyUp ? costBasisTotal : undefined,
-      // Prefer explicit book cost when the user edited it; else avg when restating cost.
-      targetBookCost:
-        targetBookCost != null && Number.isFinite(targetBookCost) && Math.abs(targetBookCost - beforeBook) > 0.004
-          ? targetBookCost
-          : undefined,
-      targetAvgCost:
-        targetAvgCost != null &&
-        Number.isFinite(targetAvgCost) &&
-        Math.abs(targetAvgCost - (Number(beforeAvgCost) || 0)) > 1e-6
-          ? targetAvgCost
-          : undefined,
+      costBasisTotal,
+      targetBookCost,
+      targetAvgCost,
       beforeAvgCost,
       alignLotCostsToBook: alignLotCosts,
       reason,
@@ -88,39 +101,45 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
     beforeQty,
     actualQty,
     costBasisTotal,
-    qtyUp,
     targetBookCost,
     targetAvgCost,
     beforeAvgCost,
-    beforeBook,
     alignLotCosts,
     reason,
   ]);
 
   const handleQtyChange = (raw: string) => {
     setQtyStr(raw);
-    const q = Number(String(raw).replace(/,/g, ''));
-    if (!Number.isFinite(q) || q < 0) return;
-    const avg = Number(String(avgStr).replace(/,/g, ''));
-    if (Number.isFinite(avg) && avg >= 0) {
-      setBookStr(String(roundMoney(avg * q)));
+    const q = parseOptionalNumber(raw);
+    if (q == null || q < 0) return;
+    // Preview-only book line from current avg — does not mark book dirty / does not restate cost.
+    if (!bookDirty) {
+      const avgFromField = parseOptionalNumber(avgStr);
+      const avg = avgDirty && avgFromField != null ? avgFromField : Number(beforeAvgCost) || 0;
+      if (Number.isFinite(avg) && avg >= 0) {
+        setBookStr(String(roundMoney(avg * q)));
+      }
     }
   };
 
   const handleAvgChange = (raw: string) => {
     setAvgStr(raw);
-    const avg = Number(String(raw).replace(/,/g, ''));
-    const q = Number(String(qtyStr).replace(/,/g, ''));
-    if (Number.isFinite(avg) && avg >= 0 && Number.isFinite(q) && q >= 0) {
+    setAvgDirty(true);
+    setBookDirty(false);
+    const avg = parseOptionalNumber(raw);
+    const q = parseOptionalNumber(qtyStr);
+    if (avg != null && avg >= 0 && q != null && q >= 0) {
       setBookStr(String(roundMoney(avg * q)));
     }
   };
 
   const handleBookChange = (raw: string) => {
     setBookStr(raw);
-    const book = Number(String(raw).replace(/,/g, ''));
-    const q = Number(String(qtyStr).replace(/,/g, ''));
-    if (Number.isFinite(book) && book >= 0 && Number.isFinite(q) && q > 0) {
+    setBookDirty(true);
+    setAvgDirty(false);
+    const book = parseOptionalNumber(raw);
+    const q = parseOptionalNumber(qtyStr);
+    if (book != null && book >= 0 && q != null && q > 0) {
       setAvgStr(String(Number((book / q).toFixed(6))));
     }
   };
@@ -130,6 +149,10 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
     setError(null);
     if (!isValidReason(reason)) {
       setError('Reason is required (at least 3 characters).');
+      return;
+    }
+    if (!Number.isFinite(actualQty) || actualQty < 0) {
+      setError('Enter a valid actual share quantity.');
       return;
     }
     if (preview?.blockedReason) {
@@ -142,18 +165,12 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
     }
     setBusy(true);
     try {
-      const bookChanged =
-        targetBookCost != null && Number.isFinite(targetBookCost) && Math.abs(targetBookCost - beforeBook) > 0.004;
-      const avgChanged =
-        targetAvgCost != null &&
-        Number.isFinite(targetAvgCost) &&
-        Math.abs(targetAvgCost - (Number(beforeAvgCost) || 0)) > 1e-6;
       await onApply({
         holdingId,
         actualQty,
-        costBasisTotal: qtyUp ? costBasisTotal : undefined,
-        targetBookCost: bookChanged ? targetBookCost : undefined,
-        targetAvgCost: !bookChanged && avgChanged ? targetAvgCost : undefined,
+        costBasisTotal,
+        targetBookCost,
+        targetAvgCost,
         alignLotCostsToBook: alignLotCosts,
         reason,
       });
@@ -166,6 +183,10 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
   };
 
   const ccy = bookCurrency === 'SAR' ? 'SAR' : 'USD';
+  const derivedBookHint =
+    Number.isFinite(actualQty) && actualQty >= 0
+      ? roundMoney((avgDirty && parsedAvg != null ? parsedAvg : Number(beforeAvgCost) || 0) * actualQty)
+      : beforeBook;
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Reconcile holding — ${symbol}`}>
@@ -215,6 +236,9 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
               value={avgStr}
               onChange={(e) => handleAvgChange(e.target.value)}
             />
+            <p className="text-xs text-slate-500 mt-1">
+              Edit only to restate WAC. Qty-only changes keep the current average.
+            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Total cost basis ({ccy})</label>
@@ -225,6 +249,11 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
               value={bookStr}
               onChange={(e) => handleBookChange(e.target.value)}
             />
+            <p className="text-xs text-slate-500 mt-1">
+              {bookDirty
+                ? 'Will restate the full book cost to this amount.'
+                : `Preview (${derivedBookHint.toFixed(2)} ${ccy}) — not applied unless you edit it.`}
+            </p>
           </div>
         </div>
         {qtyUp && (
@@ -241,7 +270,8 @@ const ReconcileQuantityModal: React.FC<ReconcileQuantityModalProps> = ({
               placeholder="Required unless you restate full book cost above"
             />
             <p className="text-xs text-slate-500 mt-1">
-              Prefer this when you bought more shares. Or set the full restated book cost above instead.
+              Prefer this when you bought more shares — the exact added cost is blended into WAC. Or edit the full
+              restated book cost above instead.
             </p>
           </div>
         )}

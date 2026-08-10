@@ -55,12 +55,24 @@ describe('tradePatchAndQuoteSeedCompletion', () => {
   it('applyFinancialDataPatch drops stale startTransition commits via epoch guard', () => {
     const ctx = read('context/DataContext.tsx');
     expect(ctx).toContain('dataPatchEpochRef');
-    expect(ctx).toContain('epoch === dataPatchEpochRef.current ? next : prev');
+    expect(ctx).toContain('committedPatchEpochRef');
+    expect(ctx).toContain('if (epoch !== dataPatchEpochRef.current) return prev');
+    expect(ctx).toContain('committedPatchEpochRef.current = epoch');
+    expect(ctx).toContain('if (committedPatchEpochRef.current < dataPatchEpochRef.current) return');
     expect(ctx).toContain('enqueueLotSyncWork');
     expect(ctx).toContain('await enqueueLotSyncWork(async () => {');
     const sealStart = ctx.indexOf('const sealHoldingsBookAfterTrade = ');
     const sealBody = ctx.slice(sealStart, sealStart + 700);
     expect(sealBody).toContain('scheduleIdleWork(write, 0)');
     expect(sealBody).not.toContain('4000');
+  });
+
+  it('lot sync after trade patches realized_pnl without rewriting quantity', () => {
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('patchHoldingRealizedPnL');
+    expect(ctx).toContain('.update({ realized_pnl: rounded })');
+    const sync = read('services/portfolioLedgerSync.ts');
+    expect(sync).toContain('patchHoldingRealizedPnL?:');
+    expect(sync).toContain('stale pre-sell quantity');
   });
 });

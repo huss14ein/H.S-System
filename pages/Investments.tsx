@@ -17,7 +17,7 @@ import HoldingsQtyIntegrityPanel from '../components/investments/HoldingsQtyInte
 import HoldingLotsPanel from '../components/investments/HoldingLotsPanel';
 import ReconcileQuantityModal from '../components/reconciliation/ReconcileQuantityModal';
 import ReconcileBalanceModal from '../components/reconciliation/ReconcileBalanceModal';
-import { portfolioIdsForAccount, investmentLedgerTypeLabel, isInvestmentLedgerTypeCapitalInflow, isInvestmentLedgerTypeCapitalOutflow } from '../services/reconciliation';
+import { portfolioIdsForAccount, investmentLedgerTypeLabel, isInvestmentLedgerTypeCapitalInflow, isInvestmentLedgerTypeCapitalOutflow, isInvestmentReconciliationCashAdjustment } from '../services/reconciliation';
 import { toast } from '../context/ToastContext';
 import CorporateActionWizard from '../components/investments/corporateActions/CorporateActionWizard';
 import {
@@ -2661,11 +2661,17 @@ const TransactionHistoryModal: React.FC<{
     };
 
     const isTrade = editing && (editing.type === 'buy' || editing.type === 'sell');
-    const canEditType = (type: string) =>
-        ['buy', 'sell', 'dividend', 'fee', 'vat', 'deposit', 'withdrawal'].includes(type);
+    const canEditType = (t: InvestmentTransaction | { type?: string }) => {
+        if (isInvestmentReconciliationCashAdjustment(t)) return false;
+        return ['buy', 'sell', 'dividend', 'fee', 'vat', 'deposit', 'withdrawal'].includes(String(t.type ?? ''));
+    };
 
     const handleSaveEdit = async () => {
         if (!editing) return;
+        if (isInvestmentReconciliationCashAdjustment(editing)) {
+            toast('Broker cash reconcile rows cannot be edited here — reverse from Reconciliation audit instead.', 'info');
+            return;
+        }
         setSaving(true);
         try {
             const qty = Number(editQty);
@@ -2683,7 +2689,7 @@ const TransactionHistoryModal: React.FC<{
                 total,
                 date: editDate || editing.date,
             });
-            toast(`${editing.type} updated.`, 'success');
+            toast(`${investmentLedgerTypeLabel(editing)} updated.`, 'success');
             startTransition(() => {
                 setEditing(null);
             });
@@ -2742,7 +2748,7 @@ const TransactionHistoryModal: React.FC<{
                                     <td className="px-3 py-2 whitespace-nowrap text-center text-xs font-medium text-slate-600">{cur}</td>
                                     {canEditLedger && (
                                         <td className="px-3 py-2 whitespace-nowrap text-center">
-                                            {canEditType(String(t.type)) ? (
+                                            {canEditType(t) ? (
                                                 <button
                                                     type="button"
                                                     className="text-xs font-medium text-emerald-700 hover:underline"
@@ -2751,7 +2757,9 @@ const TransactionHistoryModal: React.FC<{
                                                     Edit
                                                 </button>
                                             ) : (
-                                                <span className="text-xs text-slate-300">—</span>
+                                                <span className="text-xs text-slate-300" title={isInvestmentReconciliationCashAdjustment(t) ? 'Reverse from Reconciliation audit' : undefined}>
+                                                    —
+                                                </span>
                                             )}
                                         </td>
                                     )}
@@ -2775,7 +2783,7 @@ const TransactionHistoryModal: React.FC<{
             {editing && (
                 <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
                     <p className="text-sm font-semibold text-slate-800">
-                        Edit {editing.type} — {editing.symbol === 'CASH' ? 'cash' : editing.symbol}
+                        Edit {investmentLedgerTypeLabel(editing)} — {editing.symbol === 'CASH' ? 'cash' : editing.symbol}
                     </p>
                     <div className="grid grid-cols-2 gap-2">
                         <label className="text-xs text-slate-600">
@@ -5653,6 +5661,15 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   const [holdingToEdit, setHoldingToEdit] = useState<Holding | null>(null);
   const [reconcileQtyHolding, setReconcileQtyHolding] = useState<Holding | null>(null);
   const [reconcileBrokerCashAccount, setReconcileBrokerCashAccount] = useState<Account | null>(null);
+  /** Prefer live book over the snapshot frozen when the modal opened (sells may have landed mid-edit). */
+  const liveReconcileQtyHolding = useMemo(() => {
+    if (!reconcileQtyHolding?.id) return null;
+    for (const p of data?.investments ?? []) {
+      const h = (p.holdings ?? []).find((x) => x.id === reconcileQtyHolding.id);
+      if (h) return h;
+    }
+    return reconcileQtyHolding;
+  }, [reconcileQtyHolding, data?.investments]);
   const reconcileBrokerPortfolioIds = useMemo(
     () =>
       reconcileBrokerCashAccount
@@ -6544,14 +6561,15 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       <ReconcileQuantityModal
         isOpen={!!reconcileQtyHolding}
         onClose={() => setReconcileQtyHolding(null)}
-        holdingId={reconcileQtyHolding?.id ?? ''}
-        symbol={reconcileQtyHolding?.symbol ?? ''}
-        beforeQty={Number(reconcileQtyHolding?.quantity ?? 0)}
-        beforeAvgCost={Number(reconcileQtyHolding?.avgCost ?? 0)}
+        holdingId={liveReconcileQtyHolding?.id ?? reconcileQtyHolding?.id ?? ''}
+        symbol={liveReconcileQtyHolding?.symbol ?? reconcileQtyHolding?.symbol ?? ''}
+        beforeQty={Number(liveReconcileQtyHolding?.quantity ?? 0)}
+        beforeAvgCost={Number(liveReconcileQtyHolding?.avgCost ?? 0)}
         bookCurrency={
           (() => {
+            const id = liveReconcileQtyHolding?.id ?? reconcileQtyHolding?.id;
             const pf = (data?.investments ?? []).find((p) =>
-              (p.holdings ?? []).some((h) => h.id === reconcileQtyHolding?.id),
+              (p.holdings ?? []).some((h) => h.id === id),
             );
             return pf?.currency === 'SAR' ? 'SAR' : 'USD';
           })()

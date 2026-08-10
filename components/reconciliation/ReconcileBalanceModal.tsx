@@ -5,6 +5,7 @@ import {
   appCalendarTodayYmd,
   isValidReason,
   previewCashAccountReconcile,
+  parseReconcileActualBalanceInput,
   type ReconciliationPreview,
 } from '../../services/reconciliation';
 import type { Account } from '../../types';
@@ -67,8 +68,8 @@ const ReconcileBalanceModal: React.FC<ReconcileBalanceModalProps> = ({
 
   const preview: ReconciliationPreview | null = useMemo(() => {
     if (!account) return null;
-    const actual = Number(String(actualStr).replace(/,/g, ''));
-    if (!Number.isFinite(actual)) return null;
+    const actual = parseReconcileActualBalanceInput(actualStr);
+    if (actual == null) return null;
     return previewCashAccountReconcile({
       account,
       actualValue: actual,
@@ -108,8 +109,12 @@ const ReconcileBalanceModal: React.FC<ReconcileBalanceModalProps> = ({
       setError('Reason is required (at least 3 characters).');
       return;
     }
-    const actual = Number(String(actualStr).replace(/,/g, ''));
-    if (!Number.isFinite(actual)) {
+    const actual = parseReconcileActualBalanceInput(actualStr);
+    if (actual == null) {
+      setError('Enter a valid actual balance.');
+      return;
+    }
+    if (!preview) {
       setError('Enter a valid actual balance.');
       return;
     }
