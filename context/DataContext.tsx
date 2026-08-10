@@ -1505,8 +1505,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 patch: Partial<FinancialData> & Pick<FinancialData, 'accounts'>,
                 wealthUltraConfig = wuBase,
             ) => {
+            /** True whenever the book moved mid-fetch — including secondary patches that omit `investments`. */
             const investmentsStale =
-                patch.investments != null &&
                 holdingsBookGenerationRef.current !== investmentsHydrateGenAtStart;
             if (investmentsStale) {
                 console.warn(
