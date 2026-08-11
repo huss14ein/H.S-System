@@ -189,7 +189,15 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
       const rebuiltHolding = (fresh?.investments ?? [])
         .find((p) => p.id === portfolioId)
         ?.holdings?.find((h) => String(h.symbol ?? '').trim().toUpperCase() === String(symbol).trim().toUpperCase());
-      const storedAfter = Number(rebuiltHolding?.quantity) || 0;
+      /**
+       * Context can still be on the pre-rebuild render immediately after the async mutation resolves.
+       * Fall back to the ledger-target quantity so the durable ack fingerprints the post-rebuild truth,
+       * not the stale pre-rebuild holding qty that would make the warning resurface on refresh.
+       */
+      const storedAfter =
+        rebuiltHolding != null && Number.isFinite(Number(rebuiltHolding.quantity))
+          ? Number(rebuiltHolding.quantity)
+          : Number(opts?.expectedLedgerQty) || 0;
       const ledgerAfter = opts?.expectedLedgerQty ?? storedAfter;
       const next = await acknowledgeHoldingsIntegrityDurable({
         userId,

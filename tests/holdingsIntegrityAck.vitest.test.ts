@@ -147,6 +147,8 @@ describe('holdingsIntegrityAck', () => {
     expect(panel).toContain("kind: 'keep_closed'");
     expect(panel).toContain("kind: 'rebuilt'");
     expect(panel).toContain('ledgerQty:');
+    expect(panel).toContain('Context can still be on the pre-rebuild render');
+    expect(panel).toContain(': Number(opts?.expectedLedgerQty) || 0;');
     expect(panel).toContain('filterUnackedDriftRows');
     expect(panel).toContain('filterUnackedMissingRows');
     expect(panel).toContain('data-testid={`keep-stored-');
