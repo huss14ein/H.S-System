@@ -178,6 +178,10 @@ describe('holding reconcile UI wiring', () => {
     expect(panel).toContain('sold');
     expect(panel).toContain('Align open lots to book');
     expect(panel).toContain('WAC purchased cost');
+    expect(panel).toContain('not</strong> a buy/sell trade list');
+    expect(panel).toContain('Buy lot');
+    expect(panel).toContain('Open buy lots');
+    expect(panel).toContain('Fully sold lots are hidden');
   });
 
   it('Investments page passes cost fields into applyReconciliationAdjustment', () => {

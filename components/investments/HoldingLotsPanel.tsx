@@ -1,6 +1,9 @@
 /**
  * Open cost lots for a symbol (from `data.investmentCostLots`), with sold-quantity
  * and WAC-vs-FIFO book diagnostics so reconcile stays accountant-correct.
+ *
+ * This is NOT a buy/sell transaction log. Each row is a remaining BUY lot after FIFO
+ * sells have consumed earlier shares. Fully sold lots are omitted.
  */
 import React, { useContext, useMemo } from 'react';
 import { DataContext } from '../../context/DataContext';
@@ -77,10 +80,10 @@ const HoldingLotsPanel: React.FC<Props> = ({
   if (lots.length === 0) {
     return (
       <div className={compact ? 'mt-2 text-xs text-slate-500' : 'mt-3 text-sm text-slate-500'}>
-        No open cost lots recorded for {String(symbol).toUpperCase()}.
+        No open buy lots recorded for {String(symbol).toUpperCase()} (fully sold lots are not listed here).
         {tradeSummary.soldQty > 0 ? (
           <span className="block mt-1 text-slate-600">
-            Ledger shows {tradeSummary.boughtQty.toLocaleString()} bought · {tradeSummary.soldQty.toLocaleString()}{' '}
+            Trade ledger: {tradeSummary.boughtQty.toLocaleString()} bought · {tradeSummary.soldQty.toLocaleString()}{' '}
             sold · net {tradeSummary.netQty.toLocaleString()}.
           </span>
         ) : null}
@@ -96,16 +99,23 @@ const HoldingLotsPanel: React.FC<Props> = ({
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
         <span className="text-xs font-semibold text-slate-700">
-          Open lots — {String(symbol).toUpperCase()}
+          Open buy lots — {String(symbol).toUpperCase()}
         </span>
         <span className="text-xs text-slate-500">
-          {totalQty.toLocaleString()} open · {lots.length} lot(s)
+          {totalQty.toLocaleString()} still open · {lots.length} buy lot(s)
         </span>
       </div>
+      <p className="text-[11px] text-slate-600 mb-1 leading-relaxed">
+        This is <strong>not</strong> a buy/sell trade list. Every row is a <strong>buy lot</strong> with shares still
+        open after FIFO sells. Fully sold lots are hidden. Sell trades appear only in the ledger summary below — not as
+        table rows.
+      </p>
       <p className="text-[11px] text-slate-500 mb-2">
-        Ledger: {tradeSummary.boughtQty.toLocaleString()} bought · {tradeSummary.soldQty.toLocaleString()} sold · net{' '}
-        {tradeSummary.netQty.toLocaleString()}
-        {holdingQty != null ? ` · book qty ${Number(holdingQty).toLocaleString()}` : ''}
+        Trade ledger: {tradeSummary.boughtQty.toLocaleString()} bought · {tradeSummary.soldQty.toLocaleString()} sold ·
+        net {tradeSummary.netQty.toLocaleString()}
+        {holdingQty != null ? ` · holding book ${Number(holdingQty).toLocaleString()}` : ''}
+        {' · '}
+        open-lot Σ {totalQty.toLocaleString()}
         {' · '}
         FIFO open book {formatCurrencyString(fifoBook, { digits: 2, inCurrency: bookCcy })}
         {wacBook != null
@@ -116,9 +126,9 @@ const HoldingLotsPanel: React.FC<Props> = ({
         <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50/80 px-2 py-1.5 text-[11px] text-amber-900">
           {qtyMismatch ? (
             <p>
-              Open-lot quantity ({totalQty.toLocaleString()}) does not match holding book (
+              Open buy-lot quantity ({totalQty.toLocaleString()}) does not match holding book (
               {Number(holdingQty).toLocaleString()}). Sold / reconciled-down shares may not have been trimmed from
-              lots.
+              these buy lots yet.
             </p>
           ) : null}
           {costMismatch ? (
@@ -142,10 +152,11 @@ const HoldingLotsPanel: React.FC<Props> = ({
         <table className="min-w-full text-xs">
           <thead className="text-left text-slate-500">
             <tr>
-              <th className="py-1 pr-3">Acquired</th>
-              <th className="py-1 pr-3">Qty remaining</th>
+              <th className="py-1 pr-3">Type</th>
+              <th className="py-1 pr-3">Buy date</th>
+              <th className="py-1 pr-3">Open qty</th>
               <th className="py-1 pr-3">Cost / share</th>
-              <th className="py-1 pr-3">Book cost</th>
+              <th className="py-1 pr-3">Open book cost</th>
               <th className="py-1">Ccy</th>
             </tr>
           </thead>
@@ -155,6 +166,11 @@ const HoldingLotsPanel: React.FC<Props> = ({
               const cost = Number(l.costPerShare) || 0;
               return (
                 <tr key={l.id} className="border-t border-slate-100">
+                  <td className="py-1 pr-3">
+                    <span className="inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      Buy lot
+                    </span>
+                  </td>
                   <td className="py-1 pr-3">{String(l.acquisitionDate).slice(0, 10)}</td>
                   <td className="py-1 pr-3">{qty.toLocaleString()}</td>
                   <td className="py-1 pr-3">
