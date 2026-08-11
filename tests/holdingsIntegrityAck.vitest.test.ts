@@ -147,8 +147,8 @@ describe('holdingsIntegrityAck', () => {
     expect(panel).toContain("kind: 'keep_closed'");
     expect(panel).toContain("kind: 'rebuilt'");
     expect(panel).toContain('ledgerQty:');
-    expect(panel).toContain('Context can still be on the pre-rebuild render');
-    expect(panel).toContain(': Number(opts?.expectedLedgerQty) || 0;');
+    expect(panel).toContain('result?.quantities');
+    expect(panel).toContain('Restore did not create an open');
     expect(panel).toContain('filterUnackedDriftRows');
     expect(panel).toContain('filterUnackedMissingRows');
     expect(panel).toContain('data-testid={`keep-stored-');
@@ -158,6 +158,23 @@ describe('holdingsIntegrityAck', () => {
     expect(panel).not.toContain('No ledger rebuild.');
     // Rebuild must ack (final), not clear the dismissal.
     expect(panel).not.toContain('clearHoldingsIntegrityAckDurable');
+  });
+
+  it('Critical missing exposes Keep closed (ATYR residual) and Restore verifies open qty', () => {
+    const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
+    expect(panel).toContain('data-testid={`keep-closed-');
+    expect(panel).toContain('broker is flat');
+    expect(panel).toContain('Restore did not create an open');
+    // Keep closed must be available for likely-open rows, not only sold/incomplete.
+    expect(panel).not.toContain('{mode === \'sold\' && (');
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('sealHoldingsBookAfterTrade()');
+    const rebuildIdx = ctx.indexOf('const rebuildHoldingsFromLedgerForSymbols = async');
+    expect(rebuildIdx).toBeGreaterThan(-1);
+    const rebuildEnd = ctx.indexOf('const backfillRealizedPnLForAllPortfolios', rebuildIdx);
+    const rebuildBody = ctx.slice(rebuildIdx, rebuildEnd);
+    expect(rebuildBody).toContain('sealHoldingsBookAfterTrade()');
+    expect(rebuildBody).toContain('quantities[sym]');
   });
 
   it('Investments and SystemHealth still mount integrity panel; KPIs use stored quantity', () => {
