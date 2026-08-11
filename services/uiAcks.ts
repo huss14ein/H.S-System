@@ -217,18 +217,43 @@ export function resolveHoldingsIntegrityAcks(
   return local;
 }
 
+/** Per-key merge: newer `at` wins. Never drops local-only cash dismissals when remote is sparse. */
+export function mergeCashBalanceDriftAckMapsByAt(
+  local: CashBalanceDriftAckMap,
+  remote: CashBalanceDriftAckMap,
+): CashBalanceDriftAckMap {
+  const out: CashBalanceDriftAckMap = { ...local };
+  for (const [key, remoteEntry] of Object.entries(remote)) {
+    const localEntry = out[key];
+    if (!localEntry) {
+      out[key] = remoteEntry;
+      continue;
+    }
+    const localAt = String(localEntry.at ?? '');
+    const remoteAt = String(remoteEntry.at ?? '');
+    if (remoteAt >= localAt) out[key] = remoteEntry;
+  }
+  return out;
+}
+
+/**
+ * Settings + localStorage merge by newest `at` per account — same permanence contract as holdings.
+ * A sparse/stale settings.ui_acks.cashBalanceDrift must never wipe fresher Keep stored dismissals.
+ */
 export function resolveCashBalanceDriftAcks(
   userId: string | null | undefined,
   settings?: Pick<Settings, 'uiAcks'> | null,
   opts?: ResolveAcksOptions,
 ): CashBalanceDriftAckMap {
+  const local = sanitizeCashMap(loadCashBalanceDriftAcks(userId));
   const fromSettings = settings?.uiAcks?.cashBalanceDrift;
   if (fromSettings && typeof fromSettings === 'object') {
-    const map = sanitizeCashMap(fromSettings);
-    if (opts?.writeThrough) saveCashBalanceDriftAcks(userId, map);
-    return map;
+    const remote = sanitizeCashMap(fromSettings);
+    const merged = mergeCashBalanceDriftAckMapsByAt(local, remote);
+    if (opts?.writeThrough) saveCashBalanceDriftAcks(userId, merged);
+    return merged;
   }
-  return loadCashBalanceDriftAcks(userId);
+  return local;
 }
 
 export function cashBalanceDriftFingerprint(balance: number, net: number): { balanceFp: number; netFp: number } {
@@ -366,9 +391,14 @@ export async function acknowledgeCashBalanceDriftDurable(args: {
   persistUiAcks?: PersistUiAcksFn;
 }): Promise<CashBalanceDriftAckMap> {
   const fp = cashBalanceDriftFingerprint(args.storedBalance, args.transactionNet);
+  const base = resolveCashBalanceDriftAcks(
+    args.userId,
+    { uiAcks: args.currentUiAcks ?? undefined },
+    { writeThrough: true },
+  );
   const map: CashBalanceDriftAckMap = pruneByAt(
     {
-      ...resolveCashBalanceDriftAcks(args.userId, { uiAcks: args.currentUiAcks ?? undefined }),
+      ...base,
       [String(args.accountId).slice(0, 128)]: {
         accountId: String(args.accountId).slice(0, 128),
         balanceFp: fp.balanceFp,
