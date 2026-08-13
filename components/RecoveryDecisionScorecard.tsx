@@ -1,4 +1,3 @@
-import React from 'react';
 import type { RecoveryInvestorDecision } from '../services/recoveryDecisionEngine';
 import { decisionTone } from '../services/recoveryDecisionEngine';
 import InfoHint from './InfoHint';

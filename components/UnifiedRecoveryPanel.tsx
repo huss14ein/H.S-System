@@ -10,6 +10,7 @@ import {
 import PositionRecyclingPanel, { type PositionRecyclingPrefsUi } from './PositionRecyclingPanel';
 import type { PositionRecyclingPlan } from '../services/positionRecyclingPlan';
 import type { RecoveryInvestorMetrics } from '../services/recoveryDecisionEngine';
+import InfoHint from './InfoHint';
 
 const MODE_LABELS: Record<RecoveryPathMode, { title: string; subtitle: string }> = {
   recycling: {
