@@ -62,6 +62,8 @@ export interface UnifiedRecoveryPlanInput {
   includeExitDraft?: boolean;
   /** User picks one path — recycling OR buy ladder (not hybrid). */
   userPathMode?: RecoveryPathMode;
+  /** Ranked investor decision path — wins over heuristic default when set. */
+  decisionPathMode?: RecoveryPathMode | null;
 }
 
 export interface UnifiedRecoveryPlan {
@@ -100,6 +102,7 @@ export function buildUnifiedRecoveryPlan(input: UnifiedRecoveryPlanInput): Unifi
     watchlistScores,
     includeExitDraft = false,
     userPathMode,
+    decisionPathMode,
   } = input;
 
   const sym = String(holding.symbol ?? '').trim().toUpperCase();
@@ -190,6 +193,7 @@ export function buildUnifiedRecoveryPlan(input: UnifiedRecoveryPlanInput): Unifi
     recyclingReady,
     ladderReady,
     plPct: metricsPlPct,
+    decisionPath: decisionPathMode,
   });
 
   const activePathMode: RecoveryPathMode =
@@ -216,6 +220,12 @@ export function buildUnifiedRecoveryPlan(input: UnifiedRecoveryPlanInput): Unifi
     activePathMode === 'recycling'
       ? 'Review recycling steps and push sell/rebuy limits to Investment Plan.'
       : 'Review buy ladder and push limit buys to Investment Plan.';
+  if (decisionPathMode && !userPathMode) {
+    recommendedNextAction =
+      decisionPathMode === 'recycling'
+        ? 'Decision engine: recycle winners first — generate sell/rebuy drafts (no new cash).'
+        : 'Decision engine: add on weakness — place the first ladder limit, then push to Investment Plan.';
+  }
   const nextPending = activeStates.find((s) => s.status === 'pending');
   if (nextPending) {
     recommendedNextAction = `Next: ${nextPending.label} @ ${nextPending.limitPrice.toFixed(2)} (${nextPending.side} ${nextPending.qty} sh).`;

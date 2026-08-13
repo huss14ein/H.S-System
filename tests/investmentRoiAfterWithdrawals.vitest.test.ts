@@ -433,6 +433,7 @@ describe('ROI-after-withdrawals surface wiring', () => {
     expect(read('pages/Dashboard.tsx')).toContain('net invested after withdrawals');
     expect(read('pages/Dashboard.tsx')).toContain('commodities + Sukuk');
     expect(read('pages/Dashboard.tsx')).toContain('presentHeadlineInvestmentGrowth');
+    expect(read('pages/Dashboard.tsx')).toContain('investmentAgeLabel');
   });
 
   it('every ROI surface uses the shared growth presenter (no ad-hoc 0% on recovered principal)', () => {

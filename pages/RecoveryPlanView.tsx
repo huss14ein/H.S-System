@@ -451,6 +451,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       plannedTrades: data?.plannedTrades ?? [],
       watchlistScores,
       userPathMode: recoveryPathMode,
+      decisionPathMode: selectedDecision?.suggestedPath ?? null,
       recyclingOpts: {
         convictionGrade: recyclingPrefsUi.convictionGrade,
         stockQualityStatus: recyclingPrefsUi.stockQualityStatus,
@@ -471,6 +472,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     sarPerUsd,
     data,
     watchlistScores,
+    selectedDecision?.suggestedPath,
   ]);
 
   useEffect(() => {
@@ -1383,14 +1385,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         </div>
         <div className="section-card">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Recovery eligible</p>
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wider">Add-cash ranked</p>
             <div className="w-10 h-10 bg-success/10 rounded-xl flex items-center justify-center">
               <span className="text-success font-bold text-lg">✓</span>
             </div>
           </div>
-          <p className="text-3xl font-bold text-dark tabular-nums">{qualifiedPositions.length}</p>
+          <p className="text-3xl font-bold text-dark tabular-nums">{addLadderCount}</p>
           <p className="text-sm text-slate-600 mt-1">
-            {addLadderCount} ranked to add cash · rest recycle or wait
+            of {qualifiedPositions.length} ladder-ready · rest recycle or wait
           </p>
         </div>
         <div className="section-card">
@@ -1650,6 +1652,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               formatMoney={(n) =>
                 formatCurrencyString(n, { inCurrency: selected.bookCurrency ?? 'USD', digits: 0 })
               }
+              recyclingSummary={selected.recyclingSummary ?? unifiedRecoveryPlan?.recyclingSummary}
+              currentPrice={selectedPlan.currentPrice}
+              avgCost={selectedPlan.avgCost}
             />
           )}
           {(() => {

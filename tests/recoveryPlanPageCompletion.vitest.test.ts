@@ -40,6 +40,7 @@ describe('recovery plan page accuracy wiring', () => {
     expect(page).toContain('rankRecoveryDecisions');
     expect(page).toContain('rankedDecisions[0].holdingId');
     expect(page).toContain('RecoveryDecisionScorecard');
+    expect(page).toContain('decisionPathMode: selectedDecision?.suggestedPath');
     expect(page).toContain('id="recovery-decision-board"');
     expect(page).toContain('id="recovery-act-first"');
     expect(page).toContain('pageAction !== \'focus-recovery-decision\'');

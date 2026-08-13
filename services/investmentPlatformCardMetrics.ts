@@ -231,7 +231,14 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       : inferredInvestedFromLedgerSAR > 0
         ? inferredInvestedFromLedgerSAR
         : Math.max(0, holdingsCostBasisSAR + cashInSar + (wdrSAR + wdrUSD * rate));
-  const netCapitalSAR = Math.max(0, totalInvestedSAR - (wdrSAR + wdrUSD * rate));
+  const withdrawnSAR = wdrSAR + wdrUSD * rate;
+  const ledgerNetCapitalSAR = Math.max(0, totalInvestedSAR - withdrawnSAR);
+  /** Match headline: when deposits exist, use ledger net; when missing, floor at cost + idle cash. */
+  const economicDeployedSAR = Math.max(0, holdingsCostBasisSAR + cashInSar);
+  const netCapitalSAR =
+    totalInvestedSARRaw > 0
+      ? ledgerNetCapitalSAR
+      : Math.max(ledgerNetCapitalSAR, economicDeployedSAR);
   const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
   const depositsRecordedSAR = totalInvestedSARRaw;
   const principalFullyRecovered =
@@ -260,7 +267,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   const firstCapitalDepositYmd = earliestCapitalDepositYmd(transactions);
   const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
 
-  const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
+  const totalWithdrawnSAR = withdrawnSAR;
 
   let dailySar = 0;
   let dailyUsd = 0;
@@ -639,8 +646,14 @@ export function validatePlatformMetrics(
   }
 
   const derivedNetCapital = Math.max(0, m.totalInvestedSAR - m.totalWithdrawnSAR);
-  if (Math.abs(derivedNetCapital - m.netCapitalSAR) > RECONCILIATION_EPSILON) {
-    issues.push('netCapitalSAR mismatch with totalInvestedSAR - totalWithdrawnSAR');
+  const cashSar = Math.max(0, m.totalValueInSAR - m.holdingsValueInSAR);
+  const economicFloor = Math.max(0, (m.holdingsCostBasisSAR ?? 0) + cashSar);
+  const expectedNet =
+    m.firstCapitalDepositYmd != null
+      ? derivedNetCapital
+      : Math.max(derivedNetCapital, economicFloor);
+  if (Math.abs(expectedNet - m.netCapitalSAR) > RECONCILIATION_EPSILON) {
+    issues.push('netCapitalSAR mismatch with deposits−withdrawals (or incomplete-books floor)');
   }
 
   const expectedTotalValue =
@@ -691,7 +704,13 @@ function sanitizeAndValidatePlatformMetrics(
   };
 
   // Canonical derivations (single source of truth).
-  safe.netCapitalSAR = Math.max(0, safe.totalInvestedSAR - safe.totalWithdrawnSAR);
+  const ledgerNet = Math.max(0, safe.totalInvestedSAR - safe.totalWithdrawnSAR);
+  const cashSar = Math.max(0, safe.totalValueInSAR - safe.holdingsValueInSAR);
+  const economicDeployed = Math.max(0, basisSAR + cashSar);
+  /** Incomplete books (no economic deposit): floor at cost + idle cash — same as headline. */
+  safe.netCapitalSAR = safe.firstCapitalDepositYmd
+    ? ledgerNet
+    : Math.max(ledgerNet, economicDeployed);
   if (basisMode === 'holdings_cost') {
     safe.totalGainLossSAR = safe.holdingsValueInSAR - basisSAR;
     safe.roi = basisSAR > 1e-9 ? (safe.totalGainLossSAR / basisSAR) * 100 : 0;

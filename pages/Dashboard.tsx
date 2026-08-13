@@ -627,7 +627,12 @@ const DashboardContent: React.FC<{
                     Ledger-inferred capital — open Investment KPI reconciliation →
                 </button>
             ) : (
-                <button type="button" className="text-left text-xs font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openInvestmentRoiPassport(); }}>Explain this metric →</button>
+                <div className="space-y-1">
+                    {presentedRoi?.investmentAgeLabel ? (
+                        <p className="text-xs text-slate-500">{presentedRoi.investmentAgeLabel}</p>
+                    ) : null}
+                    <button type="button" className="text-left text-xs font-semibold text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openInvestmentRoiPassport(); }}>Explain this metric →</button>
+                </div>
             )} />,
             investmentPlan: <Card {...cardProps} title="Investment Plan" value={`${investmentProgress.percent.toFixed(0)}%`} trend={investmentProgress.percent >= 100 ? 'Target met' : `${investmentProgress.percent.toFixed(0)}% of target`} indicatorColor={investmentProgress.percent >= 100 ? 'green' : 'yellow'} tooltip={`Progress: ${formatCurrencyString(investmentProgress.amount, { digits: 0, inCurrency: investmentProgress.planCurrency })} / ${formatCurrencyString(investmentProgress.target, { digits: 0, inCurrency: investmentProgress.planCurrency })} monthly.`} onClick={() => setActivePage('Investment Plan')} icon={<ArrowPathIcon className="h-5 w-5 text-primary" />} />,
             wealthUltra: <Card {...cardProps} title="Wealth Ultra" value="Engine" trend="Active" indicatorColor="green" tooltip="Automated portfolio allocation and order generation with performance tracking." onClick={() => setActivePage('Wealth Ultra')} icon={<ScaleIcon className="h-5 w-5 text-primary" />} />,

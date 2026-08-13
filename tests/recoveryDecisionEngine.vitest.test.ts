@@ -159,7 +159,15 @@ describe('allocateRecoveryBudget / rankRecoveryDecisions', () => {
     const b = decideRecoveryAction({
       holdingId: 'h-b',
       symbol: 'BBB',
-      plan: makePlan({ symbol: 'BBB', totalPlannedCost: 800, plPct: -18 }),
+      plan: makePlan({
+        symbol: 'BBB',
+        totalPlannedCost: 800,
+        plPct: -18,
+        ladder: [
+          { level: 1, qty: 1, price: 90, cost: 90 },
+          { level: 2, qty: 8, price: 80, cost: 640 },
+        ],
+      }),
       positionConfig: cfg({ sleeveType: 'Upside' }),
       recyclingSummary: null,
       conviction: { convictionGrade: 'B', stockQualityStatus: 'Medium' },
@@ -172,12 +180,41 @@ describe('allocateRecoveryBudget / rankRecoveryDecisions', () => {
       cashToSar: (_id, cash) => cash,
     });
     const funded = out.filter((d) => d.action === 'add_ladder');
-    const deferred = out.filter((d) => d.metrics.budgetDeferred);
-    expect(funded).toHaveLength(1);
+    expect(funded.length).toBe(2);
     expect(funded[0].symbol).toBe('AAA');
+    // Remaining budget (~100) funds BBB's first rung (90) even when the full ladder (800) does not fit.
+    const bbb = out.find((d) => d.symbol === 'BBB')!;
+    expect(bbb.action).toBe('add_ladder');
+    expect(bbb.metrics.cashToDeploy).toBeCloseTo(90, 5);
+    expect(bbb.metrics.budgetDeferred).toBe(false);
+  });
+
+  it('defers to wait when even the first rung exceeds remaining budget', () => {
+    const a = decideRecoveryAction({
+      holdingId: 'h-a',
+      symbol: 'AAA',
+      plan: makePlan({ symbol: 'AAA', totalPlannedCost: 800, plPct: -22 }),
+      positionConfig: cfg({ sleeveType: 'Core' }),
+      recyclingSummary: null,
+      conviction: { convictionGrade: 'A', stockQualityStatus: 'Strong' },
+    });
+    const b = decideRecoveryAction({
+      holdingId: 'h-b',
+      symbol: 'BBB',
+      plan: makePlan({ symbol: 'BBB', totalPlannedCost: 800, plPct: -18 }),
+      positionConfig: cfg({ sleeveType: 'Upside' }),
+      recyclingSummary: null,
+      conviction: { convictionGrade: 'B', stockQualityStatus: 'Medium' },
+    });
+    const out = allocateRecoveryBudget({
+      decisions: [a, b],
+      recoveryBudgetSar: 850,
+      cashToSar: (_id, cash) => cash,
+    });
+    const deferred = out.filter((d) => d.metrics.budgetDeferred);
     expect(deferred).toHaveLength(1);
-    expect(deferred[0].action).toBe('wait');
     expect(deferred[0].symbol).toBe('BBB');
+    expect(deferred[0].action).toBe('wait');
   });
 
   it('ranks Core A above Spec across a shared SAR budget', () => {

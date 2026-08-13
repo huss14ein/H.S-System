@@ -272,6 +272,28 @@ export function allocateRecoveryBudget(args: {
       out.push({ ...d, metrics: { ...d.metrics, budgetDeferred: false } });
       continue;
     }
+    const firstBuy = d.metrics.firstBuyCash;
+    const firstSar =
+      firstBuy != null && firstBuy > 0 ? Math.max(0, args.cashToSar(d.holdingId, firstBuy)) : 0;
+    if (firstSar > 0 && firstSar <= remaining + 1e-6) {
+      remaining = Math.max(0, remaining - firstSar);
+      out.push({
+        ...d,
+        why: `${d.why} Full ladder does not fit the shared budget — fund the first rung only (~${firstBuy!.toFixed(0)}).`,
+        nextStep: `Place only the first limit near ${d.metrics.firstBuyPrice != null ? d.metrics.firstBuyPrice.toFixed(2) : 'the first step'}. Leave later rungs until more cash is free.`,
+        metrics: {
+          ...d.metrics,
+          cashToDeploy: firstBuy!,
+          sharesToAdd: d.metrics.firstBuyPrice != null && d.metrics.firstBuyPrice > 0
+            ? firstBuy! / d.metrics.firstBuyPrice
+            : d.metrics.sharesToAdd,
+          extraLossIfDown10: firstBuy! * 0.1,
+          budgetDeferred: false,
+        },
+        priority: Math.max(40, d.priority - 5),
+      });
+      continue;
+    }
     const deferredAction: RecoveryInvestorAction = d.canRecycle ? 'recycle' : 'wait';
     out.push({
       ...d,
