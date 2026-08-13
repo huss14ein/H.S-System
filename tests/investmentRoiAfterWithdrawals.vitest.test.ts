@@ -190,7 +190,7 @@ describe('headline ROI after withdrawals', () => {
     expect(headline.netCapitalSar).toBeCloseTo(10_000, 5);
   });
 
-  it('keeps cost-basis floor when deposit history is empty', () => {
+  it('keeps cost-basis capital when deposit history is empty', () => {
     const financial = dataWith({
       holdings: [holding(700, 100, 800)],
       transactions: [],
@@ -202,9 +202,29 @@ describe('headline ROI after withdrawals', () => {
       { '2222.SR': { price: 800 } },
     );
     expect(headline.capitalSource).toBe('cost_basis_fallback');
+    expect(headline.netCapitalSar).toBeCloseTo(70_000, 5);
+    expect(headline.netCapitalSar).toBeGreaterThanOrEqual(headline.economicDeployedPlatformSar - 1e-9);
+    expect(headline.totalGainLossSar).toBeCloseTo(10_000, 0);
+    expect(headline.roi).toBeCloseTo(10_000 / 70_000, 8);
+  });
+
+  it('floors incomplete buy history (no deposits) at cost basis + cash', () => {
+    const financial = dataWith({
+      holdings: [holding(700, 100, 800)],
+      transactions: [tx({ id: 'b1', type: 'buy', symbol: '2222.SR', quantity: 100, price: 200, total: 20_000 })],
+    });
+    const breakdown = computePersonalInvestmentKpiBreakdown(financial, SAR_PER_USD, getCashZero);
+    expect(breakdown.capitalSource).toBe('ledger_inferred');
+    expect(breakdown.netCapitalSar).toBeCloseTo(20_000, 5);
+
+    const headline = computeHeadlinePersonalInvestmentRoiDecimal(
+      financial,
+      SAR_PER_USD,
+      getCashZero,
+      { '2222.SR': { price: 800 } },
+    );
     expect(headline.economicFloorApplied).toBe(true);
     expect(headline.netCapitalSar).toBeCloseTo(70_000, 5);
-    expect(headline.totalGainLossSar).toBeCloseTo(10_000, 0);
     expect(headline.roi).toBeCloseTo(10_000 / 70_000, 8);
   });
 
