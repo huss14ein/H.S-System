@@ -59,6 +59,14 @@ export type RecoveryInvestorDecision = {
   /** True when a sell/rebuy ladder is available (used if cash is assigned elsewhere). */
   canRecycle: boolean;
   metrics: RecoveryInvestorMetrics;
+  /** Portfolio holding this name (for UI + venue). */
+  portfolioId?: string;
+  portfolioName?: string;
+  /** Investment platform (account) that must settle ladder buys. */
+  accountId?: string;
+  platformName?: string;
+  /** Broker cash available on that platform (SAR). */
+  platformDeployableCashSar?: number;
 };
 
 const ACTION_LABEL: Record<RecoveryInvestorAction, string> = {
@@ -163,6 +171,16 @@ export function decideRecoveryAction(args: {
   quoteStale?: boolean;
   /** This holding as % of its portfolio market value (0–100). */
   portfolioWeightPct?: number;
+  portfolioId?: string;
+  portfolioName?: string;
+  accountId?: string;
+  platformName?: string;
+  /** Broker cash on the mapped platform (SAR). Missing = unknown (do not block). */
+  platformDeployableCashSar?: number | null;
+  /** Recovery budget slice for this platform (SAR). Defaults to platform cash when omitted. */
+  platformBudgetSar?: number | null;
+  bookCurrency?: TradeCurrency;
+  sarPerUsd?: number;
 }): RecoveryInvestorDecision {
   const { holdingId, symbol, plan, positionConfig, recyclingSummary, conviction, quoteStale } = args;
   const metrics = computeRecoveryInvestorMetrics(plan);
@@ -178,6 +196,22 @@ export function decideRecoveryAction(args: {
   const deepLoss = plPct <= -25;
   const concentrated = finite(args.portfolioWeightPct) >= 30;
   const stale = quoteStale === true;
+  const rate = Number(args.sarPerUsd) > 0 ? Number(args.sarPerUsd) : 3.75;
+  const bookCur = args.bookCurrency === 'SAR' ? 'SAR' : 'USD';
+  const needFirstSar =
+    metrics.firstBuyCash != null && metrics.firstBuyCash > 0
+      ? toSAR(metrics.firstBuyCash, bookCur, rate)
+      : toSAR(metrics.cashToDeploy, bookCur, rate);
+  const platformCashKnown = args.platformDeployableCashSar != null && Number.isFinite(args.platformDeployableCashSar);
+  const platformCashSar = platformCashKnown ? Math.max(0, finite(args.platformDeployableCashSar)) : null;
+  const platformBudgetSar =
+    args.platformBudgetSar != null && Number.isFinite(args.platformBudgetSar)
+      ? Math.max(0, finite(args.platformBudgetSar))
+      : platformCashSar;
+  const platformCannotFund =
+    platformCashKnown &&
+    needFirstSar > 0 &&
+    (platformBudgetSar == null || needFirstSar > platformBudgetSar + 1e-6);
 
   let action: RecoveryInvestorAction = 'wait';
   let why = '';
@@ -217,6 +251,17 @@ export function decideRecoveryAction(args: {
     nextStep = 'Refresh live prices on Portfolios, then reopen this row.';
     riskNote = 'Stale marks make discount % and rebound math unreliable.';
     confidence = 'low';
+  } else if (platformCannotFund && (ladderReady || needFirstSar > 0)) {
+    action = canRecycle ? 'recycle' : 'wait';
+    suggestedPath = canRecycle ? 'recycling' : 'recovery_ladder';
+    const pfLabel = args.portfolioName ? `“${args.portfolioName}”` : 'this portfolio';
+    const platLabel = args.platformName ? ` on ${args.platformName}` : '';
+    why = `This holding sits in ${pfLabel}${platLabel}, but that platform only has ~${(platformCashSar ?? 0).toFixed(0)} SAR deployable — not enough for the first ladder rung (~${needFirstSar.toFixed(0)} SAR). Cash on other brokers cannot settle this buy.`;
+    nextStep = canRecycle
+      ? 'Recycle with sale proceeds on this platform, or deposit/transfer cash to this broker first.'
+      : 'Fund this platform (deposit or transfer), then reopen — do not pull cash from another broker’s book.';
+    riskNote = 'Recovery buys settle on the portfolio’s mapped investment account only.';
+    confidence = stale ? 'low' : 'high';
   } else if (ladderReady && (sleeve === 'Core' || sleeve === 'Upside') && gradeRank(grade) >= 3 && !concentrated) {
     action = 'add_ladder';
     suggestedPath = 'recovery_ladder';
@@ -265,8 +310,8 @@ export function decideRecoveryAction(args: {
     action = 'wait';
     why = plan.reason || 'Guardrails blocked the ladder (cash, caps, or freeze).';
     nextStep = canRecycle
-      ? 'Use recycling, or free deployable cash and reopen.'
-      : 'Free deployable cash or relax this ticker’s cap, then reopen.';
+      ? 'Use recycling, or free deployable cash on this platform and reopen.'
+      : 'Free deployable cash on this portfolio’s platform or relax this ticker’s cap, then reopen.';
     riskNote = 'A blocked ladder is a cash or freeze issue — not a signal to market-buy.';
     confidence = 'medium';
   }
@@ -285,6 +330,7 @@ export function decideRecoveryAction(args: {
   else priority = 22 + Math.min(12, Math.max(0, trigger + plPct));
 
   if (stale) priority = Math.max(10, priority - 12);
+  if (platformCannotFund) priority = Math.max(10, priority - 8);
 
   return {
     holdingId,
@@ -299,26 +345,57 @@ export function decideRecoveryAction(args: {
     suggestedPath,
     canRecycle,
     metrics,
+    portfolioId: args.portfolioId,
+    portfolioName: args.portfolioName,
+    accountId: args.accountId,
+    platformName: args.platformName,
+    platformDeployableCashSar: platformCashSar ?? undefined,
   };
 }
 
 export function allocateRecoveryBudget(args: {
   decisions: RecoveryInvestorDecision[];
-  recoveryBudgetSar: number;
+  /** Legacy single pool — used when per-account budgets are omitted. */
+  recoveryBudgetSar?: number;
+  /** Per investment-platform remaining SAR budget (portfolios sharing an account share one pool). */
+  recoveryBudgetByAccountId?: Record<string, number>;
+  accountIdForHolding?: (holdingId: string) => string;
   cashToSar: (holdingId: string, cashInBook: number) => number;
 }): RecoveryInvestorDecision[] {
-  const budget = Math.max(0, finite(args.recoveryBudgetSar));
+  const byAccount = { ...(args.recoveryBudgetByAccountId ?? {}) };
+  const usePerAccount = Object.keys(byAccount).length > 0;
+  let globalRemaining = Math.max(0, finite(args.recoveryBudgetSar));
   const sorted = [...args.decisions].sort((a, b) => b.priority - a.priority);
-  let remaining = budget;
   const out: RecoveryInvestorDecision[] = [];
+
+  const remainingFor = (holdingId: string, accountId?: string): number => {
+    if (!usePerAccount) return globalRemaining;
+    const key = String(accountId || args.accountIdForHolding?.(holdingId) || '').trim() || '__unknown__';
+    if (!(key in byAccount)) {
+      byAccount[key] = 0;
+    }
+    return Math.max(0, byAccount[key] ?? 0);
+  };
+
+  const debit = (holdingId: string, accountId: string | undefined, amount: number) => {
+    if (!usePerAccount) {
+      globalRemaining = Math.max(0, globalRemaining - amount);
+      return;
+    }
+    const key = String(accountId || args.accountIdForHolding?.(holdingId) || '').trim() || '__unknown__';
+    byAccount[key] = Math.max(0, (byAccount[key] ?? 0) - amount);
+  };
+
   for (const d of sorted) {
     if (d.action !== 'add_ladder' || d.metrics.cashToDeploy <= 0) {
       out.push(d);
       continue;
     }
+    const accountId = d.accountId || args.accountIdForHolding?.(d.holdingId);
+    let remaining = remainingFor(d.holdingId, accountId);
     const needSar = Math.max(0, args.cashToSar(d.holdingId, d.metrics.cashToDeploy));
     if (needSar <= remaining + 1e-6) {
-      remaining = Math.max(0, remaining - needSar);
+      debit(d.holdingId, accountId, needSar);
       out.push({ ...d, metrics: { ...d.metrics, budgetDeferred: false } });
       continue;
     }
@@ -326,30 +403,33 @@ export function allocateRecoveryBudget(args: {
     const firstSar =
       firstBuy != null && firstBuy > 0 ? Math.max(0, args.cashToSar(d.holdingId, firstBuy)) : 0;
     if (firstSar > 0 && firstSar <= remaining + 1e-6) {
-      remaining = Math.max(0, remaining - firstSar);
+      debit(d.holdingId, accountId, firstSar);
       const firstMetrics = metricsForFirstRungOnly(d.metrics);
       out.push({
         ...d,
-        why: `${d.why} Full ladder does not fit the shared budget — fund the first rung only (~${firstMetrics.cashToDeploy.toFixed(0)}).`,
-        nextStep: `Place only the first limit near ${firstMetrics.firstBuyPrice != null ? firstMetrics.firstBuyPrice.toFixed(2) : 'the first step'}. Leave later rungs until more cash is free.`,
+        why: `${d.why} Full ladder does not fit this platform’s recovery budget — fund the first rung only (~${firstMetrics.cashToDeploy.toFixed(0)}).`,
+        nextStep: `Place only the first limit near ${firstMetrics.firstBuyPrice != null ? firstMetrics.firstBuyPrice.toFixed(2) : 'the first step'}. Leave later rungs until more cash is free on this broker.`,
         metrics: firstMetrics,
         priority: Math.max(40, d.priority - 5),
       });
       continue;
     }
     const deferredAction: RecoveryInvestorAction = d.canRecycle ? 'recycle' : 'wait';
+    const platformNote = d.platformName || d.portfolioName
+      ? ` on ${d.platformName || d.portfolioName}`
+      : '';
     out.push({
       ...d,
       action: deferredAction,
       label: d.canRecycle ? ACTION_LABEL.recycle : 'Wait — cash assigned elsewhere',
       suggestedPath: d.canRecycle ? 'recycling' : d.suggestedPath,
-      why: `${d.why} Recovery cash is already assigned to higher-priority names.`,
+      why: `${d.why} Recovery cash${platformNote} is already assigned to higher-priority names on this platform.`,
       nextStep: d.canRecycle
-        ? 'Recycle this name (no new cash) or wait until higher-priority ladders fill or are cancelled.'
-        : 'Wait until higher-priority ladders fill, are cancelled, or more cash is deployable.',
+        ? 'Recycle this name (no new cash) or wait until higher-priority ladders on this broker fill or are cancelled.'
+        : 'Wait until higher-priority ladders on this platform fill, are cancelled, or more cash is deposited here.',
       riskNote: d.canRecycle
         ? d.riskNote
-        : 'Firing every ladder at once would overspend the recovery budget. One name at a time.',
+        : 'Cash cannot move across brokers for recovery buys. One platform budget at a time.',
       metrics: { ...d.metrics, budgetDeferred: true },
       priority: Math.max(30, d.priority - 15),
     });
@@ -358,15 +438,59 @@ export function allocateRecoveryBudget(args: {
 }
 
 export function rankRecoveryDecisions(
-  rows: Array<Parameters<typeof decideRecoveryAction>[0] & { bookCurrency?: TradeCurrency }>,
-  opts: { recoveryBudgetSar: number; sarPerUsd: number },
+  rows: Array<
+    Parameters<typeof decideRecoveryAction>[0] & {
+      bookCurrency?: TradeCurrency;
+      accountId?: string;
+      portfolioId?: string;
+      portfolioName?: string;
+      platformName?: string;
+      platformDeployableCashSar?: number | null;
+      platformBudgetSar?: number | null;
+    }
+  >,
+  opts: {
+    sarPerUsd: number;
+    /** Legacy global pool when per-account map is empty. */
+    recoveryBudgetSar?: number;
+    /** Per-platform recovery budgets (SAR). Preferred. */
+    recoveryBudgetByAccountId?: Record<string, number>;
+    recoveryBudgetPct?: number;
+  },
 ): RecoveryInvestorDecision[] {
-  const decided = rows.map((row) => decideRecoveryAction(row));
-  const byId = new Map(rows.map((r) => [r.holdingId, r]));
   const rate = Number(opts.sarPerUsd) > 0 ? Number(opts.sarPerUsd) : 3.75;
+  const pct = Number(opts.recoveryBudgetPct);
+  const byAccount: Record<string, number> = { ...(opts.recoveryBudgetByAccountId ?? {}) };
+  if (Object.keys(byAccount).length === 0 && Number.isFinite(pct) && pct > 0) {
+    for (const row of rows) {
+      const aid = String(row.accountId ?? '').trim();
+      if (!aid || aid in byAccount) continue;
+      const platformCash = Math.max(0, finite(row.platformDeployableCashSar));
+      byAccount[aid] = platformCash * pct;
+    }
+  }
+  const decided = rows.map((row) => {
+    const aid = String(row.accountId ?? '').trim();
+    const platformBudget =
+      row.platformBudgetSar != null
+        ? row.platformBudgetSar
+        : aid && aid in byAccount
+          ? byAccount[aid]
+          : row.platformDeployableCashSar != null && Number.isFinite(pct) && pct > 0
+            ? finite(row.platformDeployableCashSar) * pct
+            : row.platformDeployableCashSar;
+    return decideRecoveryAction({
+      ...row,
+      sarPerUsd: rate,
+      platformBudgetSar: platformBudget,
+    });
+  });
+  const byId = new Map(rows.map((r) => [r.holdingId, r]));
   return allocateRecoveryBudget({
     decisions: decided,
     recoveryBudgetSar: opts.recoveryBudgetSar,
+    recoveryBudgetByAccountId: Object.keys(byAccount).length > 0 ? byAccount : undefined,
+    accountIdForHolding: (holdingId) => String(byId.get(holdingId)?.accountId ?? '').trim(),
     cashToSar: (holdingId, cash) => {
       const row = byId.get(holdingId);
       const cur = row?.bookCurrency === 'SAR' ? 'SAR' : 'USD';

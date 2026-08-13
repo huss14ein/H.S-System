@@ -9,6 +9,7 @@ import { buildRecoveryPlan } from './recoveryPlan';
 import {
   buildRecoveryGlobalConfig,
   deriveRecoveryPositionConfig,
+  resolvePortfolioRecoveryCash,
   withRecoveryAddBounds,
 } from './recoveryPositionSetup';
 import { buildRecyclingPlanForHolding, summarizeRecyclingPlan, type RecyclingPlanSummary } from './positionRecyclingIntegration';
@@ -83,6 +84,11 @@ export type CanonicalRecoveryPosition = {
   holding: Holding;
   portfolioId: string;
   portfolioName: string;
+  /** Investment platform (account) linked to this portfolio. */
+  accountId: string;
+  platformName: string;
+  /** Broker cash available on that platform (SAR). */
+  platformDeployableCashSar: number;
   bookCurrency: TradeCurrency;
   currentUnitPriceBook: number;
   plan: ReturnType<typeof buildRecoveryPlan>;
@@ -111,10 +117,12 @@ export type CanonicalPlanningSnapshot = {
     positions: CanonicalRecoveryPosition[];
     /** Ladder-qualified before shared-budget ranking (diagnostic). */
     qualified: CanonicalRecoveryPosition[];
-    /** Positions the shared recovery budget can actually fund (add_ladder after ranking). */
+    /** Positions the per-platform recovery budget can actually fund (add_ladder after ranking). */
     fundedQualified: CanonicalRecoveryPosition[];
     rankedDecisions: RecoveryInvestorDecision[];
     allocatedLadderSpendSar: number;
+    /** Per investment-platform recovery budget remaining at snapshot time (SAR). */
+    recoveryBudgetByAccountId: Record<string, number>;
     /** No-new-cash sell/rebuy summaries for underwater holdings. */
     recyclingSummaries: RecyclingPlanSummary[];
   };
@@ -407,7 +415,20 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
     });
 
   // --- Recovery Plan (positions in loss) ---
-  const globalConfig = buildRecoveryGlobalConfig(deployableCashSar);
+  /** Headline total across platforms — ladders/ranking use per-portfolio platform cash below. */
+  const headlineRecoveryConfig = buildRecoveryGlobalConfig(deployableCashSar);
+  const recoveryBudgetPct = headlineRecoveryConfig.recoveryBudgetPct;
+  const platformCashByAccountId = new Map<string, number>();
+  for (const a of investAccounts) {
+    platformCashByAccountId.set(
+      a.id,
+      Math.max(0, tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd)),
+    );
+  }
+  const recoveryBudgetByAccountId: Record<string, number> = {};
+  for (const [aid, cash] of platformCashByAccountId) {
+    recoveryBudgetByAccountId[aid] = cash * recoveryBudgetPct;
+  }
 
   const universe = data?.portfolioUniverse ?? [];
   const coreTickers = new Set(universe.filter((u) => u.status === 'Core').map((u) => safeUpper(u.ticker)));
@@ -429,6 +450,14 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
   const recyclingSummaries: RecyclingPlanSummary[] = [];
   for (const p of personalPortfolios) {
     const bookCurrency = (resolveInvestmentPortfolioCurrency(p) as TradeCurrency) || 'USD';
+    const venue = resolvePortfolioRecoveryCash({
+      portfolio: p,
+      accounts: personalAccounts,
+      getAvailableCashForAccount,
+      sarPerUsd,
+      bookCurrency,
+    });
+    const platformConfig = buildRecoveryGlobalConfig(venue.deployableCashBook);
     for (const h of p.holdings ?? []) {
       const qty = Number(h.quantity) || 0;
       if (qty <= 0) continue;
@@ -443,7 +472,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
       };
       const sleeveType = tickerToSleeve(sym, sleeveInput.coreTickers.length || sleeveInput.upsideTickers.length ? sleeveInput : undefined);
       const riskTier = tickerToRiskTier(sym, sleeveInput.coreTickers.length || sleeveInput.upsideTickers.length ? sleeveInput : undefined);
-      const deployableCashInBook = bookCurrency === 'SAR' ? deployableCashSar : deployableCashSar / sarPerUsd;
+      const deployableCashInBook = venue.deployableCashBook;
       const roughPlPct =
         Number(h.avgCost) > 0 && currentUnitPriceBook > 0
           ? ((currentUnitPriceBook - Number(h.avgCost)) / Number(h.avgCost)) * 100
@@ -455,16 +484,16 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
         riskTier,
         deployableCash: deployableCashInBook,
         plPct: roughPlPct,
-        recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+        recoveryBudgetPct: platformConfig.recoveryBudgetPct,
       });
       const positionConfig = withRecoveryAddBounds(baseConfig, {
         quantity: qty,
         marketValue: marketValueBook,
         deployableCash: deployableCashInBook,
-        recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+        recoveryBudgetPct: platformConfig.recoveryBudgetPct,
       });
 
-      const positionGlobal = { ...globalConfig, deployableCash: deployableCashInBook };
+      const positionGlobal = { ...platformConfig, deployableCash: deployableCashInBook };
       const plan = buildRecoveryPlan(h, currentUnitPriceBook, positionConfig, positionGlobal);
 
       let recyclingSummary: RecyclingPlanSummary | null = null;
@@ -487,6 +516,9 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
         holding: h,
         portfolioId: String(p.id ?? ''),
         portfolioName: p.name ?? 'Portfolio',
+        accountId: venue.accountId,
+        platformName: venue.platformName,
+        platformDeployableCashSar: venue.deployableCashSar,
         bookCurrency,
         currentUnitPriceBook,
         plan,
@@ -545,11 +577,17 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
           quoteStale: p.priceProvenance.quoteFreshness.isStale,
           portfolioWeightPct: weightPct,
           bookCurrency: p.bookCurrency,
+          portfolioId: p.portfolioId,
+          portfolioName: p.portfolioName,
+          accountId: p.accountId,
+          platformName: p.platformName,
+          platformDeployableCashSar: p.platformDeployableCashSar,
         };
       }),
     {
-      recoveryBudgetSar: deployableCashSar * (Number(globalConfig.recoveryBudgetPct) || 0),
       sarPerUsd,
+      recoveryBudgetPct,
+      recoveryBudgetByAccountId,
     },
   );
 
@@ -596,6 +634,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
       fundedQualified,
       rankedDecisions,
       allocatedLadderSpendSar,
+      recoveryBudgetByAccountId,
       recyclingSummaries,
     },
     aiBalancer: { portfolios: balancerPortfolios },

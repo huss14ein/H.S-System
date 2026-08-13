@@ -248,4 +248,77 @@ describe('allocateRecoveryBudget / rankRecoveryDecisions', () => {
     expect(ranked[0].action).toBe('add_ladder');
     expect(ranked[1].action).toBe('do_not_add');
   });
+
+  it('does not steal cash from another platform when allocating ladders', () => {
+    const rich = decideRecoveryAction({
+      holdingId: 'h-rich',
+      symbol: 'RICH',
+      plan: makePlan({ symbol: 'RICH', totalPlannedCost: 400, plPct: -22 }),
+      positionConfig: cfg({ sleeveType: 'Core' }),
+      recyclingSummary: null,
+      conviction: { convictionGrade: 'A', stockQualityStatus: 'Strong' },
+      accountId: 'acc-rich',
+      platformName: 'Broker A',
+      portfolioName: 'Port A',
+      platformDeployableCashSar: 5000,
+    });
+    const dry = decideRecoveryAction({
+      holdingId: 'h-dry',
+      symbol: 'DRY',
+      plan: makePlan({
+        symbol: 'DRY',
+        totalPlannedCost: 400,
+        plPct: -28,
+        ladder: [{ level: 1, qty: 4, price: 90, cost: 360 }],
+      }),
+      positionConfig: cfg({ sleeveType: 'Core' }),
+      recyclingSummary: null,
+      conviction: { convictionGrade: 'A', stockQualityStatus: 'Strong' },
+      accountId: 'acc-dry',
+      platformName: 'Broker B',
+      portfolioName: 'Port B',
+      platformDeployableCashSar: 0,
+      platformBudgetSar: 0,
+      bookCurrency: 'SAR',
+      sarPerUsd: 1,
+    });
+    expect(rich.action).toBe('add_ladder');
+    expect(dry.action).toBe('wait');
+    expect(dry.why).toMatch(/platform only has/i);
+
+    const out = allocateRecoveryBudget({
+      decisions: [rich, dry],
+      recoveryBudgetByAccountId: { 'acc-rich': 2000, 'acc-dry': 0 },
+      cashToSar: (_id, cash) => cash,
+    });
+    expect(out.find((d) => d.symbol === 'RICH')?.action).toBe('add_ladder');
+    expect(out.find((d) => d.symbol === 'DRY')?.action).not.toBe('add_ladder');
+  });
+
+  it('funds ladders independently when platforms have separate cash', () => {
+    const a = decideRecoveryAction({
+      holdingId: 'h-a',
+      symbol: 'AAA',
+      plan: makePlan({ symbol: 'AAA', totalPlannedCost: 300, plPct: -22 }),
+      positionConfig: cfg({ sleeveType: 'Core' }),
+      recyclingSummary: null,
+      conviction: { convictionGrade: 'A', stockQualityStatus: 'Strong' },
+      accountId: 'acc-1',
+    });
+    const b = decideRecoveryAction({
+      holdingId: 'h-b',
+      symbol: 'BBB',
+      plan: makePlan({ symbol: 'BBB', totalPlannedCost: 300, plPct: -20 }),
+      positionConfig: cfg({ sleeveType: 'Core' }),
+      recyclingSummary: null,
+      conviction: { convictionGrade: 'A', stockQualityStatus: 'Strong' },
+      accountId: 'acc-2',
+    });
+    const out = allocateRecoveryBudget({
+      decisions: [a, b],
+      recoveryBudgetByAccountId: { 'acc-1': 400, 'acc-2': 400 },
+      cashToSar: (_id, cash) => cash,
+    });
+    expect(out.filter((d) => d.action === 'add_ladder')).toHaveLength(2);
+  });
 });

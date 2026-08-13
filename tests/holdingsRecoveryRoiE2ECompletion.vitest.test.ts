@@ -62,6 +62,8 @@ describe('holdings + recovery + ROI end-to-end wiring', () => {
     expect(read('pages/RecoveryPlanView.tsx')).toContain('RecoveryDecisionScorecard');
     expect(read('pages/RecoveryPlanView.tsx')).toContain('pathModeUserChosen');
     expect(read('pages/RecoveryPlanView.tsx')).toContain('fundedLadderLevels');
+    expect(read('pages/RecoveryPlanView.tsx')).toContain('platformDeployableCashSar');
+    expect(read('services/recoveryPositionSetup.ts')).toContain('resolvePortfolioRecoveryCash');
   });
 
   it('KPI ledger scan is a single pass (no 12× dated FX per row)', () => {

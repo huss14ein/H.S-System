@@ -49,5 +49,9 @@ describe('recovery plan page accuracy wiring', () => {
     expect(page).toContain('fundedLadderLevels');
     expect(engine).toContain('fundedQualified');
     expect(engine).toContain('rankRecoveryDecisions');
+    expect(engine).toContain('resolvePortfolioRecoveryCash');
+    expect(engine).toContain('recoveryBudgetByAccountId');
+    expect(page).toContain('platformDeployableCashSar');
+    expect(page).toContain('recoveryBudgetByAccountId');
   });
 });

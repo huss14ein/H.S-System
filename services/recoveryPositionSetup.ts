@@ -2,7 +2,16 @@
  * Single source of recovery position + global config.
  * Used by the Recovery Plan page and canonical planning snapshot so list, details, and eligibility match.
  */
-import type { RecoveryGlobalConfig, RecoveryPositionConfig, WealthUltraRiskTier, WealthUltraSleeve } from '../types';
+import type {
+  Account,
+  RecoveryGlobalConfig,
+  RecoveryPositionConfig,
+  TradeCurrency,
+  WealthUltraRiskTier,
+  WealthUltraSleeve,
+} from '../types';
+import { tradableCashBucketToSAR } from '../utils/currencyMath';
+import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { DEFAULT_RECOVERY_GLOBAL_CONFIG } from './recoveryPlan';
 
 export function buildRecoveryGlobalConfig(deployableCash: number): RecoveryGlobalConfig {
@@ -14,6 +23,37 @@ export function buildRecoveryGlobalConfig(deployableCash: number): RecoveryGloba
     minDeployableThreshold: cash <= 0 ? 1 : Math.min(cash, Math.max(50, cash * 0.02)),
     recoveryBudgetPct: Math.max(0.12, Math.min(0.35, 0.18 + (cash > 50000 ? 0.04 : 0))),
   };
+}
+
+/**
+ * Broker cash for the platform linked to a portfolio (not a split of multi-portfolio wallets).
+ * Ladders must settle on this account — cash on another broker cannot fund this holding.
+ */
+export function resolvePortfolioRecoveryCash(args: {
+  portfolio: { id?: string | null; accountId?: string | null; name?: string | null };
+  accounts: Account[];
+  getAvailableCashForAccount: (accountId: string) => { SAR: number; USD: number };
+  sarPerUsd: number;
+  bookCurrency: TradeCurrency;
+}): {
+  accountId: string;
+  platformName: string;
+  deployableCashSar: number;
+  deployableCashBook: number;
+} {
+  const accounts = args.accounts ?? [];
+  const rawAid = String(args.portfolio.accountId ?? '').trim();
+  const accountId = rawAid ? resolveCanonicalAccountId(rawAid, accounts) || rawAid : '';
+  const acc = accountId ? accounts.find((a) => a.id === accountId) : undefined;
+  const platformName = String(acc?.name ?? '').trim() || 'Platform';
+  const rate = Number(args.sarPerUsd) > 0 ? Number(args.sarPerUsd) : 3.75;
+  const deployableCashSar = accountId
+    ? Math.max(0, tradableCashBucketToSAR(args.getAvailableCashForAccount(accountId), rate))
+    : 0;
+  const book = args.bookCurrency === 'SAR' ? 'SAR' : 'USD';
+  const deployableCashBook =
+    book === 'SAR' ? deployableCashSar : rate > 0 ? deployableCashSar / rate : deployableCashSar;
+  return { accountId, platformName, deployableCashSar, deployableCashBook };
 }
 
 export function deriveRecoveryPositionConfig(args: {

@@ -225,10 +225,17 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         row.positionConfig?.riskTier ??
         tickerToRiskTier(sym, sleeveRef.coreTickers.length || sleeveRef.upsideTickers.length ? sleeveRef : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
-      const deployableCashInBookCurrency = bookCurrency === 'SAR' ? deployableCashSAR : deployableCashSAR / sarPerUsd;
+      /** Ladder sizing uses this portfolio’s platform cash — never the sum of other brokers. */
+      const platformCashSar = Number(row.platformDeployableCashSar) || 0;
+      const deployableCashInBookCurrency =
+        bookCurrency === 'SAR' ? platformCashSar : sarPerUsd > 0 ? platformCashSar / sarPerUsd : platformCashSar;
+      const platformGlobalConfig = buildRecoveryGlobalConfig(deployableCashInBookCurrency);
       const ai = aiRecoveryBySymbol[sym];
       const marketValue = Number.isFinite(currentVal) && currentVal > 0 ? currentVal : qty * currentPrice;
-      const positionGlobalConfig: RecoveryGlobalConfig = { ...globalConfig, deployableCash: deployableCashInBookCurrency };
+      const positionGlobalConfig: RecoveryGlobalConfig = {
+        ...platformGlobalConfig,
+        deployableCash: deployableCashInBookCurrency,
+      };
 
       let positionConfig: RecoveryPositionConfig;
       let plan = row.plan;
@@ -239,7 +246,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           riskTier,
           deployableCashInBookCurrency,
           roughPlPct,
-          globalConfig.recoveryBudgetPct,
+          platformGlobalConfig.recoveryBudgetPct,
         );
         positionConfig = withRecoveryAddBounds(
           {
@@ -252,7 +259,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             quantity: qty,
             marketValue,
             deployableCash: deployableCashInBookCurrency,
-            recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+            recoveryBudgetPct: platformGlobalConfig.recoveryBudgetPct,
           },
         );
         plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
@@ -266,13 +273,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             riskTier,
             deployableCashInBookCurrency,
             roughPlPct,
-            globalConfig.recoveryBudgetPct,
+            platformGlobalConfig.recoveryBudgetPct,
           ),
           {
             quantity: qty,
             marketValue,
             deployableCash: deployableCashInBookCurrency,
-            recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+            recoveryBudgetPct: platformGlobalConfig.recoveryBudgetPct,
           },
         );
         plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
@@ -283,6 +290,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         holding,
         portfolioName,
         portfolioId: row.portfolioId,
+        accountId: row.accountId,
+        platformName: row.platformName,
+        platformDeployableCashSar: platformCashSar,
         bookCurrency,
         currentPrice,
         positionConfig,
@@ -292,7 +302,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         priceProvenance: row.priceProvenance,
       };
     });
-  }, [canonical, data?.portfolioUniverse, deployableCashSAR, sarPerUsd, aiRecoveryBySymbol, globalConfig, recyclingSummaryCache]);
+  }, [canonical, data?.portfolioUniverse, sarPerUsd, aiRecoveryBySymbol, recyclingSummaryCache]);
 
   const losingPositions = useMemo(() => positionsWithRecovery.filter(p => p.plan.plPct < 0), [positionsWithRecovery]);
   const recoverySymbols = useMemo(
@@ -318,7 +328,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     return buildWatchlistScoresFromItems(data?.watchlist ?? [], changeBySymbol);
   }, [data?.watchlist, liveQuotePrices]);
 
-  const recoveryBudgetSar = deployableCashSAR * globalConfig.recoveryBudgetPct;
+  const recoveryBudgetByAccountId = useMemo(() => {
+    const fromSnap = canonical?.recoveryPlan?.recoveryBudgetByAccountId;
+    if (fromSnap && Object.keys(fromSnap).length > 0) return fromSnap;
+    const pct = globalConfig.recoveryBudgetPct;
+    const map: Record<string, number> = {};
+    for (const p of positionsWithRecovery) {
+      const aid = String(p.accountId ?? '').trim();
+      if (!aid || aid in map) continue;
+      map[aid] = Math.max(0, Number(p.platformDeployableCashSar) || 0) * pct;
+    }
+    return map;
+  }, [canonical?.recoveryPlan?.recoveryBudgetByAccountId, positionsWithRecovery, globalConfig.recoveryBudgetPct]);
 
   const rankedDecisions = useMemo(() => {
     const mvByPortfolio = new Map<string, number>();
@@ -348,16 +369,26 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           quoteStale: p.priceProvenance?.quoteFreshness?.isStale === true,
           portfolioWeightPct: portMv > 0 ? ((Number(p.plan.marketValue) || 0) / portMv) * 100 : 0,
           bookCurrency: p.bookCurrency,
+          portfolioId: p.portfolioId,
+          portfolioName: p.portfolioName,
+          accountId: p.accountId,
+          platformName: p.platformName,
+          platformDeployableCashSar: p.platformDeployableCashSar,
         };
       }),
-      { recoveryBudgetSar, sarPerUsd },
+      {
+        sarPerUsd,
+        recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+        recoveryBudgetByAccountId,
+      },
     );
   }, [
     losingPositions,
     positionsWithRecovery,
     data?.portfolioUniverse,
     watchlistScores,
-    recoveryBudgetSar,
+    recoveryBudgetByAccountId,
+    globalConfig.recoveryBudgetPct,
     sarPerUsd,
   ]);
 
@@ -441,13 +472,19 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const unifiedRecoveryPlan = useMemo(() => {
     if (!selected || !selectedPlan || selectedPlan.currentPrice <= 0) return null;
+    const platformCashSar = Math.max(0, Number(selected.platformDeployableCashSar) || 0);
     const deployableCashInBookCurrency =
-      selected.bookCurrency === 'SAR' ? deployableCashSAR : deployableCashSAR / sarPerUsd;
+      selected.bookCurrency === 'SAR'
+        ? platformCashSar
+        : sarPerUsd > 0
+          ? platformCashSar / sarPerUsd
+          : platformCashSar;
+    const platformGlobal = buildRecoveryGlobalConfig(deployableCashInBookCurrency);
     return buildUnifiedRecoveryPlan({
       holding: selected.holding,
       currentPrice: selectedPlan.currentPrice,
       positionConfig: selected.positionConfig,
-      globalConfig: { ...globalConfig, deployableCash: deployableCashInBookCurrency },
+      globalConfig: { ...platformGlobal, deployableCash: deployableCashInBookCurrency },
       data: data ?? null,
       fundamentals: selectedFundamentals,
       plannedTrades: data?.plannedTrades ?? [],
@@ -470,8 +507,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     recyclingPrefsUi,
     recoveryPathMode,
     pathModeUserChosen,
-    globalConfig,
-    deployableCashSAR,
     sarPerUsd,
     data,
     watchlistScores,
@@ -642,10 +677,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     }
   }, []);
   const selectedCurrencyDeployableCash = selected
-    ? (selected.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR)
+    ? selected.bookCurrency === 'SAR'
+      ? Math.max(0, Number(selected.platformDeployableCashSar) || 0)
+      : sarPerUsd > 0
+        ? Math.max(0, Number(selected.platformDeployableCashSar) || 0) / sarPerUsd
+        : 0
     : deployableCashSAR;
   const alternateCurrencyDeployableCash = selected
-    ? (selected.bookCurrency === 'USD' ? deployableCashSAR : deployableCashSAR / sarPerUsd)
+    ? selected.bookCurrency === 'SAR'
+      ? sarPerUsd > 0
+        ? Math.max(0, Number(selected.platformDeployableCashSar) || 0) / sarPerUsd
+        : 0
+      : Math.max(0, Number(selected.platformDeployableCashSar) || 0)
     : deployableCashSAR / sarPerUsd;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
 
@@ -926,12 +969,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       },
     ];
     const { newShares, newAvgCost } = computeNewAverage(sh, ac, ladder);
-    const deploy =
-      selected.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
+    const deploy = selectedCurrencyDeployableCash;
     const cashSpend = qtyAdd * price;
     const overBudget = cashSpend > deploy + 1e-6;
     return { newShares, newAvgCost, addedShares: qtyAdd, spend: cashSpend, overBudget };
-  }, [selected, selectedPlan, whatIfSpend, whatIfPrice, deployableCashSAR, sarPerUsd]);
+  }, [selected, selectedPlan, whatIfSpend, whatIfPrice, selectedCurrencyDeployableCash]);
 
 
   const selectedRecoveryBrief = useMemo(() => {
@@ -1009,12 +1051,19 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     setIsAiRecoveryLoading(true);
     setAiRecoveryError(null);
     try {
+      const platformCashSar = Math.max(0, Number(selected.platformDeployableCashSar) || 0);
+      const deployableCash =
+        selected.bookCurrency === 'SAR'
+          ? platformCashSar
+          : sarPerUsd > 0
+            ? platformCashSar / sarPerUsd
+            : 0;
       const suggestion = await suggestRecoveryParameters({
         symbol: sym,
         sleeveType: selected.positionConfig.sleeveType,
         riskTier: selected.positionConfig.riskTier,
         plPct: selected.plan.plPct,
-        deployableCash: selected.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR,
+        deployableCash,
         currentPrice: selected.plan.currentPrice,
         avgCost: selected.holding.avgCost ?? 0,
       });
@@ -1024,7 +1073,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsAiRecoveryLoading(false);
     }
-  }, [selected, deployableCashSAR, sarPerUsd, trackAction]);
+  }, [selected, sarPerUsd, trackAction]);
 
 
   const applyAiToAllQualifiedPositions = useCallback(async () => {
@@ -1036,7 +1085,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const updates = await Promise.all(
         qualifiedPositions.slice(0, 12).map(async (position) => {
           const sym = (position.holding.symbol || '').toUpperCase();
-          const deployableCash = position.bookCurrency === 'USD' ? deployableCashSAR / sarPerUsd : deployableCashSAR;
+          const platformCashSar = Math.max(0, Number(position.platformDeployableCashSar) || 0);
+          const deployableCash =
+            position.bookCurrency === 'SAR'
+              ? platformCashSar
+              : sarPerUsd > 0
+                ? platformCashSar / sarPerUsd
+                : 0;
           const suggestion = await suggestRecoveryParameters({
             symbol: sym,
             sleeveType: position.positionConfig.sleeveType,
@@ -1055,7 +1110,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsBulkAiRecoveryLoading(false);
     }
-  }, [qualifiedPositions, deployableCashSAR, sarPerUsd, trackAction]);
+  }, [qualifiedPositions, sarPerUsd, trackAction]);
 
   useEffect(() => {
     setWhatIfSpend('');
@@ -1455,14 +1510,16 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             </div>
           </div>
           <p className="text-2xl font-bold text-dark tabular-nums">{formatCurrencyString(deployableCashSAR)}</p>
-          <p className="text-sm text-slate-600 mt-1">Approximate total across currencies</p>
-          <p className="text-xs text-slate-500 mt-2">Per-position values below use each portfolio&apos;s base currency</p>
+          <p className="text-sm text-slate-600 mt-1">Headline total across Investment platforms</p>
+          <p className="text-xs text-slate-500 mt-2">
+            Ladders and ranking use each holding&apos;s mapped portfolio platform cash — not this global sum alone
+          </p>
         </div>
         <div className="section-card">
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
               Est. recovery buys (SAR)
-              <InfoHint text="Spend only for names ranked Add on weakness after the shared recovery budget is allocated. Lower-priority ladders wait or recycle instead of assuming the full budget." />
+              <InfoHint text="Spend only for names ranked Add on weakness after each platform’s recovery budget is allocated. Cash on one broker cannot fund another. Lower-priority ladders on the same platform wait or recycle." />
             </p>
             <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center">
               <span className="text-indigo-700 font-bold text-lg">∑</span>
@@ -1472,7 +1529,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             {formatCurrencyString(estimatedRecoveryDeploymentSAR, { inCurrency: 'SAR', digits: 0 })}
           </p>
           <p className="text-sm text-slate-600 mt-1">
-            {addLadderCount} funded ladder{addLadderCount === 1 ? '' : 's'} · {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% cash cap
+            {addLadderCount} funded ladder{addLadderCount === 1 ? '' : 's'} · per-platform {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% cash cap
           </p>
         </div>
       </div>
@@ -1542,7 +1599,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   </td>
                 </tr>
               ) : (
-                rankedLosingPositions.map(({ holding, portfolioName, bookCurrency, plan, recyclingSummary, priceProvenance, positionConfig }) => {
+                rankedLosingPositions.map(({ holding, portfolioName, platformName, platformDeployableCashSar, bookCurrency, plan, recyclingSummary, priceProvenance, positionConfig }) => {
                   const decision = decisionByHoldingId.get(holding.id);
                   const tone = decision ? decisionTone(decision.action) : decisionTone('wait');
                   return (
@@ -1566,6 +1623,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                             <span className="font-bold text-slate-900 text-lg">—</span>
                           )}
                           <span className="block text-sm text-slate-500">{portfolioName}</span>
+                          <span className="block text-xs text-slate-500 tabular-nums">
+                            {platformName || 'Platform'} · cash{' '}
+                            {formatCurrencyString(Number(platformDeployableCashSar) || 0, {
+                              inCurrency: 'SAR',
+                              digits: 0,
+                            })}
+                          </span>
                           {priceProvenance && (
                             <span
                               className={`mt-1 inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
@@ -1781,9 +1845,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <div>
                 <p className="text-sm font-bold text-slate-900">
                   Portfolio: {selected.portfolioName}
+                  {selected.platformName ? ` · ${selected.platformName}` : ''}
                 </p>
                 <p className="text-xs text-slate-600">
-                  Portfolio base (book): <strong>{selected.bookCurrency ?? 'USD'}</strong> — prices and P/L are computed in this currency; live USD quotes are converted with your SAR/USD rate.
+                  Portfolio base (book): <strong>{selected.bookCurrency ?? 'USD'}</strong> — ladder cash is this platform&apos;s broker balance only (
+                  {formatCurrencyString(Number(selected.platformDeployableCashSar) || 0, { inCurrency: 'SAR', digits: 0 })} SAR). Live USD quotes convert with your SAR/USD rate.
                 </p>
               </div>
             </div>
@@ -1958,7 +2024,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div className="rounded-2xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 p-6 shadow-lg hover:shadow-xl transition-all duration-300">
               <div className="flex items-center justify-between mb-4">
-                <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">Deployable cash ({selected.bookCurrency ?? 'USD'})</p>
+                <p className="text-sm font-bold text-slate-700 uppercase tracking-wider">
+                  Platform cash ({selected.bookCurrency ?? 'USD'})
+                </p>
                 <div className="w-8 h-8 bg-gradient-to-br from-slate-500 to-slate-600 rounded-lg flex items-center justify-center">
                   <span className="text-white font-bold text-sm">💰</span>
                 </div>
