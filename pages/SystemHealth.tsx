@@ -35,12 +35,13 @@ import {
   acknowledgeInvestmentCashLedgerDriftDurable,
   mergeUiAcks,
 } from '../services/uiAcks';
-import { filterUnackedDriftRows } from '../services/holdingsIntegrityAck';
+import { filterUnackedDriftRows, filterUnackedMissingRows } from '../services/holdingsIntegrityAck';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { reconcileHoldingsWithCorporateActionsSync, reconciliationExceptionReport } from '../services/reconciliationEngine';
 import { buildHoldingsDividendReconciliationReport } from '../services/holdingsDividendReconciliation';
 import { findHoldingsValueOutliers, type HoldingOutlierRow } from '../services/holdingsOutlierAudit';
 import type { HoldingsReconcileRow } from '../services/holdingsDividendReconciliation';
+import { listMissingLedgerHoldingsAcrossPortfolios } from '../services/holdingsIntegrityRepair';
 import HoldingsQtyIntegrityPanel from '../components/investments/HoldingsQtyIntegrityPanel';
 import ReconciliationAuditPanel from '../components/reconciliation/ReconciliationAuditPanel';
 import DashboardKpiQualityPanel from '../components/DashboardKpiQualityPanel';
@@ -762,6 +763,22 @@ const SystemHealth: React.FC<{
         entity: 'transaction',
         entityId: 'budgetCategory',
         severity: 'warning',
+      } as any);
+    }
+    /** Critical missing holdings (ledger trades, no open row) — same queue as qty drift. */
+    const missingOpen = filterUnackedMissingRows(
+      listMissingLedgerHoldingsAcrossPortfolios(financialData).filter((r) => r.likelyOpen),
+      holdingsAcks,
+    );
+    for (const row of missingOpen.slice(0, 40)) {
+      combined.push({
+        code: 'HOLDINGS_CRITICAL_MISSING',
+        message: `Critical missing: ${row.symbol} has ledger trades but no open holding${
+          portfolios.length > 1 ? ` (${row.portfolioName ?? row.portfolioId})` : ''
+        }.`,
+        entity: 'holding',
+        entityId: `${row.portfolioId}:${row.symbol}`,
+        severity: 'error',
       } as any);
     }
     combined.forEach((ex: any) => pushException(ex));

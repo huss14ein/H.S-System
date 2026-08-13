@@ -27,7 +27,7 @@ import {
   headlineKpiMathIsConsistent,
   presentHeadlineInvestmentGrowth,
 } from '../services/extendedMetricsPresentation';
-
+import { clearFxMapMemoryCacheForTests, recordSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
 const SAR_PER_USD = 3.75;
@@ -323,6 +323,89 @@ describe('platform and portfolio ROI after withdrawals', () => {
     expect(presented.statusLabel).toBe('Growing');
     expect(presented.growthSar).toBeCloseTo(30_000, 0);
     expect(presented.ageLabel).toBe(formatInvestmentAgeLabel(m.investmentAgeDays));
+  });
+
+  it('platform card deposits use transaction-dated FX when datedFxData is set', () => {
+    clearFxMapMemoryCacheForTests();
+    const mem: Record<string, string> = {};
+    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+      getItem: (k: string) => (k in mem ? mem[k]! : null),
+      setItem: (k: string, v: string) => {
+        mem[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete mem[k];
+      },
+      clear: () => {
+        Object.keys(mem).forEach((k) => delete mem[k]);
+      },
+      key: (i: number) => Object.keys(mem)[i] ?? null,
+      get length() {
+        return Object.keys(mem).length;
+      },
+    } as Storage;
+    try {
+      recordSarPerUsdForCalendarDay('2024-03-01', 3.5);
+      const account = {
+        ...baseAccount(),
+        currency: 'USD',
+      } as Account;
+      const portfolio = basePortfolio({
+        currency: 'USD',
+        holdings: [
+          {
+            id: 'h-usd',
+            symbol: 'AAPL',
+            quantity: 10,
+            avgCost: 100,
+            currentValue: 1200,
+            zakahClass: 'Zakatable',
+            realizedPnL: 0,
+            assetClass: 'Stock',
+          },
+        ],
+      });
+      const deposit = tx({
+        id: 'd-usd',
+        type: 'deposit',
+        total: 1_000,
+        date: '2024-03-01',
+        currency: 'USD',
+      });
+      const data = {
+        accounts: [account],
+        investments: [portfolio],
+        investmentTransactions: [deposit],
+        settings: { riskProfile: 'Moderate', budgetThreshold: 90, driftThreshold: 5, enableEmails: true, goldPrice: 275 },
+      } as FinancialData;
+      const spotOnly = computePlatformCardMetrics({
+        portfolios: [portfolio],
+        transactions: [deposit],
+        accounts: [account],
+        allInvestments: [portfolio],
+        sarPerUsd: SAR_PER_USD,
+        availableCashByCurrency: { SAR: 0, USD: 0 },
+        simulatedPrices: { AAPL: { price: 120 } },
+        platformCurrency: 'USD',
+      });
+      const dated = computePlatformCardMetrics({
+        portfolios: [portfolio],
+        transactions: [deposit],
+        accounts: [account],
+        allInvestments: [portfolio],
+        sarPerUsd: SAR_PER_USD,
+        availableCashByCurrency: { SAR: 0, USD: 0 },
+        simulatedPrices: { AAPL: { price: 120 } },
+        platformCurrency: 'USD',
+        datedFxData: data,
+      });
+      expect(spotOnly.totalInvestedSAR).toBeCloseTo(1_000 * SAR_PER_USD, 5);
+      expect(dated.totalInvestedSAR).toBeCloseTo(1_000 * 3.5, 5);
+      expect(dated.totalInvestedSAR).not.toBeCloseTo(spotOnly.totalInvestedSAR, 5);
+    } finally {
+      clearFxMapMemoryCacheForTests();
+      delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
+    }
   });
 
   it('each of two portfolios uses deposits − withdrawals (not qty × avg cost)', () => {

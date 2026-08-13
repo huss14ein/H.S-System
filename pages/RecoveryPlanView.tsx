@@ -223,8 +223,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
       /** Ladder sizing uses this portfolio’s platform cash — never the sum of other brokers. */
       const platformCashSar = Number(row.platformDeployableCashSar) || 0;
-      const deployableCashInBookCurrency =
-        bookCurrency === 'SAR' ? platformCashSar : sarPerUsd > 0 ? platformCashSar / sarPerUsd : platformCashSar;
+      const platformCashBook =
+        Number(row.platformDeployableCashBook) > 0
+          ? Number(row.platformDeployableCashBook)
+          : bookCurrency === 'SAR'
+            ? platformCashSar
+            : sarPerUsd > 0
+              ? platformCashSar / sarPerUsd
+              : platformCashSar;
+      const deployableCashInBookCurrency = platformCashBook;
       const platformGlobalConfig = buildRecoveryGlobalConfig(deployableCashInBookCurrency);
       const ai = aiRecoveryBySymbol[sym];
       const marketValue = Number.isFinite(currentVal) && currentVal > 0 ? currentVal : qty * currentPrice;
@@ -289,6 +296,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         accountId: row.accountId,
         platformName: row.platformName,
         platformDeployableCashSar: platformCashSar,
+        platformDeployableCashBook: platformCashBook,
         bookCurrency,
         currentPrice,
         positionConfig,
@@ -327,16 +335,28 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const recoveryBudgetByAccountId = useMemo(() => {
     const fromSnap = canonical?.recoveryPlan?.recoveryBudgetByAccountId;
     if (fromSnap && Object.keys(fromSnap).length > 0) return fromSnap;
-    const cashByAccount: Record<string, number> = {};
+    const cashByAccount: Record<string, { cashSar: number; cashBook: number }> = {};
     for (const p of positionsWithRecovery) {
       const aid = String(p.accountId ?? '').trim();
       if (!aid || aid in cashByAccount) continue;
-      cashByAccount[aid] = Math.max(0, Number(p.platformDeployableCashSar) || 0);
+      cashByAccount[aid] = {
+        cashSar: Math.max(0, Number(p.platformDeployableCashSar) || 0),
+        cashBook: Math.max(0, Number(p.platformDeployableCashBook) || 0),
+      };
     }
     return buildRecoveryBudgetByAccountId(cashByAccount);
   }, [canonical?.recoveryPlan?.recoveryBudgetByAccountId, positionsWithRecovery]);
 
+  const hasAiRecoveryOverrides = Object.keys(aiRecoveryBySymbol).length > 0;
+
   const rankedDecisions = useMemo(() => {
+    /** Prefer canonical SSOT when AI has not rewritten position configs. */
+    if (!hasAiRecoveryOverrides && (canonical?.recoveryPlan?.rankedDecisions?.length ?? 0) > 0) {
+      const snap = canonical!.recoveryPlan!.rankedDecisions!;
+      const losingIds = new Set(losingPositions.map((p) => p.holding.id));
+      const fromSnap = snap.filter((d) => losingIds.has(d.holdingId));
+      if (fromSnap.length === losingPositions.length) return fromSnap;
+    }
     const mvByPortfolio = new Map<string, number>();
     for (const p of positionsWithRecovery) {
       const pid = String(p.portfolioId ?? '');
@@ -377,6 +397,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       },
     );
   }, [
+    hasAiRecoveryOverrides,
+    canonical?.recoveryPlan?.rankedDecisions,
     losingPositions,
     positionsWithRecovery,
     data?.portfolioUniverse,
@@ -1322,7 +1344,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   :{' '}
                   <span className="text-emerald-600 font-bold">
                     {selected
-                      ? `${(buildRecoveryGlobalConfig(Number(selected.platformDeployableCashSar) || 0).recoveryBudgetPct * 100).toFixed(0)}% of this platform’s cash`
+                      ? `${(buildRecoveryGlobalConfig(Number(selected.platformDeployableCashBook) || Number(selected.platformDeployableCashSar) || 0).recoveryBudgetPct * 100).toFixed(0)}% of this platform’s cash`
                       : 'Per platform (~12–22% of that broker’s cash)'}
                   </span>
                 </div>
@@ -1846,6 +1868,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   Portfolio base (book): <strong>{selected.bookCurrency ?? 'USD'}</strong> — ladder cash is this platform&apos;s broker balance only (
                   {formatCurrencyString(Number(selected.platformDeployableCashSar) || 0, { inCurrency: 'SAR', digits: 0 })} SAR). Live USD quotes convert with your SAR/USD rate.
                 </p>
+                {!String(selected.accountId ?? '').trim() && (
+                  <p className="text-xs text-rose-700 mt-1 font-medium">
+                    This portfolio is not linked to an Investment platform — map an account before funding ladders.
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">

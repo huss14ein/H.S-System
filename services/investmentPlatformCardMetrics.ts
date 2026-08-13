@@ -16,6 +16,7 @@ import {
 } from '../utils/investmentLedgerCurrency';
 import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
+import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import { isCapitalInvestmentDeposit, isCapitalInvestmentWithdrawal } from './reconciliation/cashDelta';
 import {
   earliestCapitalDepositYmd,
@@ -102,6 +103,11 @@ export interface ComputePlatformCardMetricsArgs {
   asOf?: Date;
   /** Live quote map for daily P/L — defaults to `simulatedPrices`. Use session/live ticks so `change` is fresh. */
   dailyPnLPrices?: SimulatedPriceMap;
+  /**
+   * When set, deposits/withdrawals convert USD→SAR with transaction-dated FX (same as headline ROI).
+   * Spot `sarPerUsd` remains for holdings marks and display conversion.
+   */
+  datedFxData?: FinancialData | null;
 }
 
 /**
@@ -121,8 +127,23 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     unrealizedPnLBasis = 'net_capital',
     asOf = new Date(),
     dailyPnLPrices,
+    datedFxData = null,
   } = args;
   const pricesForDailyPnL = dailyPnLPrices ?? simulatedPrices;
+  const txCashSar = (t: InvestmentTransaction) =>
+    datedFxData
+      ? investmentTransactionCashAmountSarDated({
+          tx: t,
+          accounts: accList,
+          portfolios: invList,
+          data: datedFxData,
+          uiExchangeRate: rate,
+        })
+      : (() => {
+          const c = inferInvestmentTransactionCurrency(t, accList, invList);
+          const amt = getInvestmentTransactionCashAmount(t as any);
+          return c === 'SAR' ? amt : toSAR(amt, 'USD', rate);
+        })();
 
   /** One implementation for position market value: {@link effectiveHoldingValueInBookCurrency} (same as holdings table / Overview). */
   let holdingsValueInSAR = 0;
@@ -173,6 +194,8 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
   let sellUSD = 0;
   let divSAR = 0;
   let divUSD = 0;
+  let depositsRecordedSarDated = 0;
+  let withdrawnSarDated = 0;
   /** Economic capital only — broker-cash Reconcile Balance rows stay out of invested/withdrawn. */
   transactions
     .filter((t) => isCapitalInvestmentDeposit(t))
@@ -181,6 +204,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       const amt = getInvestmentTransactionCashAmount(t as any);
       if (c === 'SAR') invSAR += amt;
       else invUSD += amt;
+      depositsRecordedSarDated += txCashSar(t);
     });
   transactions
     .filter((t) => isCapitalInvestmentWithdrawal(t))
@@ -189,6 +213,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       const amt = getInvestmentTransactionCashAmount(t as any);
       if (c === 'SAR') wdrSAR += amt;
       else wdrUSD += amt;
+      withdrawnSarDated += txCashSar(t);
     });
   transactions
     .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
@@ -215,25 +240,34 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       else divUSD += amt;
     });
 
-  const totalInvestedSARRaw = invSAR + invUSD * rate;
+  /** Spot FX books (legacy display currency split). */
+  const spotDepositsSAR = invSAR + invUSD * rate;
+  const spotWithdrawnSAR = wdrSAR + wdrUSD * rate;
+  /**
+   * Prefer transaction-dated FX when `datedFxData` is set so USD mid-history capital
+   * matches headline ROI / Recovery books (not today’s spot alone).
+   */
+  const totalInvestedSARRaw =
+    datedFxData != null ? Math.max(0, depositsRecordedSarDated) : spotDepositsSAR;
+  const withdrawnSAR =
+    datedFxData != null ? Math.max(0, withdrawnSarDated) : spotWithdrawnSAR;
   const totalWithdrawn =
-    platformCurrency === 'SAR'
-      ? wdrSAR + wdrUSD * rate
-      : platformCurrency === 'USD'
-        ? wdrUSD + wdrSAR / rate
-        : wdrSAR + wdrUSD * rate;
+    platformCurrency === 'USD'
+      ? rate > 0
+        ? withdrawnSAR / rate
+        : withdrawnSAR
+      : withdrawnSAR;
 
   const inferredInvestedFromLedgerSAR = Math.max(
     0,
-    (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + cashInSar + (wdrSAR + wdrUSD * rate),
+    (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + cashInSar + spotWithdrawnSAR,
   );
   const totalInvestedSAR =
     totalInvestedSARRaw > 0
       ? totalInvestedSARRaw
       : inferredInvestedFromLedgerSAR > 0
         ? inferredInvestedFromLedgerSAR
-        : Math.max(0, holdingsCostBasisSAR + cashInSar + (wdrSAR + wdrUSD * rate));
-  const withdrawnSAR = wdrSAR + wdrUSD * rate;
+        : Math.max(0, holdingsCostBasisSAR + cashInSar + withdrawnSAR);
   const ledgerNetCapitalSAR = Math.max(0, totalInvestedSAR - withdrawnSAR);
   /** Match headline: when deposits exist, use ledger net; when missing, floor at cost + idle cash. */
   const economicDeployedSAR = Math.max(0, holdingsCostBasisSAR + cashInSar);
@@ -793,6 +827,7 @@ export function computePersonalPlatformCardRow(
     availableCashByCurrency: options.getAvailableCashForAccount(account.id),
     simulatedPrices: options.simulatedPrices,
     platformCurrency,
+    datedFxData: data,
   });
 }
 
@@ -888,6 +923,7 @@ export function computeAllScopePlatformCardRow(
     availableCashByCurrency: options.getAvailableCashForAccount(account.id),
     simulatedPrices: options.simulatedPrices,
     platformCurrency,
+    datedFxData: data,
   });
 }
 

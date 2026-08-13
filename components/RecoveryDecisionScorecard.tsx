@@ -96,6 +96,9 @@ export default function RecoveryDecisionScorecard({
             <p className="text-xs text-slate-500">
               {bookCurrency} · {m.sharesToAdd.toFixed(2)} shares
               {m.firstBuyCash != null ? ` · first buy ~${formatMoney(m.firstBuyCash)}` : ''}
+              {m.fundedLadderLevels != null && m.fundedLadderLevels > 0
+                ? ` · ${m.fundedLadderLevels} funded level${m.fundedLadderLevels === 1 ? '' : 's'}`
+                : ''}
             </p>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-3">

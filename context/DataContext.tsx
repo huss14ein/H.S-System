@@ -4356,6 +4356,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!portfolio) throw new Error('Portfolio not found');
             const symbols = args.symbols.map((s) => String(s ?? '').trim().toUpperCase()).filter(Boolean);
             if (symbols.length === 0) throw new Error('Select at least one symbol to rebuild.');
+            const guardUpdateHolding = async (h: Parameters<typeof updateHolding>[0]) => {
+                if (!allowWrite()) return;
+                await updateHolding(h);
+            };
+            const guardAddHolding = async (h: Parameters<typeof addHolding>[0]) => {
+                if (!allowWrite()) return;
+                await addHolding(h);
+            };
+            const guardDeleteHolding = async (id: Parameters<typeof deleteHolding>[0]) => {
+                if (!allowWrite()) return;
+                await deleteHolding(id);
+            };
+            const guardPatchPnl = async (...pnlArgs: Parameters<typeof patchHoldingRealizedPnL>) => {
+                if (!allowWrite()) return;
+                await patchHoldingRealizedPnL(...pnlArgs);
+            };
             await rebuildHoldingsFromLedger({
                 portfolio,
                 investmentTransactions: filterTransactionsForPortfolio(
@@ -4366,10 +4382,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 symbols,
                 existingLots: (snapshot?.investmentCostLots ?? []).filter((l) => l.portfolioId === args.portfolioId),
                 reconciliationAdjustments: snapshot?.reconciliationAdjustments ?? [],
-                updateHolding,
-                addHolding,
-                deleteHolding,
-                patchHoldingRealizedPnL,
+                updateHolding: guardUpdateHolding,
+                addHolding: guardAddHolding,
+                deleteHolding: guardDeleteHolding,
+                patchHoldingRealizedPnL: guardPatchPnl,
                 resolveHolding: (sym) => {
                     const pf = (dataRef.current?.investments ?? []).find((p) => p.id === args.portfolioId);
                     return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);

@@ -3047,8 +3047,9 @@ const PlatformCardInner: React.FC<{
                 dailyPnLPrices: throttledPrices,
                 platformCurrency,
                 unrealizedPnLBasis: 'net_capital',
+                datedFxData: dataCtx ?? null,
             }),
-        [portfoliosForMetrics, transactions, metricsTransactions, kpiQuotePrices, throttledPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx?.accounts, investmentsForInfer],
+        [portfoliosForMetrics, transactions, metricsTransactions, kpiQuotePrices, throttledPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx, investmentsForInfer],
     );
     const {
         totalValueInSAR,

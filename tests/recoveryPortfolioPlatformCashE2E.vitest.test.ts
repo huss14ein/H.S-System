@@ -8,7 +8,9 @@ import { join } from 'node:path';
 import {
   buildRecoveryBudgetByAccountId,
   recoveryBudgetSarForPlatformCash,
+  recoveryBudgetSarForPlatformVenue,
   resolvePortfolioRecoveryCash,
+  buildRecoveryGlobalConfig,
 } from '../services/recoveryPositionSetup';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
@@ -47,14 +49,36 @@ describe('recovery portfolio platform cash — helpers', () => {
     expect(map['acc-small']).toBeCloseTo(small, 5);
     expect(map['acc-large']).toBeCloseTo(large, 5);
   });
+
+  it('USD mid-cash (~$20k @ 3.75) uses book cash for pct band, not inflated SAR', () => {
+    const cashUsd = 20_000;
+    const rate = 3.75;
+    const cashSar = cashUsd * rate; // 75_000 — crosses the 50k SAR band if misused as book cash
+    const wrongPct = buildRecoveryGlobalConfig(cashSar).recoveryBudgetPct;
+    const rightPct = buildRecoveryGlobalConfig(cashUsd).recoveryBudgetPct;
+    expect(wrongPct).toBeGreaterThan(rightPct);
+
+    const budget = recoveryBudgetSarForPlatformVenue({
+      deployableCashSar: cashSar,
+      deployableCashBook: cashUsd,
+    });
+    expect(budget).toBeCloseTo(cashSar * rightPct, 5);
+    expect(budget).not.toBeCloseTo(cashSar * wrongPct, 5);
+
+    const venueMap = buildRecoveryBudgetByAccountId({
+      'acc-usd': { cashSar, cashBook: cashUsd },
+    });
+    expect(venueMap['acc-usd']).toBeCloseTo(budget, 5);
+  });
 });
 
 describe('recovery portfolio platform cash — surface wiring', () => {
   it('canonical snapshot builds venue cash + per-account budgets', () => {
     const engine = read('services/canonicalPlanningEngine.ts');
     expect(engine).toContain('resolvePortfolioRecoveryCash');
-    expect(engine).toContain('buildRecoveryBudgetByAccountId');
+    expect(engine).toContain('recoveryBudgetSarForPlatformVenue');
     expect(engine).toContain('platformDeployableCashSar');
+    expect(engine).toContain('platformDeployableCashBook');
     expect(engine).toContain('recoveryBudgetByAccountId');
     expect(engine).not.toMatch(
       /headlineRecoveryConfig\s*=\s*buildRecoveryGlobalConfig\(deployableCashSar\)/,
@@ -65,15 +89,18 @@ describe('recovery portfolio platform cash — surface wiring', () => {
     const page = read('pages/RecoveryPlanView.tsx');
     expect(page).toContain('buildRecoveryBudgetByAccountId');
     expect(page).toContain('platformDeployableCashSar');
+    expect(page).toContain('platformDeployableCashBook');
     expect(page).toContain('recoveryBudgetByAccountId');
     expect(page).toContain('mapped portfolio');
     expect(page).toContain('Platform cash');
+    expect(page).toContain('not linked to an Investment platform');
     expect(page).not.toContain('recoveryBudgetPct: globalConfig.recoveryBudgetPct');
     expect(page).not.toContain('This exceeds your total deployable cash shown above');
   });
 
   it('scorecard and path briefs describe platform-scoped cash', () => {
     expect(read('components/RecoveryDecisionScorecard.tsx')).toContain("this portfolio’s platform cash");
+    expect(read('components/RecoveryDecisionScorecard.tsx')).toContain('fundedLadderLevels');
     expect(read('services/recoveryPathSummaries.ts')).toContain("this platform’s deployable cash");
   });
 

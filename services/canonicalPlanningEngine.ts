@@ -8,9 +8,9 @@ import { lookupLiveQuoteForSymbol, lookupQuoteUpdatedAtIso } from './finnhubServ
 import { buildRecoveryPlan } from './recoveryPlan';
 import {
   buildRecoveryGlobalConfig,
-  buildRecoveryBudgetByAccountId,
   deriveRecoveryPositionConfig,
   resolvePortfolioRecoveryCash,
+  recoveryBudgetSarForPlatformVenue,
   withRecoveryAddBounds,
 } from './recoveryPositionSetup';
 import { buildRecyclingPlanForHolding, summarizeRecyclingPlan, type RecyclingPlanSummary } from './positionRecyclingIntegration';
@@ -90,6 +90,8 @@ export type CanonicalRecoveryPosition = {
   platformName: string;
   /** Broker cash available on that platform (SAR). */
   platformDeployableCashSar: number;
+  /** Same cash in the portfolio book currency (ladder sizing unit). */
+  platformDeployableCashBook: number;
   bookCurrency: TradeCurrency;
   currentUnitPriceBook: number;
   plan: ReturnType<typeof buildRecoveryPlan>;
@@ -417,14 +419,8 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
 
   // --- Recovery Plan (positions in loss) ---
   /** Headline total across platforms — ladders/ranking use per-portfolio platform cash below. */
-  const platformCashByAccountId = new Map<string, number>();
-  for (const a of investAccounts) {
-    platformCashByAccountId.set(
-      a.id,
-      Math.max(0, tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd)),
-    );
-  }
-  const recoveryBudgetByAccountId = buildRecoveryBudgetByAccountId(platformCashByAccountId);
+  const recoveryBudgetByAccountId: Record<string, number> = {};
+  const platformVenueByAccountId = new Map<string, { cashSar: number; cashBook: number }>();
 
   const universe = data?.portfolioUniverse ?? [];
   const coreTickers = new Set(universe.filter((u) => u.status === 'Core').map((u) => safeUpper(u.ticker)));
@@ -453,6 +449,16 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
       sarPerUsd,
       bookCurrency,
     });
+    if (venue.accountId && !platformVenueByAccountId.has(venue.accountId)) {
+      platformVenueByAccountId.set(venue.accountId, {
+        cashSar: venue.deployableCashSar,
+        cashBook: venue.deployableCashBook,
+      });
+      recoveryBudgetByAccountId[venue.accountId] = recoveryBudgetSarForPlatformVenue({
+        deployableCashSar: venue.deployableCashSar,
+        deployableCashBook: venue.deployableCashBook,
+      });
+    }
     const platformConfig = buildRecoveryGlobalConfig(venue.deployableCashBook);
     for (const h of p.holdings ?? []) {
       const qty = Number(h.quantity) || 0;
@@ -515,6 +521,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
         accountId: venue.accountId,
         platformName: venue.platformName,
         platformDeployableCashSar: venue.deployableCashSar,
+        platformDeployableCashBook: venue.deployableCashBook,
         bookCurrency,
         currentUnitPriceBook,
         plan,

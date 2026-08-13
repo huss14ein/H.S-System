@@ -56,26 +56,49 @@ export function resolvePortfolioRecoveryCash(args: {
   return { accountId, platformName, deployableCashSar, deployableCashBook };
 }
 
-/** Recovery budget SAR for one platform — pct band is from that platform’s cash, not a global sum. */
-export function recoveryBudgetSarForPlatformCash(platformCashSar: number): number {
-  const cash = Math.max(0, Number(platformCashSar) || 0);
-  const pct = buildRecoveryGlobalConfig(cash).recoveryBudgetPct;
-  return cash * pct;
+/** Recovery budget SAR for one platform.
+ * Pct band uses book-currency cash (same unit as ladder caps); SAR budget = cashSar × pct.
+ */
+export function recoveryBudgetSarForPlatformVenue(args: {
+  deployableCashSar: number;
+  deployableCashBook: number;
+}): number {
+  const cashSar = Math.max(0, Number(args.deployableCashSar) || 0);
+  const cashBook = Math.max(0, Number(args.deployableCashBook) || 0);
+  const pct = buildRecoveryGlobalConfig(cashBook).recoveryBudgetPct;
+  return cashSar * pct;
 }
 
-/** Build per-account recovery budgets from platform cash (SAR). */
+/** @deprecated Prefer recoveryBudgetSarForPlatformVenue so pct matches ladder book cash. */
+export function recoveryBudgetSarForPlatformCash(platformCashSar: number): number {
+  return recoveryBudgetSarForPlatformVenue({
+    deployableCashSar: platformCashSar,
+    deployableCashBook: platformCashSar,
+  });
+}
+
+/** Build per-account recovery budgets from platform venue cash (SAR + book for pct band). */
 export function buildRecoveryBudgetByAccountId(
-  platformCashByAccountId: Record<string, number> | Map<string, number>,
+  platformCashByAccountId:
+    | Record<string, number | { cashSar: number; cashBook: number }>
+    | Map<string, number | { cashSar: number; cashBook: number }>,
 ): Record<string, number> {
   const out: Record<string, number> = {};
   const entries =
     platformCashByAccountId instanceof Map
       ? platformCashByAccountId.entries()
       : Object.entries(platformCashByAccountId);
-  for (const [aid, cash] of entries) {
+  for (const [aid, raw] of entries) {
     const key = String(aid ?? '').trim();
     if (!key) continue;
-    out[key] = recoveryBudgetSarForPlatformCash(cash);
+    if (typeof raw === 'number') {
+      out[key] = recoveryBudgetSarForPlatformCash(raw);
+      continue;
+    }
+    out[key] = recoveryBudgetSarForPlatformVenue({
+      deployableCashSar: raw.cashSar,
+      deployableCashBook: raw.cashBook,
+    });
   }
   return out;
 }

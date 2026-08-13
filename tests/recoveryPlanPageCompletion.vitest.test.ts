@@ -51,9 +51,11 @@ describe('recovery plan page accuracy wiring', () => {
     expect(engine).toContain('fundedQualified');
     expect(engine).toContain('rankRecoveryDecisions');
     expect(engine).toContain('resolvePortfolioRecoveryCash');
-    expect(engine).toContain('buildRecoveryBudgetByAccountId');
+    expect(engine).toContain('recoveryBudgetSarForPlatformVenue');
+    expect(engine).toContain('platformDeployableCashBook');
     expect(engine).toContain('recoveryBudgetByAccountId');
     expect(page).toContain('platformDeployableCashSar');
+    expect(page).toContain('platformDeployableCashBook');
     expect(page).toContain('recoveryBudgetByAccountId');
     expect(page).toContain('buildRecoveryBudgetByAccountId');
   });

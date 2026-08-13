@@ -25,9 +25,10 @@ describe('holdings + recovery + ROI end-to-end wiring', () => {
     const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
     expect(panel).toContain('safeTickerLabel');
     expect(panel).toContain('integrityBusyKey');
+    expect(panel).toContain('anyIntegrityBusy');
     expect(panel).toContain('useMemo(');
     expect(panel).toContain('buildHoldingsIntegrityFingerprint(data)');
-    expect(panel).toContain('if (rebuildBusyKey || ackBusyKey) return');
+    expect(panel).toContain('if (anyIntegrityBusy(rebuildBusyKey, ackBusyKey)) return');
     expect(panel).toContain('Keep closed');
     expect(panel).toContain('id="holdings-qty-integrity"');
     expect(panel).toContain('Warning kept open');
@@ -79,5 +80,29 @@ describe('holdings + recovery + ROI end-to-end wiring', () => {
     expect(notif).toContain('listMissingLedgerHoldingsAcrossPortfolios');
     expect(notif).toContain('holdings-qty-integrity-missing');
     expect(notif).toContain("likelyOpen");
+  });
+
+  it('SystemHealth exception queue includes Critical missing, not only qty drift', () => {
+    const health = read('pages/SystemHealth.tsx');
+    expect(health).toContain('filterUnackedMissingRows');
+    expect(health).toContain('listMissingLedgerHoldingsAcrossPortfolios');
+    expect(health).toContain('HOLDINGS_CRITICAL_MISSING');
+    expect(health).toContain('Critical missing');
+  });
+
+  it('platform cards pass dated FX data into capital math', () => {
+    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('datedFxData');
+    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('investmentTransactionCashAmountSarDated');
+    expect(read('pages/Investments.tsx')).toContain('datedFxData: dataCtx');
+    expect(read('components/RecoveryDecisionScorecard.tsx')).toContain('fundedLadderLevels');
+  });
+
+  it('Rebuild holding writes are generation-guarded (late timeout cannot mutate)', () => {
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('guardUpdateHolding');
+    expect(ctx).toContain('guardAddHolding');
+    expect(ctx).toContain('guardDeleteHolding');
+    expect(ctx).toContain('updateHolding: guardUpdateHolding');
+    expect(ctx).toContain('addHolding: guardAddHolding');
   });
 });
