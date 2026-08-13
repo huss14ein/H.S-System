@@ -13,6 +13,11 @@ import {
 } from './recoveryPositionSetup';
 import { buildRecyclingPlanForHolding, summarizeRecyclingPlan, type RecyclingPlanSummary } from './positionRecyclingIntegration';
 import { resolveSyncedRecoveryConviction } from './recoveryConvictionSync';
+import {
+  rankRecoveryDecisions,
+  sumAllocatedLadderSpendSar,
+  type RecoveryInvestorDecision,
+} from './recoveryDecisionEngine';
 import { tickerToRiskTier, tickerToSleeve } from '../wealth-ultra/position';
 
 export type SimulatedPricesLike = Record<string, { price?: number; change?: number } | undefined>;
@@ -104,7 +109,12 @@ export type CanonicalPlanningSnapshot = {
   recoveryPlan: {
     deployableCashSar: number;
     positions: CanonicalRecoveryPosition[];
+    /** Ladder-qualified before shared-budget ranking (diagnostic). */
     qualified: CanonicalRecoveryPosition[];
+    /** Positions the shared recovery budget can actually fund (add_ladder after ranking). */
+    fundedQualified: CanonicalRecoveryPosition[];
+    rankedDecisions: RecoveryInvestorDecision[];
+    allocatedLadderSpendSar: number;
     /** No-new-cash sell/rebuy summaries for underwater holdings. */
     recyclingSummaries: RecyclingPlanSummary[];
   };
@@ -489,6 +499,70 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
 
   const qualified = recoveryPositions.filter((p) => p.plan?.qualified);
 
+  const portfolioValueById = new Map<string, number>();
+  for (const p of personalPortfolios) {
+    const bookCurrency = (resolveInvestmentPortfolioCurrency(p) as TradeCurrency) || 'USD';
+    let total = 0;
+    for (const h of p.holdings ?? []) {
+      total += effectiveHoldingValueInBookCurrency(h, bookCurrency, simulatedPrices, sarPerUsd);
+    }
+    portfolioValueById.set(String(p.id ?? ''), total);
+  }
+
+  const rankedDecisions = rankRecoveryDecisions(
+    recoveryPositions
+      .filter((p) => p.plan && Number(p.plan.plPct) < 0 && Number(p.currentUnitPriceBook) > 0)
+      .map((p) => {
+        const sym = safeUpper(p.holding.symbol);
+        const synced = resolveSyncedRecoveryConviction({
+          symbol: sym,
+          plPct: p.plan.plPct,
+          riskTier: p.positionConfig.riskTier,
+          universe,
+        });
+        const pfTotal = portfolioValueById.get(p.portfolioId) ?? 0;
+        const weightPct =
+          pfTotal > 0
+            ? (effectiveHoldingValueInBookCurrency(
+                p.holding,
+                p.bookCurrency,
+                simulatedPrices,
+                sarPerUsd,
+              ) /
+                pfTotal) *
+              100
+            : 0;
+        return {
+          holdingId: String(p.holding.id ?? ''),
+          symbol: sym,
+          plan: p.plan,
+          positionConfig: p.positionConfig,
+          recyclingSummary: p.recyclingSummary,
+          conviction: {
+            convictionGrade: synced.convictionGrade,
+            stockQualityStatus: synced.stockQualityStatus,
+          },
+          quoteStale: p.priceProvenance.quoteFreshness.isStale,
+          portfolioWeightPct: weightPct,
+          bookCurrency: p.bookCurrency,
+        };
+      }),
+    {
+      recoveryBudgetSar: deployableCashSar * (Number(globalConfig.recoveryBudgetPct) || 0),
+      sarPerUsd,
+    },
+  );
+
+  const fundedIds = new Set(
+    rankedDecisions.filter((d) => d.action === 'add_ladder' && !d.metrics.budgetDeferred).map((d) => d.holdingId),
+  );
+  const fundedQualified = recoveryPositions.filter((p) => fundedIds.has(String(p.holding.id ?? '')));
+  const allocatedLadderSpendSar = sumAllocatedLadderSpendSar(rankedDecisions, (holdingId, cash) => {
+    const row = recoveryPositions.find((p) => String(p.holding.id ?? '') === holdingId);
+    const cur = row?.bookCurrency === 'SAR' ? 'SAR' : 'USD';
+    return toSAR(cash, cur, sarPerUsd);
+  });
+
   // --- AI Balancer snapshot (deterministic, grounded) ---
   const balancerPortfolios: CanonicalBalancerPortfolioSnapshot[] = personalPortfolios.map((p) => {
     const bookCurrency = (resolveInvestmentPortfolioCurrency(p) as TradeCurrency) || 'USD';
@@ -515,7 +589,15 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
   return {
     sarPerUsd,
     investmentPlan: { rows: planRows, prioritizedPricePlans },
-    recoveryPlan: { deployableCashSar, positions: recoveryPositions, qualified, recyclingSummaries },
+    recoveryPlan: {
+      deployableCashSar,
+      positions: recoveryPositions,
+      qualified,
+      fundedQualified,
+      rankedDecisions,
+      allocatedLadderSpendSar,
+      recyclingSummaries,
+    },
     aiBalancer: { portfolios: balancerPortfolios },
     dataQuality: { staleQuoteThresholdMinutes },
   };

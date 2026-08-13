@@ -186,7 +186,10 @@ describe('allocateRecoveryBudget / rankRecoveryDecisions', () => {
     const bbb = out.find((d) => d.symbol === 'BBB')!;
     expect(bbb.action).toBe('add_ladder');
     expect(bbb.metrics.cashToDeploy).toBeCloseTo(90, 5);
+    expect(bbb.metrics.fundedLadderLevels).toBe(1);
     expect(bbb.metrics.budgetDeferred).toBe(false);
+    // First-rung break-even must recompute (not keep the full-ladder newAvg).
+    expect(bbb.metrics.breakEvenAfter).toBeCloseTo((100 * 100 + 90) / 101, 5);
   });
 
   it('defers to wait when even the first rung exceeds remaining budget', () => {

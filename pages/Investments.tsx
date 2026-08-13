@@ -6063,7 +6063,12 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     if (pageAction === 'focus-holdings-integrity') {
         setActiveTab('Overview');
         const t = window.setTimeout(() => {
-            document.getElementById('holdings-qty-integrity')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            const el = document.getElementById('holdings-qty-integrity');
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                toast('No open holdings quantity issues right now.', 'info');
+            }
         }, 120);
         const cancelClear = scheduleClearPageAction(clearPageAction);
         return () => {
@@ -6074,7 +6079,14 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     if (pageAction === 'focus-recovery-decision') {
         prefetchInvestmentTab('Recovery Plan');
         setActiveTab('Recovery Plan');
-        return;
+        const t = window.setTimeout(() => {
+            document.getElementById('recovery-decision-board')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 180);
+        const cancelClear = scheduleClearPageAction(clearPageAction);
+        return () => {
+            window.clearTimeout(t);
+            cancelClear();
+        };
     }
     if (pageAction === 'sync-realized-pnl') {
         void backfillRealizedPnLForAllPortfolios();

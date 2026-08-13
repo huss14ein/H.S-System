@@ -37,6 +37,12 @@ export type RecoveryInvestorMetrics = {
   firstBuyCash: number | null;
   sharesToAdd: number;
   budgetDeferred: boolean;
+  /** Inputs so partial-rung funding can recompute break-even without the full plan. */
+  avgCostBefore: number;
+  currentShares: number;
+  currentPrice: number;
+  /** How many ladder levels are funded (null = full plan). */
+  fundedLadderLevels: number | null;
 };
 
 export type RecoveryInvestorDecision = {
@@ -77,14 +83,27 @@ function gradeRank(g: string | undefined): number {
   return g === 'A' ? 4 : g === 'B' ? 3 : g === 'C' ? 2 : g === 'D' ? 1 : 2;
 }
 
-export function computeRecoveryInvestorMetrics(plan: RecoveryPlanResult): RecoveryInvestorMetrics {
-  const ladder = (plan.ladder ?? []).filter((l) => finite(l.qty) > 0 && finite(l.price) > 0);
+export function computeRecoveryInvestorMetrics(
+  plan: RecoveryPlanResult,
+  opts?: { maxLadderLevels?: number },
+): RecoveryInvestorMetrics {
+  const fullLadder = (plan.ladder ?? []).filter((l) => finite(l.qty) > 0 && finite(l.price) > 0);
+  const maxLevels = opts?.maxLadderLevels;
+  const usingPartial = maxLevels != null && Number.isFinite(maxLevels) && maxLevels > 0;
+  const ladder = usingPartial ? fullLadder.slice(0, Math.floor(maxLevels!)) : fullLadder;
   const first = ladder[0] ?? null;
   const avg = finite(plan.avgCost);
-  const newAvg = finite(plan.newAvgCost) || avg;
+  const shares = finite(plan.shares);
   const px = finite(plan.currentPrice);
   const sharesAdded = ladder.reduce((s, l) => s + finite(l.qty), 0);
-  const cash = finite(plan.totalPlannedCost);
+  const ladderCash = ladder.reduce((s, l) => s + (finite(l.cost) || finite(l.qty) * finite(l.price)), 0);
+  const cash = usingPartial ? ladderCash : finite(plan.totalPlannedCost) || ladderCash;
+  const newShares = shares + sharesAdded;
+  const newAvg = usingPartial
+    ? newShares > 0
+      ? (shares * avg + cash) / newShares
+      : avg
+    : finite(plan.newAvgCost) || (newShares > 0 ? (shares * avg + cash) / newShares : avg);
   const reboundNew = reboundPct(px, newAvg);
   const reboundOld = reboundPct(px, avg);
   return {
@@ -98,8 +117,39 @@ export function computeRecoveryInvestorMetrics(plan: RecoveryPlanResult): Recove
     firstBuyPrice: first ? finite(first.price) : null,
     firstBuyDiscountPct: first && px > 0 ? ((px - finite(first.price)) / px) * 100 : null,
     firstBuyCash: first ? finite(first.cost) || finite(first.qty) * finite(first.price) : null,
-    sharesToAdd: sharesAdded,
+    sharesToAdd: usingPartial ? sharesAdded : sharesAdded || finite(plan.newShares) - shares,
     budgetDeferred: false,
+    avgCostBefore: avg,
+    currentShares: shares,
+    currentPrice: px,
+    fundedLadderLevels: usingPartial ? Math.min(Math.floor(maxLevels!), fullLadder.length) : null,
+  };
+}
+
+function metricsForFirstRungOnly(m: RecoveryInvestorMetrics): RecoveryInvestorMetrics {
+  const firstCash = finite(m.firstBuyCash);
+  const firstPrice = finite(m.firstBuyPrice);
+  if (!(firstCash > 0) || !(firstPrice > 0)) return { ...m, fundedLadderLevels: 1 };
+  const qty = firstCash / firstPrice;
+  const shares = finite(m.currentShares);
+  const avg = finite(m.avgCostBefore);
+  const px = finite(m.currentPrice);
+  const newShares = shares + qty;
+  const newAvg = newShares > 0 ? (shares * avg + firstCash) / newShares : avg;
+  const reboundNew = reboundPct(px, newAvg);
+  const reboundOld = reboundPct(px, avg);
+  return {
+    ...m,
+    breakEvenAfter: newAvg,
+    avgImprovementPct: avg > 0 ? ((avg - newAvg) / avg) * 100 : 0,
+    reboundToNewBreakevenPct: reboundNew,
+    reboundToOldBreakevenPct: reboundOld,
+    reboundReductionPct: reboundOld - reboundNew,
+    cashToDeploy: firstCash,
+    sharesToAdd: qty,
+    extraLossIfDown10: firstCash * 0.1,
+    budgetDeferred: false,
+    fundedLadderLevels: 1,
   };
 }
 
@@ -277,19 +327,12 @@ export function allocateRecoveryBudget(args: {
       firstBuy != null && firstBuy > 0 ? Math.max(0, args.cashToSar(d.holdingId, firstBuy)) : 0;
     if (firstSar > 0 && firstSar <= remaining + 1e-6) {
       remaining = Math.max(0, remaining - firstSar);
+      const firstMetrics = metricsForFirstRungOnly(d.metrics);
       out.push({
         ...d,
-        why: `${d.why} Full ladder does not fit the shared budget — fund the first rung only (~${firstBuy!.toFixed(0)}).`,
-        nextStep: `Place only the first limit near ${d.metrics.firstBuyPrice != null ? d.metrics.firstBuyPrice.toFixed(2) : 'the first step'}. Leave later rungs until more cash is free.`,
-        metrics: {
-          ...d.metrics,
-          cashToDeploy: firstBuy!,
-          sharesToAdd: d.metrics.firstBuyPrice != null && d.metrics.firstBuyPrice > 0
-            ? firstBuy! / d.metrics.firstBuyPrice
-            : d.metrics.sharesToAdd,
-          extraLossIfDown10: firstBuy! * 0.1,
-          budgetDeferred: false,
-        },
+        why: `${d.why} Full ladder does not fit the shared budget — fund the first rung only (~${firstMetrics.cashToDeploy.toFixed(0)}).`,
+        nextStep: `Place only the first limit near ${firstMetrics.firstBuyPrice != null ? firstMetrics.firstBuyPrice.toFixed(2) : 'the first step'}. Leave later rungs until more cash is free.`,
+        metrics: firstMetrics,
         priority: Math.max(40, d.priority - 5),
       });
       continue;

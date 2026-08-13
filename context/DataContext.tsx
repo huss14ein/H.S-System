@@ -1034,9 +1034,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     /**
      * Queue FIFO lot/holdings rebuild work so hydrate backfill cannot clobber in-flight trade lot persists.
      * Each job is bounded so a hung persist cannot freeze Restore / Record Trade forever.
+     * On timeout/failure the generation bumps so late `onLotsUpdated` from the abandoned job is dropped.
      */
-    const enqueueLotSyncWork = (work: () => Promise<void>): Promise<void> => {
-        const run = () => withTimeout(Promise.resolve().then(work), 45_000, 'Holdings ledger sync');
+    const lotSyncGenerationRef = useRef(0);
+    const enqueueLotSyncWork = (
+        work: (ctx: { allowWrite: () => boolean }) => Promise<void>,
+    ): Promise<void> => {
+        const run = async () => {
+            const gen = ++lotSyncGenerationRef.current;
+            const allowWrite = () => gen === lotSyncGenerationRef.current;
+            try {
+                await withTimeout(
+                    Promise.resolve().then(() => work({ allowWrite })),
+                    45_000,
+                    'Holdings ledger sync',
+                );
+            } catch (err) {
+                if (lotSyncGenerationRef.current === gen) {
+                    lotSyncGenerationRef.current += 1;
+                }
+                throw err;
+            }
+        };
         const queued = lotSyncChainRef.current.then(run, run);
         lotSyncChainRef.current = queued;
         return queued;
@@ -4331,7 +4350,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!auth?.user) return { quantities: {} };
         const userId = auth.user.id;
         const quantities: Record<string, number> = {};
-        await enqueueLotSyncWork(async () => {
+        await enqueueLotSyncWork(async ({ allowWrite }) => {
             const snapshot = dataRef.current;
             const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
             if (!portfolio) throw new Error('Portfolio not found');
@@ -4358,6 +4377,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 supabase,
                 userId,
                 onLotsUpdated: (updatedLots) => {
+                    if (!allowWrite()) return;
                     applyFinancialDataPatch((prev) => ({
                         ...prev,
                         investmentCostLots: [
@@ -4367,6 +4387,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     }));
                 },
             });
+            if (!allowWrite()) return;
             const pf = (dataRef.current?.investments ?? []).find((p) => p.id === args.portfolioId);
             for (const sym of symbols) {
                 const h = pf?.holdings?.find((x) => String(x.symbol ?? '').trim().toUpperCase() === sym);
@@ -4385,7 +4406,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!supabase || !auth?.user) return { patchedSymbols: 0 };
         const userId = auth.user.id;
         let patchedSymbols = 0;
-        await enqueueLotSyncWork(async () => {
+        await enqueueLotSyncWork(async ({ allowWrite }) => {
             const snap = dataRef.current;
             for (const portfolio of snap?.investments ?? []) {
                 try {
@@ -4403,6 +4424,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         supabase,
                         userId,
                         onLotsUpdated: (updatedLots) => {
+                            if (!allowWrite()) return;
                             applyFinancialDataPatch((prev) => ({
                                 ...prev,
                                 investmentCostLots: [
@@ -4895,7 +4917,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 portfolioId: string;
                 symbols: string[];
             }) => {
-                await enqueueLotSyncWork(async () => {
+                await enqueueLotSyncWork(async ({ allowWrite }) => {
                     const snap = dataRef.current;
                     const portfolio = (snap?.investments ?? []).find((p) => p.id === portfolioId);
                     if (!portfolio || !auth?.user) return;
@@ -4914,6 +4936,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         supabase,
                         userId: auth.user.id,
                         onLotsUpdated: (updatedLots) => {
+                            if (!allowWrite()) return;
                             applyFinancialDataPatch((prev) => ({
                                 ...prev,
                                 investmentCostLots: [
@@ -6266,7 +6289,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const portfolioIdForLots = portfolio.id;
                 const symbolForLots = normalizedSymbol;
                 const userIdForLots = userId;
-                const runLotSync = async () => {
+                const runLotSync = async ({ allowWrite }: { allowWrite: () => boolean }) => {
                     try {
                         const snap = dataRef.current;
                         const portfolioAfter =
@@ -6288,6 +6311,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             supabase: db,
                             userId: userIdForLots,
                             onLotsUpdated: (updatedLots) => {
+                                if (!allowWrite()) return;
                                 applyFinancialDataPatch((prev) => ({
                                     ...prev,
                                     investmentCostLots: [
@@ -6625,7 +6649,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
             sealHoldingsBookAfterTrade({ defer: true });
         }
-        const runPostEditWork = async () => {
+        const runPostEditWork = async ({ allowWrite }: { allowWrite: () => boolean }) => {
+            if (!allowWrite()) return;
             try {
                 const editIdempotency = `inv-tx-edit|${tx.id}|${String(normalized.date).slice(0, 10)}|${total}|${Date.now()}`;
                 const { data: editAdj } = await insertReconciliationAdjustment(db, userIdForEdit, {
@@ -6648,6 +6673,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         netCashDelta: roundMoney(netDelta),
                     },
                 });
+                if (!allowWrite()) return;
                 const cashAudit = await insertReconciliationAudit(db, userIdForEdit, {
                     kind: 'correction',
                     mechanism,
@@ -6669,6 +6695,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         quantityAfter: normalized.quantity ?? null,
                     },
                 });
+                if (!allowWrite()) return;
                 if (cashAudit || editAdj) {
                     applyFinancialDataPatch((prev) => ({
                         ...prev,

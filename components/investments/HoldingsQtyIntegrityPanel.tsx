@@ -31,6 +31,11 @@ import { yieldToMain } from '../../utils/yieldToMain';
 import { safeTickerLabel } from '../../utils/safeTickerLabel';
 import HoldingLotsPanel from './HoldingLotsPanel';
 
+/** Busy-key for Rebuild/Restore — must match handler keys (no `missing:` prefix). */
+function integrityBusyKey(portfolioId: string, symbol: string): string {
+  return `${portfolioId}:${safeTickerLabel(symbol)}`;
+}
+
 type Props = {
   /** Compact for embedding under Investments KPIs. */
   compact?: boolean;
@@ -215,6 +220,18 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
         );
       }
       const ledgerAfter = opts?.expectedLedgerQty ?? storedAfter;
+      if (
+        !opts?.restoreOpen &&
+        !opts?.reopenSold &&
+        opts?.expectedLedgerQty != null &&
+        Math.abs(storedAfter - opts.expectedLedgerQty) > 0.01
+      ) {
+        toast(
+          `Rebuild left ${ticker} at ${storedAfter.toLocaleString()} vs ledger ${opts.expectedLedgerQty.toLocaleString()}. Warning kept open.`,
+          'warning',
+        );
+        return;
+      }
       const next = await acknowledgeHoldingsIntegrityDurable({
         userId,
         portfolioId,
@@ -303,10 +320,11 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
   };
 
   const renderMissingRow = (r: MissingLedgerHoldingRow, mode: 'open' | 'sold') => {
-    const key = `missing:${r.portfolioId}:${r.symbol}`;
+    const rowKey = `missing:${r.portfolioId}:${r.symbol}`;
+    const busyKey = integrityBusyKey(r.portfolioId, r.symbol);
     return (
       <li
-        key={key}
+        key={rowKey}
         className={`flex flex-wrap items-center gap-2 justify-between border rounded-lg px-3 py-2 bg-white ${
           mode === 'open' ? 'border-rose-300' : 'border-slate-200'
         }`}
@@ -324,7 +342,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
           <button
             type="button"
             data-testid={`keep-closed-${r.symbol}`}
-            disabled={ackBusyKey === `${r.portfolioId}:${r.symbol}`}
+            disabled={ackBusyKey === busyKey || !!rebuildBusyKey}
             className="text-xs px-2.5 py-1.5 rounded-md border border-slate-400 text-slate-900 bg-white hover:bg-slate-100 font-medium cursor-pointer shadow-sm disabled:opacity-50"
             onClick={(e) => {
               e.preventDefault();
@@ -332,12 +350,12 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
               keepClosed(r);
             }}
           >
-            {ackBusyKey === `${r.portfolioId}:${r.symbol}` ? 'Saving…' : 'Keep closed'}
+            {ackBusyKey === busyKey ? 'Saving…' : 'Keep closed'}
           </button>
           <button
             type="button"
             data-testid={mode === 'open' ? `restore-holding-${r.symbol}` : `reopen-${r.symbol}`}
-            disabled={rebuildBusyKey === key || !ctx?.rebuildHoldingsFromLedgerForSymbols}
+            disabled={rebuildBusyKey === busyKey || !ctx?.rebuildHoldingsFromLedgerForSymbols}
             className={
               mode === 'open'
                 ? 'text-xs px-2.5 py-1.5 rounded-md border border-emerald-500 text-emerald-950 bg-emerald-50 hover:bg-emerald-100 font-semibold disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed'
@@ -353,7 +371,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
               });
             }}
           >
-            {rebuildBusyKey === key
+            {rebuildBusyKey === busyKey
               ? 'Working…'
               : mode === 'open'
                 ? 'Restore holding'

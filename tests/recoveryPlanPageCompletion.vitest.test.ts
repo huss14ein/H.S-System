@@ -37,12 +37,17 @@ describe('recovery plan page accuracy wiring', () => {
 
   it('ranks decisions, auto-opens the highest-priority name, and shows a scorecard', () => {
     const page = read('pages/RecoveryPlanView.tsx');
+    const engine = read('services/canonicalPlanningEngine.ts');
     expect(page).toContain('rankRecoveryDecisions');
     expect(page).toContain('rankedDecisions[0].holdingId');
     expect(page).toContain('RecoveryDecisionScorecard');
     expect(page).toContain('decisionPathMode: selectedDecision?.suggestedPath');
+    expect(page).toContain('pathModeUserChosen ? recoveryPathMode : undefined');
     expect(page).toContain('id="recovery-decision-board"');
     expect(page).toContain('id="recovery-act-first"');
     expect(page).toContain('pageAction !== \'focus-recovery-decision\'');
+    expect(page).toContain('fundedLadderLevels');
+    expect(engine).toContain('fundedQualified');
+    expect(engine).toContain('rankRecoveryDecisions');
   });
 });

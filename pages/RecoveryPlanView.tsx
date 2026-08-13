@@ -186,6 +186,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const [whatIfSpend, setWhatIfSpend] = useState('');
   const [whatIfPrice, setWhatIfPrice] = useState('');
   const [recoveryPathMode, setRecoveryPathMode] = useState<RecoveryPathMode>('recycling');
+  /** True only after localStorage load or explicit user tab choice — keeps decisionPathMode live until then. */
+  const [pathModeUserChosen, setPathModeUserChosen] = useState(false);
   const [recyclingSummaryCache, setRecyclingSummaryCache] = useState<
     Record<string, RecyclingPlanSummary | null>
   >({});
@@ -450,7 +452,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       fundamentals: selectedFundamentals,
       plannedTrades: data?.plannedTrades ?? [],
       watchlistScores,
-      userPathMode: recoveryPathMode,
+      userPathMode: pathModeUserChosen ? recoveryPathMode : undefined,
       decisionPathMode: selectedDecision?.suggestedPath ?? null,
       recyclingOpts: {
         convictionGrade: recyclingPrefsUi.convictionGrade,
@@ -467,6 +469,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     selectedFundamentals,
     recyclingPrefsUi,
     recoveryPathMode,
+    pathModeUserChosen,
     globalConfig,
     deployableCashSAR,
     sarPerUsd,
@@ -479,12 +482,17 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     const sym = selected?.holding.symbol;
     if (!sym) return;
     const saved = loadRecoveryPathMode(sym);
-    if (saved) setRecoveryPathMode(saved);
+    if (saved) {
+      setRecoveryPathMode(saved);
+      setPathModeUserChosen(true);
+    } else {
+      setPathModeUserChosen(false);
+    }
   }, [selected?.holding.id, selected?.holding.symbol]);
 
   useEffect(() => {
     const sym = selected?.holding.symbol;
-    if (!sym || loadRecoveryPathMode(sym)) return;
+    if (!sym || pathModeUserChosen || loadRecoveryPathMode(sym)) return;
     const mode = suggestDefaultRecoveryPathMode({
       recyclingReady: unifiedRecoveryPlan?.recyclingSummary?.planAvailable === true,
       ladderReady: unifiedRecoveryPlan?.cashLadder?.qualified === true,
@@ -494,6 +502,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     if (mode) setRecoveryPathMode(mode);
   }, [
     selected?.holding.id,
+    pathModeUserChosen,
     unifiedRecoveryPlan?.suggestedPathMode,
     unifiedRecoveryPlan?.recyclingSummary?.planAvailable,
     unifiedRecoveryPlan?.cashLadder?.qualified,
@@ -528,6 +537,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const handleRecoveryPathModeChange = useCallback(
     (mode: RecoveryPathMode) => {
       setRecoveryPathMode(mode);
+      setPathModeUserChosen(true);
       setUnifiedDraftOrders(null);
       setRecyclingDraftOrders(null);
       setDraftOrders(null);
@@ -752,19 +762,61 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       toast('No pending recovery tranches to draft.', 'info');
       return;
     }
-    setUnifiedDraftOrders(unifiedRecoveryPlan.pendingDrafts);
+    const decision = selectedDecision;
+    if (recoveryPathMode === 'recovery_ladder' && decision) {
+      if (decision.metrics.budgetDeferred) {
+        toast(
+          decision.canRecycle
+            ? 'Recovery cash is assigned elsewhere — switch to recycling or wait.'
+            : 'Recovery cash is assigned to higher-priority names. Wait or free budget first.',
+          'info',
+        );
+        return;
+      }
+      if (decision.action === 'do_not_add' || decision.action === 'wait' || decision.action === 'review_exit') {
+        toast(decision.nextStep || 'Decision says do not generate ladder drafts for this name now.', 'info');
+        return;
+      }
+    }
+    let drafts = unifiedRecoveryPlan.pendingDrafts;
+    if (
+      recoveryPathMode === 'recovery_ladder' &&
+      decision?.action === 'add_ladder' &&
+      decision.metrics.fundedLadderLevels === 1
+    ) {
+      drafts = drafts.filter((d) => d.trancheKind !== 'ladder_buy' || d.trancheIndex === 1);
+      if (!drafts.some((d) => d.trancheKind === 'ladder_buy')) {
+        toast('No first-rung ladder draft left to generate for the funded cash.', 'info');
+        return;
+      }
+    } else if (
+      recoveryPathMode === 'recovery_ladder' &&
+      decision?.action === 'add_ladder' &&
+      decision.metrics.cashToDeploy > 0
+    ) {
+      let spent = 0;
+      const maxCash = decision.metrics.cashToDeploy;
+      drafts = drafts.filter((d) => {
+        if (d.trancheKind !== 'ladder_buy') return true;
+        const cost = (Number(d.qty) || 0) * (Number(d.limitPrice) || 0);
+        if (spent + cost > maxCash + 1e-6) return false;
+        spent += cost;
+        return true;
+      });
+      if (!drafts.some((d) => d.trancheKind === 'ladder_buy')) {
+        toast('Allocated recovery cash does not cover any ladder step.', 'info');
+        return;
+      }
+    }
+    setUnifiedDraftOrders(drafts);
     setRecyclingDraftOrders(
-      unifiedRecoveryPlan.pendingDrafts.filter(
-        (d) => d.trancheKind === 'recycle_sell' || d.trancheKind === 'recycle_rebuy',
-      ),
+      drafts.filter((d) => d.trancheKind === 'recycle_sell' || d.trancheKind === 'recycle_rebuy'),
     );
-    setDraftOrders(
-      unifiedRecoveryPlan.pendingDrafts.filter((d) => d.trancheKind === 'ladder_buy'),
-    );
+    setDraftOrders(drafts.filter((d) => d.trancheKind === 'ladder_buy'));
     trackAction('generate-unified-recovery-drafts', 'Recovery Plan');
     const label = recoveryPathMode === 'recycling' ? 'recycling' : 'buy ladder';
-    toast(`${unifiedRecoveryPlan.pendingDrafts.length} ${label} draft order(s) ready.`, 'success');
-  }, [unifiedRecoveryPlan, recoveryPathMode, trackAction]);
+    toast(`${drafts.length} ${label} draft order(s) ready.`, 'success');
+  }, [unifiedRecoveryPlan, recoveryPathMode, selectedDecision, trackAction]);
 
   const handleSaveRecyclingPlan = useCallback(() => {
     const planToSave = activeRecyclingPlan;

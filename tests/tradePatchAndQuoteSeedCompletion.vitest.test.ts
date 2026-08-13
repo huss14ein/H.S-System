@@ -60,7 +60,9 @@ describe('tradePatchAndQuoteSeedCompletion', () => {
     expect(ctx).toContain('committedPatchEpochRef.current = epoch');
     expect(ctx).toContain('if (committedPatchEpochRef.current < dataPatchEpochRef.current) return');
     expect(ctx).toContain('enqueueLotSyncWork');
-    expect(ctx).toContain('await enqueueLotSyncWork(async () => {');
+    expect(ctx).toContain('await enqueueLotSyncWork(async ({ allowWrite }) => {');
+    expect(ctx).toContain('if (!allowWrite()) return');
+    expect(ctx).toContain('lotSyncGenerationRef');
     const sealStart = ctx.indexOf('const sealHoldingsBookAfterTrade = ');
     const sealBody = ctx.slice(sealStart, sealStart + 700);
     expect(sealBody).toContain('scheduleIdleWork(write, 0)');

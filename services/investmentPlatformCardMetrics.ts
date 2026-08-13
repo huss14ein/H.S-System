@@ -74,6 +74,8 @@ export interface PlatformCardMetrics {
   investmentAgeDays?: number | null;
   /** Deposits exist, leftover net invested ≤ 1 SAR, present value remains. */
   principalFullyRecovered?: boolean;
+  /** Raw deposit amounts in SAR (before incomplete-books inference). */
+  depositsRecordedSAR?: number;
 }
 
 export interface PlatformMetricValidationResult {
@@ -332,6 +334,7 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     firstCapitalDepositYmd,
     investmentAgeDays,
     principalFullyRecovered,
+    depositsRecordedSAR,
   };
   return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, { unrealizedPnLBasis });
 }
@@ -648,10 +651,10 @@ export function validatePlatformMetrics(
   const derivedNetCapital = Math.max(0, m.totalInvestedSAR - m.totalWithdrawnSAR);
   const cashSar = Math.max(0, m.totalValueInSAR - m.holdingsValueInSAR);
   const economicFloor = Math.max(0, (m.holdingsCostBasisSAR ?? 0) + cashSar);
-  const expectedNet =
-    m.firstCapitalDepositYmd != null
-      ? derivedNetCapital
-      : Math.max(derivedNetCapital, economicFloor);
+  const hasDeposits =
+    (m.depositsRecordedSAR != null && m.depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) ||
+    (m.depositsRecordedSAR == null && m.firstCapitalDepositYmd != null);
+  const expectedNet = hasDeposits ? derivedNetCapital : Math.max(derivedNetCapital, economicFloor);
   if (Math.abs(expectedNet - m.netCapitalSAR) > RECONCILIATION_EPSILON) {
     issues.push('netCapitalSAR mismatch with deposits−withdrawals (or incomplete-books floor)');
   }
@@ -701,16 +704,20 @@ function sanitizeAndValidatePlatformMetrics(
         ? Math.floor(metrics.investmentAgeDays)
         : null,
     principalFullyRecovered: metrics.principalFullyRecovered === true,
+    depositsRecordedSAR: Math.max(0, sanitizeFinite(metrics.depositsRecordedSAR ?? 0)),
   };
 
   // Canonical derivations (single source of truth).
   const ledgerNet = Math.max(0, safe.totalInvestedSAR - safe.totalWithdrawnSAR);
   const cashSar = Math.max(0, safe.totalValueInSAR - safe.holdingsValueInSAR);
   const economicDeployed = Math.max(0, basisSAR + cashSar);
-  /** Incomplete books (no economic deposit): floor at cost + idle cash — same as headline. */
-  safe.netCapitalSAR = safe.firstCapitalDepositYmd
-    ? ledgerNet
-    : Math.max(ledgerNet, economicDeployed);
+  const hasDeposits = (safe.depositsRecordedSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
+  /** Incomplete books (no deposit amounts): floor at cost + idle cash — same as headline. */
+  safe.netCapitalSAR = hasDeposits ? ledgerNet : Math.max(ledgerNet, economicDeployed);
+  safe.principalFullyRecovered =
+    hasDeposits &&
+    safe.netCapitalSAR <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    safe.totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
   if (basisMode === 'holdings_cost') {
     safe.totalGainLossSAR = safe.holdingsValueInSAR - basisSAR;
     safe.roi = basisSAR > 1e-9 ? (safe.totalGainLossSAR / basisSAR) * 100 : 0;

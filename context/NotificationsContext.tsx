@@ -19,7 +19,7 @@ import {
   resolveCashBalanceDriftAcks,
   resolveHoldingsIntegrityAcks,
 } from '../services/uiAcks';
-import { filterUnackedDriftRows } from '../services/holdingsIntegrityAck';
+import { filterUnackedDriftRows, filterUnackedMissingRows } from '../services/holdingsIntegrityAck';
 import { normalizedMonthlyExpenseSar, cashRunwayMonths } from '../services/financeMetrics';
 import { salaryToExpenseCoverageSar } from '../services/salaryExpenseCoverage';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
@@ -32,6 +32,7 @@ import {
   buildHoldingsIntegrityFingerprint,
   buildHoldingsQtyDriftReport,
   holdingsQtyDriftNeedsAttention,
+  listMissingLedgerHoldingsAcrossPortfolios,
 } from '../services/holdingsIntegrityRepair';
 import { useEnhancementSignals } from '../hooks/useEnhancementSignals';
 import { buildNotificationsDataFingerprint } from '../services/budgetSpendFingerprint';
@@ -835,31 +836,56 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       holdingsQtyDriftNeedsAttention(buildHoldingsQtyDriftReport(data)),
       holdingsAcks,
     );
-    if (qtyDrift.length === 0) return list;
+    const missingOpen = filterUnackedMissingRows(
+      listMissingLedgerHoldingsAcrossPortfolios(data).filter((r) => r.likelyOpen),
+      holdingsAcks,
+    );
     const now = new Date();
-    const primary = qtyDrift[0];
-    const holdingId = getPersonalInvestments(data)
-      .find((p) => p.id === primary.portfolioId)
-      ?.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === primary.symbol)?.id;
-    const n: AppNotification = {
-      id: 'holdings-qty-integrity-drift',
-      category: 'System',
-      message: `Holding quantity may not match the investment ledger: ${qtyDrift
-        .map((r) => r.symbol)
-        .slice(0, 3)
-        .join(', ')}${qtyDrift.length > 3 ? '…' : ''}.`,
-      date: now.toISOString(),
-      isRead: false,
-      pageLink: 'Investments',
-      pageAction: holdingId
-        ? safePageAction('Investments', `open-reconcile-quantity:${holdingId}`)
-        : undefined,
-      severity: 'warning',
-      actionHint: 'Opens Reconcile quantity for the first drifted holding (symbol-only; audited).',
-    };
-    const sev = n.severity ?? 'info';
-    n.score = severityScore[sev] * 10 + 1;
-    list.push(n);
+    if (missingOpen.length > 0) {
+      const primaryMissing = missingOpen[0];
+      const nMissing: AppNotification = {
+        id: 'holdings-qty-integrity-missing',
+        category: 'System',
+        message: `Critical: trades on the ledger but no open holding for ${missingOpen
+          .map((r) => r.symbol)
+          .slice(0, 3)
+          .join(', ')}${missingOpen.length > 3 ? '…' : ''}.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Investments',
+        pageAction: safePageAction('Investments', 'focus-holdings-integrity'),
+        severity: 'urgent',
+        actionHint: `Opens Holdings quantity integrity — Restore ${primaryMissing.symbol} from the ledger.`,
+      };
+      const sevM = nMissing.severity ?? 'urgent';
+      nMissing.score = severityScore[sevM] * 10 + 2;
+      list.push(nMissing);
+    }
+    if (qtyDrift.length > 0) {
+      const primary = qtyDrift[0];
+      const holdingId = getPersonalInvestments(data)
+        .find((p) => p.id === primary.portfolioId)
+        ?.holdings?.find((h) => String(h.symbol ?? '').toUpperCase() === primary.symbol)?.id;
+      const n: AppNotification = {
+        id: 'holdings-qty-integrity-drift',
+        category: 'System',
+        message: `Holding quantity may not match the investment ledger: ${qtyDrift
+          .map((r) => r.symbol)
+          .slice(0, 3)
+          .join(', ')}${qtyDrift.length > 3 ? '…' : ''}.`,
+        date: now.toISOString(),
+        isRead: false,
+        pageLink: 'Investments',
+        pageAction: holdingId
+          ? safePageAction('Investments', `open-reconcile-quantity:${holdingId}`)
+          : safePageAction('Investments', 'focus-holdings-integrity'),
+        severity: 'warning',
+        actionHint: 'Opens Reconcile quantity for the first drifted holding (symbol-only; audited).',
+      };
+      const sev = n.severity ?? 'info';
+      n.score = severityScore[sev] * 10 + 1;
+      list.push(n);
+    }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- holdingsIntegrityFp gates ledger inputs
   }, [holdingsIntegrityFp, showHydrateBanner, auth?.user?.id, data?.settings?.uiAcks]);
