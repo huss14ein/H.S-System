@@ -849,6 +849,16 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
     if (Array.isArray(months) && months.length > 0) {
         row.typical_payout_months = months.filter((m: number) => m >= 1 && m <= 12);
     }
+    if (holdingType === 'manual_fund') {
+        const currentPriceRaw = holding.currentPrice ?? (holding as { current_price?: number }).current_price;
+        if (currentPriceRaw != null && Number.isFinite(Number(currentPriceRaw))) {
+            row.current_price = Number(currentPriceRaw);
+        }
+        const priceUpdatedAt = holding.priceUpdatedAt ?? (holding as { price_updated_at?: string }).price_updated_at;
+        if (priceUpdatedAt != null && String(priceUpdatedAt).trim() !== '') {
+            row.price_updated_at = String(priceUpdatedAt);
+        }
+    }
     return row;
 }
 

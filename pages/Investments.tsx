@@ -670,6 +670,9 @@ const RecordTradeModal: React.FC<{
     /** Mashora, retirement plans, etc. — no live quote; user enters current position value. */
     const [manualValuation, setManualValuation] = useState(false);
     const [manualCurrentValue, setManualCurrentValue] = useState('');
+    /** Monthly contribution (e.g. 500 SAR) — separate from statement/plan total. */
+    const [contributionAmount, setContributionAmount] = useState('');
+    const [manualEntryMode, setManualEntryMode] = useState<'contribution' | 'units'>('contribution');
     const [executedPlanId, setExecutedPlanId] = useState<string | undefined>();
     const [amountToInvest, setAmountToInvest] = useState<number | null>(null);
     const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('LIMIT');
@@ -746,10 +749,26 @@ const RecordTradeModal: React.FC<{
 
     const isManualExisting = existingHoldingForSymbol?.holdingType === 'manual_fund';
     const showManualCurrentValueField = type === 'buy' && ((isNewHolding && manualValuation) || isManualExisting);
+    const isContributionStyleBuy = showManualCurrentValueField;
+    const useContributionEntry = isContributionStyleBuy && manualEntryMode === 'contribution';
 
     useEffect(() => {
         if (!isNewHolding) setManualValuation(false);
     }, [isNewHolding]);
+
+    useEffect(() => {
+        if (!useContributionEntry) return;
+        const amt = parseFloat(contributionAmount);
+        if (!Number.isFinite(amt) || amt <= 0) return;
+        setQuantity('1');
+        setPrice(String(amt));
+    }, [useContributionEntry, contributionAmount]);
+
+    useEffect(() => {
+        if (type !== 'buy' || !holdingOptionKey) return;
+        const stillValid = holdingSymbolOptionsForPick.some((o) => o.optionKey === holdingOptionKey);
+        if (!stillValid) applyHoldingOption(null);
+    }, [type, holdingOptionKey, holdingSymbolOptionsForPick, applyHoldingOption]);
     
     const resetForm = () => {
         setType('buy'); setSymbol(''); setQuantity(''); setPrice('');
@@ -760,6 +779,8 @@ const RecordTradeModal: React.FC<{
         setHoldingAssetClass('Stock');
         setManualValuation(false);
         setManualCurrentValue('');
+        setContributionAmount('');
+        setManualEntryMode('contribution');
         setTradeCurrency(appCurrency);
         setExecutedPlanId(undefined);
         setAmountToInvest(null);
@@ -1176,16 +1197,31 @@ const RecordTradeModal: React.FC<{
             }
             return null;
         }
-        if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
-        if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
-        if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
-        if (type === 'buy' && isNewHolding && manualValuation) {
-            const m = parseFloat(manualCurrentValue);
-            if (!Number.isFinite(m) || m <= 0) return 'Enter the current position value (manual valuation), e.g. plan balance in ' + tradeCurrency + '.';
+        if (useContributionEntry) {
+            const amt = parseFloat(contributionAmount);
+            if (!Number.isFinite(amt) || amt <= 0) return 'Enter the amount invested this month (e.g. 500).';
+        } else {
+            if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) return 'Quantity must be greater than 0.';
+            if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) return 'Price must be greater than 0.';
         }
-        if (type === 'buy' && isManualExisting && manualCurrentValue.trim() !== '') {
+        if (type === 'buy' && isNewHolding && !holdingName.trim()) return 'Company name is required for a new holding.';
+        if (type === 'buy' && isContributionStyleBuy && manualCurrentValue.trim() !== '') {
             const m = parseFloat(manualCurrentValue);
-            if (!Number.isFinite(m) || m <= 0) return 'Current value for this purchase must be a positive number, or leave blank to use the amount invested.';
+            if (!Number.isFinite(m) || m <= 0) return 'Latest statement / plan value must be a positive number, or leave blank to use the amount invested.';
+            const prevCv = Number(existingHoldingForSymbol?.currentValue) || 0;
+            const invested = useContributionEntry
+                ? parseFloat(contributionAmount)
+                : parsedQuantity * parsedPrice;
+            if (
+                isManualExisting &&
+                prevCv > 0 &&
+                Number.isFinite(invested) &&
+                invested > 0 &&
+                m < prevCv * 0.5 &&
+                Math.abs(m - invested) <= Math.max(1, invested * 0.05)
+            ) {
+                return 'That looks like this month’s contribution, not the full plan balance. Put the monthly amount in “Amount invested this month” and leave statement blank (or enter the bank’s total).';
+            }
         }
         if (type === 'sell' && portfolioId) {
             const portfolio = portfolios.find(p => p.id === portfolioId);
@@ -1194,7 +1230,10 @@ const RecordTradeModal: React.FC<{
             if (!holding) return 'Cannot sell: holding not found in selected portfolio.';
             if (holding.quantity < parsedQuantity) return `Cannot sell ${parsedQuantity}. Available quantity is ${holding.quantity}.`;
         }
-        const gross = parsedQuantity * parsedPrice;
+        const gross = useContributionEntry
+            ? parseFloat(contributionAmount)
+            : parsedQuantity * parsedPrice;
+        if (!Number.isFinite(gross) || gross <= 0) return 'Trade amount must be greater than 0.';
         if (fees.trim() !== '' && !Number.isFinite(parseFloat(fees))) return 'Fees must be a valid number (or leave blank for zero).';
         if (!Number.isFinite(feeAmount) || feeAmount < 0) return 'Fees must be zero or a positive number.';
         if (type === 'sell' && feeAmount > gross + 1e-9) {
@@ -1207,7 +1246,7 @@ const RecordTradeModal: React.FC<{
             }
         }
         return null;
-    }, [portfolioId, debouncedQuantity, debouncedPrice, dividendAmount, symbol, debouncedSymbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptionsForPick, data?.investmentTransactions, data?.accounts, date, accountId, investmentAccounts]);
+    }, [portfolioId, debouncedQuantity, debouncedPrice, dividendAmount, symbol, debouncedSymbol, type, isNewHolding, holdingName, manualValuation, manualCurrentValue, isManualExisting, isContributionStyleBuy, useContributionEntry, contributionAmount, existingHoldingForSymbol, tradeCurrency, portfolios, availableCashInLedgerCurrency, availableCashByCurrency.SAR, availableCashByCurrency.USD, sarPerUsd, formatCurrencyString, feeAmount, requiresHoldingPick, holdingSymbolOptionsForPick, data?.investmentTransactions, data?.accounts, date, accountId, investmentAccounts]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1242,14 +1281,10 @@ const RecordTradeModal: React.FC<{
         try {
             let manualCvPayload: number | undefined;
             if (type === 'buy' && showManualCurrentValueField) {
-                if (isNewHolding && manualValuation) {
-                    manualCvPayload = parseFloat(manualCurrentValue);
-                } else if (isManualExisting) {
-                    const t = manualCurrentValue.trim();
-                    if (t !== '') {
-                        const p = parseFloat(t);
-                        if (Number.isFinite(p) && p > 0) manualCvPayload = p;
-                    }
+                const t = manualCurrentValue.trim();
+                if (t !== '') {
+                    const p = parseFloat(t);
+                    if (Number.isFinite(p) && p > 0) manualCvPayload = p;
                 }
             }
             const useManualFund = type === 'buy' && ((isNewHolding && manualValuation) || isManualExisting);
@@ -1259,8 +1294,19 @@ const RecordTradeModal: React.FC<{
             const bookCurrency = portfolio
                 ? (portfolio.currency === 'SAR' || portfolio.currency === 'USD' ? portfolio.currency : 'USD')
                 : tradeCurrency;
-            const qty = type === 'dividend' ? 0 : (parseFloat(quantity) || 0);
-            const px = type === 'dividend' ? 0 : (parseFloat(price) || 0);
+            const contributionAmt = parseFloat(contributionAmount);
+            const qty =
+                type === 'dividend'
+                    ? 0
+                    : useContributionEntry && Number.isFinite(contributionAmt) && contributionAmt > 0
+                      ? 1
+                      : (parseFloat(quantity) || 0);
+            const px =
+                type === 'dividend'
+                    ? 0
+                    : useContributionEntry && Number.isFinite(contributionAmt) && contributionAmt > 0
+                      ? contributionAmt
+                      : (parseFloat(price) || 0);
             const gross = qty * px;
             const buySellTotal =
                 type === 'buy' ? gross + feeAmount : type === 'sell' ? Math.max(0, gross - feeAmount) : undefined;
@@ -1465,9 +1511,11 @@ const RecordTradeModal: React.FC<{
                 
                 <>
                  <div>
-                    <label htmlFor={requiresHoldingPick ? 'holding-symbol-select' : 'symbol'} className="block text-sm font-medium text-gray-700">
-                        {requiresHoldingPick ? (type === 'sell' ? 'Holding to sell' : 'Holding (dividend)') : 'Symbol'}
+                    {requiresHoldingPick && (
+                    <label htmlFor="holding-symbol-select" className="block text-sm font-medium text-gray-700">
+                        {type === 'sell' ? 'Holding to sell' : 'Holding (dividend)'}
                     </label>
+                    )}
                     {requiresHoldingPick ? (
                         <div className="mt-1">
                             <HoldingSymbolSelect
@@ -1494,12 +1542,42 @@ const RecordTradeModal: React.FC<{
                         </div>
                     ) : (
                         <>
-                            <input type="text" id="symbol" value={symbol} onChange={e => {
-                                pauseBackgroundWork(INPUT_INTERACTION_PAUSE_MS);
-                                setSymbol(e.target.value);
-                            }} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder={manualValuation ? 'e.g. MASHORA1 (your unique code for this plan)' : undefined} />
-                            {manualValuation && (
-                                <p className="mt-1 text-xs text-slate-500">Pick a short unique code you will reuse for buys/sells to this plan (not a stock ticker).</p>
+                            {holdingSymbolOptionsForPick.length > 0 && (
+                                <div className="mt-1 mb-3">
+                                    <label htmlFor="buy-existing-holding-select" className="block text-sm font-medium text-gray-700">
+                                        Add to existing holding (optional)
+                                    </label>
+                                    <HoldingSymbolSelect
+                                        id="buy-existing-holding-select"
+                                        options={holdingSymbolOptionsForPick}
+                                        value={holdingOptionKey}
+                                        onChange={applyHoldingOption}
+                                        required={false}
+                                        className="w-full p-2 border border-gray-300 rounded-md"
+                                        showPortfolioInLabel={false}
+                                        disabled={!portfolioId}
+                                        emptyLabel={
+                                            !portfolioId
+                                                ? 'Select a portfolio first…'
+                                                : 'New holding — type a plan code below'
+                                        }
+                                        hint="Pick the same retirement plan or fund for each monthly contribution. A new symbol creates a separate holding."
+                                    />
+                                </div>
+                            )}
+                            {!holdingOptionKey && (
+                                <>
+                                    <label htmlFor="symbol" className="block text-sm font-medium text-gray-700">
+                                        {holdingSymbolOptionsForPick.length > 0 ? 'New symbol / plan code' : 'Symbol / plan code'}
+                                    </label>
+                                    <input type="text" id="symbol" value={symbol} onChange={e => {
+                                        pauseBackgroundWork(INPUT_INTERACTION_PAUSE_MS);
+                                        setSymbol(e.target.value);
+                                    }} required className="mt-1 w-full p-2 border border-gray-300 rounded-md" placeholder={manualValuation ? 'e.g. RETIRE1 (reuse this code every month)' : undefined} />
+                                    {manualValuation && (
+                                        <p className="mt-1 text-xs text-slate-500">Pick a short unique code and reuse it for every contribution to this plan (not a stock ticker).</p>
+                                    )}
+                                </>
                             )}
                         </>
                     )}
@@ -1552,33 +1630,87 @@ const RecordTradeModal: React.FC<{
                                 checked={manualValuation}
                                 onChange={(e) => {
                                     setManualValuation(e.target.checked);
-                                    if (e.target.checked) setHoldingAssetClass('Other');
+                                    if (e.target.checked) {
+                                        setHoldingAssetClass('Other');
+                                        setManualEntryMode('contribution');
+                                    }
                                 }}
                                 className="mt-0.5 rounded border-slate-300"
                             />
                             <span>
                                 <span className="font-medium text-slate-800">Manual valuation (no live market price)</span>
                                 <span className="block text-xs text-slate-600 mt-0.5">
-                                    Use for Mashora, retirement accounts, and other balances without a listed quote. Enter the current value below; scheduled price updates will not overwrite it.
+                                    Use for Mashora, bank retirement plans, and other balances without a listed quote. Record each month’s contribution below; scheduled live prices will not overwrite the plan value.
                                 </span>
                             </span>
                         </label>
                     </div>
                 )}
-                {type !== 'dividend' && (
+                {type !== 'dividend' && isContributionStyleBuy && useContributionEntry && (
+                <div className="space-y-3 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
+                    <div>
+                        <label htmlFor="contribution-amount" className="block text-sm font-medium text-gray-700">
+                            Amount invested this month
+                        </label>
+                        <input
+                            type="number"
+                            id="contribution-amount"
+                            value={contributionAmount}
+                            onChange={(e) => {
+                                pauseBackgroundWork(INPUT_INTERACTION_PAUSE_MS);
+                                setContributionAmount(e.target.value);
+                            }}
+                            required
+                            min="0"
+                            step="any"
+                            className="mt-1 w-full p-2 border border-gray-300 rounded-md"
+                            placeholder={`e.g. 500 ${tradeCurrency}`}
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                            Cash leaving the platform and added to cost basis (for example 500 {tradeCurrency} every month). This does not replace the plan’s total value.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        className="text-xs font-medium text-indigo-700 hover:underline"
+                        onClick={() => setManualEntryMode('units')}
+                    >
+                        Record as units × price instead
+                    </button>
+                </div>
+                )}
+                {type !== 'dividend' && !(isContributionStyleBuy && useContributionEntry) && (
                 <div className="grid grid-cols-2 gap-4">
                      <div>
                         <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
-                            {(isNewHolding && manualValuation) || isManualExisting ? 'Units (use 1 for a single plan/account)' : 'Quantity'}
+                            {isContributionStyleBuy ? 'Units' : 'Quantity'}
                         </label>
                         <input type="number" id="quantity" value={quantity} onChange={handleQuantityChange} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
                      <div>
                         <label htmlFor="price" className="block text-sm font-medium text-gray-700">
-                            {(isNewHolding && manualValuation) || isManualExisting ? 'Cost per unit' : 'Price per Share'}
+                            {isContributionStyleBuy ? 'Cost per unit' : 'Price per Share'}
                         </label>
                         <input type="number" id="price" value={price} onChange={handlePriceChange} required min="0" step="any" className="mt-1 w-full p-2 border border-gray-300 rounded-md" />
                     </div>
+                    {isContributionStyleBuy && (
+                        <div className="col-span-2">
+                            <button
+                                type="button"
+                                className="text-xs font-medium text-indigo-700 hover:underline"
+                                onClick={() => {
+                                    const q = parseFloat(quantity);
+                                    const p = parseFloat(price);
+                                    if (Number.isFinite(q) && Number.isFinite(p) && q > 0 && p > 0 && !contributionAmount.trim()) {
+                                        setContributionAmount(String(q * p));
+                                    }
+                                    setManualEntryMode('contribution');
+                                }}
+                            >
+                                Record as a monthly contribution instead
+                            </button>
+                        </div>
+                    )}
                 </div>
                 )}
                 {type === 'dividend' && (
@@ -1673,7 +1805,7 @@ const RecordTradeModal: React.FC<{
                 {showManualCurrentValueField && (
                     <div>
                         <label htmlFor="manual-current-value" className="block text-sm font-medium text-gray-700">
-                            {isManualExisting && !isNewHolding ? 'Current value for this purchase (optional)' : 'Current position value'}
+                            Latest statement / plan value (total, optional)
                         </label>
                         <input
                             id="manual-current-value"
@@ -1682,12 +1814,16 @@ const RecordTradeModal: React.FC<{
                             step="any"
                             value={manualCurrentValue}
                             onChange={(e) => setManualCurrentValue(e.target.value)}
-                            required={Boolean(isNewHolding && manualValuation)}
-                            placeholder={isManualExisting ? 'Leave blank to use amount invested (qty × price)' : ''}
+                            placeholder={
+                                isManualExisting && existingHoldingForSymbol
+                                    ? `Leave blank to add this month onto ${formatCurrencyString(Number(existingHoldingForSymbol.currentValue) || 0, { inCurrency: tradeCurrency, digits: 2 })}`
+                                    : 'Leave blank to use the amount invested'
+                            }
                             className="mt-1 w-full p-2 border border-gray-300 rounded-md"
                         />
                         <p className="mt-1 text-xs text-slate-500">
-                            Total value in <strong>{tradeCurrency}</strong> (portfolio base). Quantity × price still records cost basis and platform cash.
+                            The <strong>full</strong> plan balance from the bank in <strong>{tradeCurrency}</strong>, not this month’s contribution.
+                            Quantity × price still records cost basis and platform cash.
                         </p>
                     </div>
                 )}
@@ -2359,7 +2495,25 @@ const HoldingEditModal: React.FC<{
                 }
             }
             setManualValError(null);
-            onSave({ ...holding, name, zakahClass, assetClass, goalId, acquisitionDate: ad ? ad.slice(0, 10) : undefined, currentValue });
+            const qtyForMark = Number(holding.quantity) || 0;
+            onSave({
+                ...holding,
+                name,
+                zakahClass,
+                assetClass,
+                goalId,
+                acquisitionDate: ad ? ad.slice(0, 10) : undefined,
+                currentValue,
+                ...(needsManualMarketValue
+                    ? {
+                          currentPrice:
+                              qtyForMark > 0 && Number.isFinite(currentValue)
+                                  ? roundAvgCostPerUnit(currentValue / qtyForMark)
+                                  : holding.currentPrice,
+                          priceUpdatedAt: new Date().toISOString(),
+                      }
+                    : {}),
+            });
             onClose();
         }
     };
