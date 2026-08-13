@@ -10,6 +10,7 @@ export const WealthAnalyticsHero: React.FC<{
   weeklyPnLPositive?: boolean;
   roiDisplay: string;
   roiPositive: boolean;
+  roiStatusLabel?: string;
   onExplainMonthlyPnL?: () => void;
   onExplainWeeklyPnL?: () => void;
   onExplainInvestmentRoi?: () => void;
@@ -21,6 +22,7 @@ export const WealthAnalyticsHero: React.FC<{
   weeklyPnLPositive = true,
   roiDisplay,
   roiPositive,
+  roiStatusLabel,
   onExplainMonthlyPnL,
   onExplainWeeklyPnL,
   onExplainInvestmentRoi,
@@ -92,7 +94,7 @@ export const WealthAnalyticsHero: React.FC<{
               roiPositive ? 'bg-violet-100 text-violet-800' : 'bg-rose-100 text-rose-800'
             }`}
           >
-            {roiPositive ? t('kpiStatusGain') : t('kpiStatusLoss')}
+            {roiStatusLabel ?? (roiPositive ? t('kpiStatusGain') : t('kpiStatusLoss'))}
           </span>
         </div>
       </div>

@@ -10,7 +10,7 @@ import {
   resolveCanonicalAccountId,
   resolveInvestmentTransactionAccountId,
 } from '../utils/investmentLedgerCurrency';
-import { isInvestmentTransactionType } from '../utils/investmentTransactionType';
+import { isInvestmentTransactionType, normalizeInvestmentTransactionType } from '../utils/investmentTransactionType';
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import { isCapitalInvestmentDeposit, isCapitalInvestmentWithdrawal } from './reconciliation/cashDelta';
@@ -223,51 +223,62 @@ export function computePersonalInvestmentKpiBreakdown(
   const isCapitalDeposit = (t: InvestmentTransaction) => isCapitalInvestmentDeposit(t);
   const isCapitalWithdrawal = (t: InvestmentTransaction) => isCapitalInvestmentWithdrawal(t);
 
-  /** Economic capital in/out — excludes broker-cash Reconcile Balance adjustments. */
+  /**
+   * Single pass over the ledger — dated FX and spot FX once per row.
+   * Repeated filter/reduce previously re-converted every transaction ~12 times and could stall large books.
+   */
   let depositsRecordedSar = 0;
   let firstCapitalDepositYmd: string | null = null;
+  let totalWithdrawnSar = 0;
+  let buysSar = 0;
+  let sellsSar = 0;
+  let dividendsSar = 0;
+  let feesSar = 0;
+  let vatSar = 0;
+  let depositsSpotSar = 0;
+  let withdrawalsSpotSar = 0;
+  let buysSpotSar = 0;
+  let sellsSpotSar = 0;
+  let dividendsSpotSar = 0;
+  let feesSpotSar = 0;
+  let vatSpotSar = 0;
+  let depositsDatedAllSar = 0;
+  let withdrawalsDatedAllSar = 0;
   for (const t of invTx) {
-    if (!isCapitalDeposit(t)) continue;
-    depositsRecordedSar += invTxSar(t);
-    const d = safeCapitalDepositYmd(t.date);
-    if (d && (!firstCapitalDepositYmd || d < firstCapitalDepositYmd)) firstCapitalDepositYmd = d;
+    const dated = invTxSar(t);
+    const spot = invTxSarSpot(t);
+    const typ = normalizeInvestmentTransactionType(t.type);
+    if (typ === 'deposit') {
+      depositsSpotSar += spot;
+      depositsDatedAllSar += dated;
+      if (isCapitalDeposit(t)) {
+        depositsRecordedSar += dated;
+        const d = safeCapitalDepositYmd(t.date);
+        if (d && (!firstCapitalDepositYmd || d < firstCapitalDepositYmd)) firstCapitalDepositYmd = d;
+      }
+    } else if (typ === 'withdrawal') {
+      withdrawalsSpotSar += spot;
+      withdrawalsDatedAllSar += dated;
+      if (isCapitalWithdrawal(t)) totalWithdrawnSar += dated;
+    } else if (typ === 'buy') {
+      buysSar += dated;
+      buysSpotSar += spot;
+    } else if (typ === 'sell') {
+      sellsSar += dated;
+      sellsSpotSar += spot;
+    } else if (typ === 'dividend') {
+      dividendsSar += dated;
+      dividendsSpotSar += spot;
+    } else if (typ === 'fee') {
+      feesSar += dated;
+      feesSpotSar += spot;
+    } else if (typ === 'vat') {
+      vatSar += dated;
+      vatSpotSar += spot;
+    }
   }
-  const totalWithdrawnSar = invTx.filter(isCapitalWithdrawal).reduce((sum, t) => sum + invTxSar(t), 0);
-  const buysSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
-    .reduce((sum, t) => sum + invTxSar(t), 0);
-  const sellsSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'sell'))
-    .reduce((sum, t) => sum + invTxSar(t), 0);
-  const dividendsSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
-    .reduce((sum, t) => sum + invTxSar(t), 0);
-  const feesSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((sum, t) => sum + invTxSar(t), 0);
-  const vatSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSar(t), 0);
-
-  /** Spot cash identity still includes reconcile deposit/withdrawal so broker vs ledger drift stays coherent. */
-  const depositsSpotSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
-    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
-  const withdrawalsSpotSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
-    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
-  const buysSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'buy')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
-  const sellsSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'sell')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
-  const dividendsSpotSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'dividend'))
-    .reduce((sum, t) => sum + invTxSarSpot(t), 0);
-  const feesSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'fee')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
-  const vatSpotSar = invTx.filter((t) => isInvestmentTransactionType(t.type, 'vat')).reduce((sum, t) => sum + invTxSarSpot(t), 0);
   const expectedCashFromLedgerSpotSar =
     depositsSpotSar - buysSpotSar + sellsSpotSar + dividendsSpotSar - withdrawalsSpotSar - feesSpotSar - vatSpotSar;
-
-  const depositsDatedAllSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'deposit'))
-    .reduce((sum, t) => sum + invTxSar(t), 0);
-  const withdrawalsDatedAllSar = invTx
-    .filter((t) => isInvestmentTransactionType(t.type, 'withdrawal'))
-    .reduce((sum, t) => sum + invTxSar(t), 0);
   const expectedCashFromLedgerDatedSar =
     depositsDatedAllSar - buysSar + sellsSar + dividendsSar - withdrawalsDatedAllSar - feesSar - vatSar;
 

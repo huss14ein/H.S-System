@@ -125,7 +125,7 @@ import {
   computePortfolioMetricsBundle,
   type PortfolioMetricsBundle,
 } from '../services/investmentPlatformCardMetrics';
-import { useCanonicalSpotFx, buildInvestmentsHeadlineKpiRow } from '../hooks/useCanonicalFinancialMetrics';
+import { useCanonicalSpotFx, buildInvestmentsHeadlineKpiRow, presentHeadlineInvestmentGrowth, pickHeadlineInvestmentExposure } from '../hooks/useCanonicalFinancialMetrics';
 import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
@@ -5875,6 +5875,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
   const metrics = useInvestmentsCanonicalMetrics();
   const emergencyFund = useEmergencyFund(data ?? null);
   const headlineKpis = useMemo(() => buildInvestmentsHeadlineKpiRow(metrics), [metrics]);
+  const presentedGrowth = useMemo(() => presentHeadlineInvestmentGrowth(pickHeadlineInvestmentExposure(metrics)), [metrics]);
   const headlineKpisReady = headlineKpis != null;
   const salaryInvestment = metrics.salaryInvestment;
   const runwayMonthsForBuyPolicy = useMemo(() => {
@@ -6022,6 +6023,17 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
         setActiveTab('Overview');
         const t = window.setTimeout(() => {
             document.getElementById('salary-to-investment')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 120);
+        const cancelClear = scheduleClearPageAction(clearPageAction);
+        return () => {
+            window.clearTimeout(t);
+            cancelClear();
+        };
+    }
+    if (pageAction === 'focus-holdings-integrity') {
+        setActiveTab('Overview');
+        const t = window.setTimeout(() => {
+            document.getElementById('holdings-qty-integrity')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 120);
         const cancelClear = scheduleClearPageAction(clearPageAction);
         return () => {
@@ -6424,7 +6436,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
 
         <InvestmentsQuoteStatusBanner quotesPriceSource={quotesPriceSource} lastUpdated={lastUpdated} />
 
-        <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
+        <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary" id="investment-headline-kpis">
             <Card
                 title="Present value"
                 value={
@@ -6469,15 +6481,15 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 title="Portfolio ROI"
                 value={
                     headlineKpisReady ? (
-                        principalFullyRecovered ? 'Principal recovered' : `${roi.toFixed(2)}%`
+                        presentedGrowth?.valueDisplay ?? (principalFullyRecovered ? 'Principal recovered' : `${roi.toFixed(2)}%`)
                     ) : (
                         <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
                     )
                 }
-                valueColor={roi >= 0 || principalFullyRecovered ? 'text-emerald-700' : 'text-rose-700'}
+                valueColor={(presentedGrowth?.isGrowing ?? roi >= 0) ? 'text-emerald-700' : 'text-rose-700'}
                 density="compact"
-                indicatorColor={roi >= 0 || principalFullyRecovered ? 'green' : 'red'}
-                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 || principalFullyRecovered ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
+                indicatorColor={(presentedGrowth?.isGrowing ?? roi >= 0) ? 'green' : 'red'}
+                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${(presentedGrowth?.isGrowing ?? roi >= 0) ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
                 tooltip="Growth ÷ net invested after withdrawals. When deposit history exists this is (present value − (deposits − withdrawals + commodity/Sukuk cost)) ÷ that net invested. Cost-basis is used only if deposits were never recorded."
                 footer={
                     headlineKpisReady

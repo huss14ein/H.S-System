@@ -11,6 +11,7 @@ describe('isSupportedPageAction', () => {
   it('accepts Dashboard plan compare and salary-invest deep-links', () => {
     expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard')).toBe(true);
     expect(isSupportedPageAction('Dashboard', 'focus-salary-invest')).toBe(true);
+    expect(isSupportedPageAction('Dashboard', 'focus-investment-roi')).toBe(true);
     expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard-extra')).toBe(false);
     expect(isSupportedPageAction('Settings', 'focus-salary-investing')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-salary-invest')).toBe(true);
@@ -35,6 +36,7 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Investments', 'open-trade-modal:from-plan')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-symbol:AAPL')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-dividend-sms')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'focus-holdings-integrity')).toBe(true);
     expect(isSupportedPageAction('Investments', 'sync-realized-pnl')).toBe(true);
     expect(isSupportedPageAction('Statement Upload', 'focus-sms-tab')).toBe(true);
     expect(isSupportedPageAction('Statement Upload', 'focus-bank-tab')).toBe(true);

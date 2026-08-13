@@ -124,6 +124,7 @@ import {
 import { pauseBackgroundWork } from '../utils/backgroundWorkGate';
 import { yieldToMain } from '../utils/yieldToMain';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
+import { withTimeout } from '../utils/withTimeout';
 import { isMonthLocked, mergeNetWorthSnapshotsFromServer, setServerPeriodLocks } from '../services/netWorthSnapshot';
 import { hydrateFoundationsTables } from '../services/foundationsHydrate';
 import {
@@ -1030,11 +1031,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         (recipe: (prev: FinancialData) => FinancialData) => applyFinancialDataPatch(recipe),
         [],
     );
-    /** Queue FIFO lot/holdings rebuild work so hydrate backfill cannot clobber in-flight trade lot persists. */
+    /**
+     * Queue FIFO lot/holdings rebuild work so hydrate backfill cannot clobber in-flight trade lot persists.
+     * Each job is bounded so a hung persist cannot freeze Restore / Record Trade forever.
+     */
     const enqueueLotSyncWork = (work: () => Promise<void>): Promise<void> => {
-        const run = async () => {
-            await work();
-        };
+        const run = () => withTimeout(Promise.resolve().then(work), 45_000, 'Holdings ledger sync');
         const queued = lotSyncChainRef.current.then(run, run);
         lotSyncChainRef.current = queued;
         return queued;

@@ -8,7 +8,7 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
   if (!action || typeof action !== 'string') return false;
 
   if (page === 'Dashboard') {
-    return action === 'plan-compare-dashboard' || action === 'focus-salary-invest';
+    return action === 'plan-compare-dashboard' || action === 'focus-salary-invest' || action === 'focus-investment-roi';
   }
 
   if (page === 'Settings') {
@@ -115,6 +115,7 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'focus-investment-plan' ||
       action === 'focus-dividend-sms' ||
       action === 'focus-salary-invest' ||
+      action === 'focus-holdings-integrity' ||
       action === 'sync-realized-pnl' ||
       action === 'open-corporate-action-wizard' ||
       action === 'open-corporate-action-wizard:from-plan' ||

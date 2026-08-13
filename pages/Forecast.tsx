@@ -12,7 +12,7 @@ import SectionCard from '../components/SectionCard';
 import CollapsibleSection from '../components/CollapsibleSection';
 import { useCurrency } from '../context/CurrencyContext';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
-import { pickInvestmentsTotalSar } from '../services/extendedMetricsPresentation';
+import { pickInvestmentsTotalSar, presentHeadlineInvestmentGrowth } from '../services/extendedMetricsPresentation';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
@@ -288,11 +288,16 @@ const Forecast: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
     const forecastValidationWarnings = useMemo(() => {
         const warnings: string[] = [];
         const fx = sarPerUsd;
-        const referenceRoi = kpiSnapshot?.roi;
+        const presentedRoi = presentHeadlineInvestmentGrowth(kpiSnapshot?.headlineInvestmentExposure);
+        const referenceRoi = presentedRoi?.principalFullyRecovered ? 0 : kpiSnapshot?.roi;
         if (!Number.isFinite(fx) || fx <= 0) warnings.push('Exchange rate is invalid — USD-linked balances may mis-state projections.');
         if (!Number.isFinite(initialValues.netWorth)) warnings.push('Net worth baseline is invalid.');
         if (!Number.isFinite(initialValues.investmentValue) || initialValues.investmentValue < 0) warnings.push('Investment baseline is invalid.');
-        if (!Number.isFinite(referenceRoi)) warnings.push('Reference ROI could not be computed.');
+        if (presentedRoi?.principalFullyRecovered) {
+            warnings.push('Headline ROI is principal recovered — leftover value is profit. Forecast return assumption is independent of that display.');
+        } else if (!Number.isFinite(referenceRoi)) {
+            warnings.push('Reference ROI could not be computed.');
+        }
         if (monthlySavings < 0) warnings.push('Monthly savings is negative; the model uses zero instead.');
         if (!Number.isFinite(stressInputs.monthlyExpense) || stressInputs.monthlyExpense <= 0) {
             warnings.push('Monthly expense estimate is thin — stress test is less meaningful.');

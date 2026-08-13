@@ -114,6 +114,24 @@ const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen,
                 icon: NAVIGATION_ITEMS.find((i) => i.name === 'Investments')!.icon,
             });
             subPages.push({
+                name: 'Open holdings quantity integrity',
+                action: () => {
+                    trackAction('focus-holdings-integrity', 'Investments');
+                    triggerPageAction('Investments', 'focus-holdings-integrity');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Investments')!.icon,
+            });
+            subPages.push({
+                name: 'Open investment ROI (Dashboard)',
+                action: () => {
+                    trackAction('focus-investment-roi', 'Dashboard');
+                    triggerPageAction('Dashboard', 'focus-investment-roi');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Dashboard')!.icon,
+            });
+            subPages.push({
                 name: 'Open salary investing targets (Settings)',
                 action: () => {
                     trackAction('salary-invest-settings', 'Settings');

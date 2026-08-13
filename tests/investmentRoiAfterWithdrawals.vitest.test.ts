@@ -326,7 +326,10 @@ describe('ROI-after-withdrawals surface wiring', () => {
       ['services/geminiService.ts', ['Net invested after withdrawals', 'Principal fully recovered']],
       ['services/metricPassportModel.ts', ['Net invested after withdrawals']],
       ['services/reportingEngine.ts', ['Net invested after withdrawals']],
-      ['pages/Investments.tsx', ['netInvestedSAR', 'principalFullyRecovered']],
+      ['pages/Investments.tsx', ['presentHeadlineInvestmentGrowth', 'principalFullyRecovered']],
+      ['services/reviewPack.ts', ['presentHeadlineInvestmentGrowth', 'Net invested after withdrawals']],
+      ['supabase/functions/send-weekly-digest/index.ts', ['computeWeeklyDigestInvestmentGrowth', 'Investment growth']],
+      ['components/analytics/WealthAnalyticsHero.tsx', ['roiStatusLabel']],
     ];
     for (const [path, patterns] of surfaces) {
       const src = read(path);

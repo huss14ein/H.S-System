@@ -997,7 +997,7 @@ Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (on
 export const getAIDashboardInsight = async (data: FinancialData, opts?: AiInsightOptions): Promise<string> => {
     const g = buildWealthGroundingOrNull(data, opts);
     if (!g) return AI_FX_REQUIRED_MSG;
-    const cacheKey = `getAIDashboardInsight:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${g.roiPct}`;
+    const cacheKey = `getAIDashboardInsight:v3:${g.netWorthSar}:${g.monthlyPnLSar}:${g.roiPct}:${g.netInvestedSar}:${g.principalFullyRecovered}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
 

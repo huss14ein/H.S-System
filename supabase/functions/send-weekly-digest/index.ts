@@ -5,7 +5,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.91.1";
 import { buildFinancialDataForWeeklyDigest } from "../../../services/digestFinancialData.ts";
-import { computeWeeklyDigestPersonalNetWorthSar } from "../../../services/weeklyDigestNetWorthSar.ts";
+import { computeWeeklyDigestPersonalNetWorthSar, computeWeeklyDigestInvestmentGrowth } from "../../../services/weeklyDigestNetWorthSar.ts";
 import { computeWeeklyDigestPortfolioPnLSar } from "../../../services/portfolioPeriodPnLDigest.ts";
 import { financialMonthRange, resolveMonthStartDayFromData } from "../../../utils/financialMonth.ts";
 import { computeSalaryInvestmentKpis } from "../../../services/salaryInvestmentKpis.ts";
@@ -28,6 +28,11 @@ interface WeeklyDigestPayload {
   netWorth: number;
   portfolioWeekPnLSar: number;
   portfolioMonthPnLSar: number;
+  investmentRoiDisplay?: string;
+  netInvestedSar?: number;
+  presentValueSar?: number;
+  investmentGrowthSar?: number;
+  principalFullyRecovered?: boolean;
   salaryInvestRatePct?: number;
   fundedNotDeployedSar?: number;
   hasSalaryInvestSignal?: boolean;
@@ -94,6 +99,14 @@ function renderEmailTemplate(payload: WeeklyDigestPayload): string {
       <section style="margin-bottom: 24px;">
         <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">Net worth</h2>
         <p style="margin: 0; font-size: 20px; font-weight: 700; color: #0f172a;">${payload.netWorth}</p>
+      </section>
+      <section style="margin-bottom: 24px;">
+        <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">Investment growth</h2>
+        <p style="margin: 0 0 6px; font-size: 14px; color: #64748b;">ROI after withdrawals: <strong style="color:#0f172a">${escapeHtml(payload.investmentRoiDisplay ?? '—')}</strong></p>
+        <p style="margin: 0 0 6px; font-size: 14px; color: #64748b;">Present value: <strong style="color:#0f172a">${payload.presentValueSar ?? 0}</strong> SAR</p>
+        <p style="margin: 0 0 6px; font-size: 14px; color: #64748b;">Net invested: <strong style="color:#0f172a">${payload.netInvestedSar ?? 0}</strong> SAR</p>
+        <p style="margin: 0; font-size: 14px; color: #64748b;">Growth: <strong style="color:#0f172a">${payload.investmentGrowthSar ?? 0}</strong> SAR${payload.principalFullyRecovered ? ' (principal recovered — leftover is profit)' : ''}</p>
+        <p style="margin: 8px 0 0; font-size: 12px; color: #94a3b8;">Deposits minus withdrawals (broker-cash reconcile stamps excluded). Stored marks only.</p>
       </section>
       <section style="margin-bottom: 24px;">
         <h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">Portfolio P/L</h2>
@@ -217,6 +230,11 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
   salaryInvestRatePct: number;
   fundedNotDeployedSar: number;
   hasSalaryInvestSignal: boolean;
+  investmentRoiDisplay: string;
+  netInvestedSar: number;
+  presentValueSar: number;
+  investmentGrowthSar: number;
+  principalFullyRecovered: boolean;
 }> {
   const fallbackFx = sarPerUsd();
 
@@ -298,6 +316,7 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
   const netWorth = computeWeeklyDigestPersonalNetWorthSar(data, fallbackFx);
   const pnl = computeWeeklyDigestPortfolioPnLSar({ data, sarPerUsd: fallbackFx, simulatedPrices: {} });
   const salaryInvestment = computeSalaryInvestmentKpis(data as any, fallbackFx);
+  const investmentGrowth = computeWeeklyDigestInvestmentGrowth(data, fallbackFx);
   return {
     data,
     fx: fallbackFx,
@@ -307,6 +326,11 @@ async function buildUserDigestFinancialData(supabase: any, userId: string): Prom
     salaryInvestRatePct: salaryInvestment?.salaryInvestRatePct ?? 0,
     fundedNotDeployedSar: salaryInvestment?.fundedNotDeployedSar ?? 0,
     hasSalaryInvestSignal: Boolean(salaryInvestment?.hasSalarySignal),
+    investmentRoiDisplay: investmentGrowth?.valueDisplay ?? '—',
+    netInvestedSar: Math.round(investmentGrowth?.netInvestedSar ?? 0),
+    presentValueSar: Math.round(investmentGrowth?.presentValueSar ?? 0),
+    investmentGrowthSar: Math.round(investmentGrowth?.growthSar ?? 0),
+    principalFullyRecovered: investmentGrowth?.principalFullyRecovered === true,
   };
 }
 
@@ -407,6 +431,11 @@ serve(async (req: Request) => {
           netWorth: digestCtx.netWorth,
           portfolioWeekPnLSar: Math.round(digestCtx.portfolioWeekPnLSar),
           portfolioMonthPnLSar: Math.round(digestCtx.portfolioMonthPnLSar),
+          investmentRoiDisplay: digestCtx.investmentRoiDisplay,
+          netInvestedSar: digestCtx.netInvestedSar,
+          presentValueSar: digestCtx.presentValueSar,
+          investmentGrowthSar: digestCtx.investmentGrowthSar,
+          principalFullyRecovered: digestCtx.principalFullyRecovered,
           salaryInvestRatePct: digestCtx.salaryInvestRatePct,
           fundedNotDeployedSar: Math.round(digestCtx.fundedNotDeployedSar),
           hasSalaryInvestSignal: digestCtx.hasSalaryInvestSignal,

@@ -47,6 +47,8 @@ export type AiPersonalWealthGrounding = {
   investedFromSalarySar: number;
   fundedNotDeployedSar: number;
   roiPct: number;
+  netInvestedSar: number;
+  principalFullyRecovered: boolean;
   overspentBudgetLines: string[];
   goalsProgress: string;
   topHoldingsLines: string[];
@@ -194,6 +196,8 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     investedFromSalarySar: salaryInvestment?.investedFromSalarySarMonth ?? 0,
     fundedNotDeployedSar: salaryInvestment?.fundedNotDeployedSar ?? 0,
     roiPct,
+    netInvestedSar: presentedRoi?.netInvestedSar ?? 0,
+    principalFullyRecovered: presentedRoi?.principalFullyRecovered === true,
     overspentBudgetLines,
     goalsProgress,
     topHoldingsLines: holdings,

@@ -284,8 +284,13 @@ const DashboardContent: React.FC<{
     const kpiDensity = 'compact' as const;
 
     useEffect(() => {
-        if (pageAction !== 'plan-compare-dashboard' && pageAction !== 'focus-salary-invest') return;
-        const targetId = pageAction === 'focus-salary-invest' ? 'salary-to-investment' : 'dashboard-kpi-row';
+        if (pageAction !== 'plan-compare-dashboard' && pageAction !== 'focus-salary-invest' && pageAction !== 'focus-investment-roi') return;
+        const targetId =
+            pageAction === 'focus-salary-invest'
+                ? 'salary-to-investment'
+                : pageAction === 'focus-investment-roi'
+                  ? 'dashboard-investment-roi'
+                  : 'dashboard-kpi-row';
         const scrollToTarget = () => {
             document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         };
@@ -787,7 +792,10 @@ const DashboardContent: React.FC<{
                     items={visibleKpiOrder.map((cardKey) => ({
                         id: cardKey,
                         content: (
-                            <div className="min-h-[132px] flex flex-col h-full">
+                            <div
+                                id={cardKey === 'investmentRoi' ? 'dashboard-investment-roi' : undefined}
+                                className="min-h-[132px] flex flex-col h-full scroll-mt-24"
+                            >
                                 <div className="flex-1 min-h-0">
                                     {kpiCards[cardKey]}
                                 </div>

@@ -207,6 +207,17 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                 monthlyPnLPositive={(kpiSnapshot?.monthlyPnL ?? 0) >= 0}
                 roiDisplay={presentedRoi?.valueDisplay ?? `${((kpiSnapshot?.roi ?? 0) * 100).toFixed(1)}%`}
                 roiPositive={presentedRoi?.isGrowing ?? (kpiSnapshot?.roi ?? 0) >= 0}
+                roiStatusLabel={
+                  presentedRoi?.principalFullyRecovered
+                    ? t('principalRecovered')
+                    : presentedRoi?.statusLabel === 'Growing'
+                      ? t('kpiStatusGain')
+                      : presentedRoi?.statusLabel === 'Shrinking'
+                        ? t('kpiStatusLoss')
+                        : presentedRoi?.statusLabel === 'Flat'
+                          ? t('kpiStatusFlat')
+                          : undefined
+                }
                 headline={headline}
                 kpiSnapshot={kpiSnapshot}
                 data={data}

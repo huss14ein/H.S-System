@@ -28,6 +28,7 @@ import {
   type MissingLedgerHoldingRow,
 } from '../../services/holdingsIntegrityRepair';
 import { yieldToMain } from '../../utils/yieldToMain';
+import { safeTickerLabel } from '../../utils/safeTickerLabel';
 import HoldingLotsPanel from './HoldingLotsPanel';
 
 type Props = {
@@ -64,7 +65,10 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
     await updateSettings({ uiAcks: partial ?? {} });
   };
 
-  const integrityFp = buildHoldingsIntegrityFingerprint(data);
+  const integrityFp = useMemo(
+    () => buildHoldingsIntegrityFingerprint(data),
+    [data?.investments, data?.investmentTransactions, data?.reconciliationAdjustments, data?.corporateActionEvents],
+  );
   const driftAttention = useMemo(() => {
     if (!data) return [] as HoldingsQtyDriftRow[];
     return filterUnackedDriftRows(
@@ -111,8 +115,9 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
   }
 
   const keepStored = (r: HoldingsQtyDriftRow) => {
-    const key = `${r.portfolioId}:${r.symbol}`;
-    if (ackBusyKey) return;
+    const ticker = safeTickerLabel(r.symbol);
+    const key = `${r.portfolioId}:${ticker}`;
+    if (ackBusyKey || rebuildBusyKey) return;
     setAckBusyKey(key);
     void (async () => {
       try {
@@ -128,7 +133,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
         });
         setAcks(next);
         toast(
-          `Kept stored ${String(r.symbol).slice(0, 32)}: ${r.storedQuantity.toLocaleString()} shares — this warning will not return until the book or ledger changes.`,
+          `Kept stored ${ticker}: ${r.storedQuantity.toLocaleString()} shares — this warning will not return until the book or ledger changes.`,
           'success',
         );
       } catch (err) {
@@ -140,8 +145,9 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
   };
 
   const keepClosed = (r: { portfolioId: string; symbol: string; ledgerNet: number }) => {
-    const key = `${r.portfolioId}:${r.symbol}`;
-    if (ackBusyKey) return;
+    const ticker = safeTickerLabel(r.symbol);
+    const key = `${r.portfolioId}:${ticker}`;
+    if (ackBusyKey || rebuildBusyKey) return;
     setAckBusyKey(key);
     void (async () => {
       try {
@@ -155,7 +161,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
           persistUiAcks,
         });
         setAcks(next);
-        toast(`Kept ${String(r.symbol).slice(0, 32)} closed — will not re-open from ledger.`, 'success');
+        toast(`Kept ${ticker} closed — will not re-open from ledger.`, 'success');
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Could not save dismissal.', 'error');
       } finally {
@@ -171,15 +177,17 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
     opts?: { expectedLedgerQty?: number; reopenSold?: boolean; restoreOpen?: boolean },
   ) => {
     if (!ctx?.rebuildHoldingsFromLedgerForSymbols) return;
-    const key = `${portfolioId}:${symbol}`;
+    if (rebuildBusyKey || ackBusyKey) return;
+    const ticker = safeTickerLabel(symbol);
+    const key = `${portfolioId}:${ticker}`;
     const ok = window.confirm(
       opts?.restoreOpen
-        ? `Restore holding for ${symbol} in “${portfolioName}”?\n\nTrades exist on this portfolio’s ledger (net ≈ ${opts.expectedLedgerQty?.toLocaleString() ?? '?'} shares) but there is no open holding.\nThis creates the position from the ledger so KPIs match your book.\nOnly this symbol is touched.`
+        ? `Restore holding for ${ticker} in “${portfolioName}”?\n\nTrades exist on this portfolio’s ledger (net ≈ ${opts.expectedLedgerQty?.toLocaleString() ?? '?'} shares) but there is no open holding.\nThis creates the position from the ledger so KPIs match your book.\nOnly this symbol is touched.`
         : opts?.reopenSold
-          ? `RE-OPEN sold position ${symbol} in “${portfolioName}”?\n\nThis recreates a holding that is currently closed because the ledger still nets shares.\nPrefer Keep closed unless you are sure the ledger is complete and correct.\nOnly this symbol is touched.`
+          ? `RE-OPEN sold position ${ticker} in “${portfolioName}”?\n\nThis recreates a holding that is currently closed because the ledger still nets shares.\nPrefer Keep closed unless you are sure the ledger is complete and correct.\nOnly this symbol is touched.`
           : opts?.expectedLedgerQty != null
-            ? `Rebuild ${symbol} in “${portfolioName}” from the portfolio ledger?\n\nThis only changes this symbol (ledger net ≈ ${opts.expectedLedgerQty.toLocaleString()}).\nPrefer Keep stored unless you trust the ledger for this symbol.`
-            : `Rebuild ${symbol} in “${portfolioName}” from the portfolio ledger?\n\nOnly this symbol is touched. Prefer Keep stored unless you trust the ledger.`,
+            ? `Rebuild ${ticker} in “${portfolioName}” from the portfolio ledger?\n\nThis only changes this symbol (ledger net ≈ ${opts.expectedLedgerQty.toLocaleString()}).\nPrefer Keep stored unless you trust the ledger for this symbol.`
+            : `Rebuild ${ticker} in “${portfolioName}” from the portfolio ledger?\n\nOnly this symbol is touched. Prefer Keep stored unless you trust the ledger.`,
     );
     if (!ok) return;
     setRebuildBusyKey(key);
@@ -203,7 +211,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
             : Number(opts?.expectedLedgerQty) || 0;
       if ((opts?.restoreOpen || opts?.reopenSold) && storedAfter <= 1e-9) {
         throw new Error(
-          `Restore did not create an open ${symbol} holding from the ledger. Check that buys are tagged to this portfolio, then try again.`,
+          `Restore did not create an open ${ticker} holding from the ledger. Check that buys are tagged to this portfolio, then try again.`,
         );
       }
       const ledgerAfter = opts?.expectedLedgerQty ?? storedAfter;
@@ -220,10 +228,10 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
       setAcks(next);
       toast(
         opts?.restoreOpen
-          ? `Restored ${symbol} holding from ledger (${storedAfter.toLocaleString()} shares).`
+          ? `Restored ${ticker} holding from ledger (${storedAfter.toLocaleString()} shares).`
           : opts?.reopenSold
-            ? `Re-opened ${symbol} from ledger.`
-            : `Rebuilt ${symbol} from ledger — warning dismissed until book or ledger changes.`,
+            ? `Re-opened ${ticker} from ledger.`
+            : `Rebuilt ${ticker} from ledger — warning dismissed until book or ledger changes.`,
         'success',
       );
     } catch (err) {
@@ -235,6 +243,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
 
   const restoreAllLikelyOpen = async () => {
     if (!ctx?.rebuildHoldingsFromLedgerForSymbols || likelyOpenMissing.length === 0) return;
+    if (rebuildBusyKey || ackBusyKey) return;
     const ok = window.confirm(
       `Restore ${likelyOpenMissing.length} missing holding(s) from the portfolio ledger?\n\nThese symbols have buys on the ledger but no open holding row.\nOnly those symbols are created/updated. Sold names with last-leg sell are not included.`,
     );
@@ -264,7 +273,7 @@ const HoldingsQtyIntegrityPanel: React.FC<Props> = ({ compact = false, onReconci
             0;
           if (storedAfter <= 1e-9) {
             throw new Error(
-              `Restore did not create an open ${symbol} holding from the ledger. Check portfolio-tagged buys, then retry.`,
+              `Restore did not create an open ${safeTickerLabel(symbol)} holding from the ledger. Check portfolio-tagged buys, then retry.`,
             );
           }
           restoredCount += 1;

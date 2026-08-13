@@ -136,6 +136,7 @@ const DICT: Dict = {
   kpiStatusOverBudget: { en: 'Over budget', ar: 'فوق الميزانية' },
   kpiStatusGain: { en: 'Gain', ar: 'ربح' },
   kpiStatusLoss: { en: 'Loss', ar: 'خسارة' },
+  kpiStatusFlat: { en: 'Flat', ar: 'ثابت' },
   kpiStatusLiquid: { en: 'Liquid', ar: 'سائل' },
   wealthHealthStripTitle: { en: 'Wealth health indicators', ar: 'مؤشرات صحة الثروة' },
   healthStripSubtitle: {

@@ -1,6 +1,8 @@
 import type { FinancialData } from '../types';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
+import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
+import { presentHeadlineInvestmentGrowth } from './extendedMetricsPresentation';
 import { detectBudgetDrift } from './budgetDrift';
 import { detectGoalConflictsFromData } from './goalConflictDetection';
 import { buildHoldingsDividendReconciliationReport } from './holdingsDividendReconciliation';
@@ -27,6 +29,22 @@ export function buildReviewPack(
     {
       title: 'Net worth',
       lines: [`Headline NW: ${Math.round(nw.netWorth).toLocaleString()} SAR`, `FX: ${nw.sarPerUsd?.toFixed(2) ?? '—'} SAR/USD`],
+    },
+    {
+      title: 'Investment growth',
+      lines: (() => {
+        const presented = presentHeadlineInvestmentGrowth(
+          computeHeadlinePersonalInvestmentRoiDecimal(data, nw.sarPerUsd, getAvailableCashForAccount, simulatedPrices),
+        );
+        if (!presented) return ['No investment book yet.'];
+        return [
+          `Present value: ${Math.round(presented.presentValueSar).toLocaleString()} SAR`,
+          `Net invested after withdrawals: ${Math.round(presented.netInvestedSar).toLocaleString()} SAR`,
+          `Growth: ${Math.round(presented.growthSar).toLocaleString()} SAR`,
+          `ROI: ${presented.valueDisplay}${presented.principalFullyRecovered ? ' (leftover value is profit)' : ''}`,
+          presented.investmentAgeLabel ? `Time invested: ${presented.investmentAgeLabel}` : 'Time invested: add deposits to date this book',
+        ];
+      })(),
     },
     {
       title: 'Budget drift',

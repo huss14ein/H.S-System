@@ -4,6 +4,7 @@ import { computePersonalHeadlineNetWorthSar, computePersonalNetWorthBreakdownSAR
 import {
   buildWeeklyDigestNetWorthOptions,
   computeWeeklyDigestPersonalNetWorthSar,
+  computeWeeklyDigestInvestmentGrowth,
 } from '../services/weeklyDigestNetWorthSar';
 
 const digestFixture = {
@@ -53,6 +54,14 @@ describe('computeWeeklyDigestPersonalNetWorthSar', () => {
     const headline = computePersonalHeadlineNetWorthSar(digestFixture, uiExchangeRate, opts);
     const got = computeWeeklyDigestPersonalNetWorthSar(digestFixture, uiExchangeRate);
     expect(got).toBe(headline.netWorth);
+  });
+
+  it('digest investment growth uses the same headline ROI path (stored marks)', () => {
+    const presented = computeWeeklyDigestInvestmentGrowth(digestFixture, 3.75);
+    expect(presented).not.toBeNull();
+    expect(presented!.netInvestedSar).toBeGreaterThan(0);
+    expect(presented!.presentValueSar).toBeGreaterThanOrEqual(0);
+    expect(presented!.valueDisplay).toMatch(/%|Principal recovered/);
   });
 
   it('breakdown net worth matches headline when platform cash is provided', () => {

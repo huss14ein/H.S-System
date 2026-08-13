@@ -32,6 +32,7 @@ type Props = {
   monthlyPnLPositive: boolean;
   roiDisplay: string;
   roiPositive: boolean;
+  roiStatusLabel?: string;
   headline: PersonalHeadlineNetWorthResult;
   kpiSnapshot: DashboardKpiSnapshot | null | undefined;
   data: FinancialData | null | undefined;
@@ -64,6 +65,7 @@ export const OverviewZone: React.FC<Props> = ({
   monthlyPnLPositive,
   roiDisplay,
   roiPositive,
+  roiStatusLabel,
   headline,
   kpiSnapshot,
   data,
@@ -154,6 +156,7 @@ export const OverviewZone: React.FC<Props> = ({
           weeklyPnLPositive={(portfolioPeriodPnL.weeklyTotalSar ?? 0) >= 0}
           roiDisplay={roiDisplay}
           roiPositive={roiPositive}
+          roiStatusLabel={roiStatusLabel}
           onExplainMonthlyPnL={() => openPassport('monthlyPnL')}
           onExplainWeeklyPnL={() => openPassport('weeklyPnL')}
           onExplainInvestmentRoi={() => openPassport('investmentRoi')}
