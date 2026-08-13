@@ -8,10 +8,13 @@ import {
   filterUnackedCashDriftWarnings,
   isCashBalanceDriftAcked,
   isInvestmentCashLedgerDriftAcked,
+  loadCashBalanceDriftAcks,
+  mergeCashBalanceDriftAckMapsByAt,
   mergeUiAcks,
   normalizeUiAcks,
   resolveCashBalanceDriftAcks,
   resolveHoldingsIntegrityAcks,
+  saveCashBalanceDriftAcks,
 } from '../services/uiAcks';
 import {
   filterUnackedDriftRows,
@@ -38,10 +41,12 @@ describe('uiAcks durable reconcile dismissals', () => {
       },
     });
     saveHoldingsIntegrityAcks(userId, {});
+    saveCashBalanceDriftAcks(userId, {});
   });
 
   afterEach(() => {
     saveHoldingsIntegrityAcks(userId, {});
+    saveCashBalanceDriftAcks(userId, {});
     vi.unstubAllGlobals();
   });
 
@@ -172,6 +177,53 @@ describe('uiAcks durable reconcile dismissals', () => {
     expect(wipedRemote['pf:OLD']?.symbol).toBe('OLD');
   });
 
+  it('cash Keep stored merges local + settings by at (stale remote never wipes dismissal)', () => {
+    saveCashBalanceDriftAcks(userId, {
+      'cash-local': {
+        accountId: 'cash-local',
+        balanceFp: 553.99,
+        netFp: -266.14,
+        at: '2026-01-03T00:00:00.000Z',
+      },
+    });
+    const merged = resolveCashBalanceDriftAcks(
+      userId,
+      {
+        uiAcks: {
+          cashBalanceDrift: {
+            'cash-remote': {
+              accountId: 'cash-remote',
+              balanceFp: 100,
+              netFp: 50,
+              at: '2026-01-02T00:00:00.000Z',
+            },
+          },
+        },
+      },
+      { writeThrough: true },
+    );
+    expect(merged['cash-local']?.balanceFp).toBe(553.99);
+    expect(merged['cash-remote']?.balanceFp).toBe(100);
+    expect(loadCashBalanceDriftAcks(userId)['cash-local']?.balanceFp).toBe(553.99);
+
+    const wiped = resolveCashBalanceDriftAcks(
+      userId,
+      { uiAcks: { cashBalanceDrift: {} } },
+      { writeThrough: true },
+    );
+    expect(wiped['cash-local']?.balanceFp).toBe(553.99);
+
+    const byAt = mergeCashBalanceDriftAckMapsByAt(
+      {
+        a1: { accountId: 'a1', balanceFp: 1, netFp: 1, at: '2026-01-02T00:00:00.000Z' },
+      },
+      {
+        a1: { accountId: 'a1', balanceFp: 2, netFp: 2, at: '2026-01-03T00:00:00.000Z' },
+      },
+    );
+    expect(byAt.a1?.balanceFp).toBe(2);
+  });
+
   it('resolveHoldingsIntegrityAcks does not write localStorage on hot paths by default', () => {
     saveHoldingsIntegrityAcks(userId, {});
     resolveHoldingsIntegrityAcks(userId, {
@@ -298,8 +350,11 @@ describe('uiAcks durable reconcile dismissals', () => {
     expect(banner).toContain('acknowledgeCashBalanceDriftDurable');
     expect(banner).toContain('Keep stored balance');
     expect(banner).toContain('await ctx.updateSettings({ uiAcks: partial })');
+    expect(banner).toContain('setAcks(next)');
+    expect(banner).toContain('writeThrough: true');
     expect(banner).not.toContain('mergeUiAcks(data.settings?.uiAcks');
     expect(read('pages/Accounts.tsx')).toContain('CashBalanceDriftBanner');
+    expect(read('services/uiAcks.ts')).toContain('mergeCashBalanceDriftAckMapsByAt');
 
     const notif = read('context/NotificationsContext.tsx');
     expect(notif).toContain('filterUnackedCashDriftWarnings');

@@ -25,6 +25,7 @@ describe('recoveryPathSummaries', () => {
         qualified: true,
         plPct: -22,
         currentPrice: 80,
+        avgCost: 100,
         newAvgCost: 95,
         newShares: 120,
         totalPlannedCost: 2000,

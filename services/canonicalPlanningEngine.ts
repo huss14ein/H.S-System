@@ -1,11 +1,16 @@
-import type { Holding, InvestmentPortfolio, PlannedTrade, TradeCurrency } from '../types';
+import type { Holding, InvestmentPortfolio, PlannedTrade, RecoveryPositionConfig, TradeCurrency } from '../types';
 import type { DataContextFinancialData } from '../types';
 import { inferInstrumentCurrencyFromSymbol, resolveSarPerUsd, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { resolveCanonicalAccountId } from '../utils/investmentLedgerCurrency';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { effectiveHoldingUnitPriceInBookCurrency, effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { lookupLiveQuoteForSymbol, lookupQuoteUpdatedAtIso } from './finnhubService';
-import { buildRecoveryPlan, DEFAULT_RECOVERY_GLOBAL_CONFIG } from './recoveryPlan';
+import { buildRecoveryPlan } from './recoveryPlan';
+import {
+  buildRecoveryGlobalConfig,
+  deriveRecoveryPositionConfig,
+  withRecoveryAddBounds,
+} from './recoveryPositionSetup';
 import { buildRecyclingPlanForHolding, summarizeRecyclingPlan, type RecyclingPlanSummary } from './positionRecyclingIntegration';
 import { resolveSyncedRecoveryConviction } from './recoveryConvictionSync';
 import { tickerToRiskTier, tickerToSleeve } from '../wealth-ultra/position';
@@ -77,6 +82,8 @@ export type CanonicalRecoveryPosition = {
   currentUnitPriceBook: number;
   plan: ReturnType<typeof buildRecoveryPlan>;
   priceProvenance: PriceProvenance;
+  positionConfig: RecoveryPositionConfig;
+  recyclingSummary: RecyclingPlanSummary | null;
 };
 
 export type CanonicalBalancerPortfolioSnapshot = {
@@ -390,12 +397,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
     });
 
   // --- Recovery Plan (positions in loss) ---
-  const globalConfig = {
-    ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
-    deployableCash: deployableCashSar,
-    minDeployableThreshold: Math.max(300, Math.min(1200, deployableCashSar * 0.01)),
-    recoveryBudgetPct: Math.max(0.12, Math.min(0.35, 0.18 + (deployableCashSar > 50000 ? 0.04 : 0))),
-  };
+  const globalConfig = buildRecoveryGlobalConfig(deployableCashSar);
 
   const universe = data?.portfolioUniverse ?? [];
   const coreTickers = new Set(universe.filter((u) => u.status === 'Core').map((u) => safeUpper(u.ticker)));
@@ -432,21 +434,44 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
       const sleeveType = tickerToSleeve(sym, sleeveInput.coreTickers.length || sleeveInput.upsideTickers.length ? sleeveInput : undefined);
       const riskTier = tickerToRiskTier(sym, sleeveInput.coreTickers.length || sleeveInput.upsideTickers.length ? sleeveInput : undefined);
       const deployableCashInBook = bookCurrency === 'SAR' ? deployableCashSar : deployableCashSar / sarPerUsd;
-
-      const lossTriggerPct = 20;
-      const cashCap = Math.max(1200, Math.min(deployableCashInBook * 0.35, deployableCashInBook * 0.11));
-
-      const positionConfig = {
+      const roughPlPct =
+        Number(h.avgCost) > 0 && currentUnitPriceBook > 0
+          ? ((currentUnitPriceBook - Number(h.avgCost)) / Number(h.avgCost)) * 100
+          : 0;
+      const marketValueBook = effectiveHoldingValueInBookCurrency(h, bookCurrency, simulatedPrices, sarPerUsd);
+      const baseConfig = deriveRecoveryPositionConfig({
         symbol: sym,
         sleeveType,
         riskTier,
-        recoveryEnabled: sleeveType !== 'Spec',
-        lossTriggerPct,
-        cashCap,
-      };
+        deployableCash: deployableCashInBook,
+        plPct: roughPlPct,
+        recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+      });
+      const positionConfig = withRecoveryAddBounds(baseConfig, {
+        quantity: qty,
+        marketValue: marketValueBook,
+        deployableCash: deployableCashInBook,
+        recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+      });
 
       const positionGlobal = { ...globalConfig, deployableCash: deployableCashInBook };
-      const plan = buildRecoveryPlan(h, currentUnitPriceBook, positionConfig as any, positionGlobal as any);
+      const plan = buildRecoveryPlan(h, currentUnitPriceBook, positionConfig, positionGlobal);
+
+      let recyclingSummary: RecyclingPlanSummary | null = null;
+      if (plan.plPct < 0 && currentUnitPriceBook > 0) {
+        const synced = resolveSyncedRecoveryConviction({
+          symbol: sym,
+          plPct: plan.plPct,
+          riskTier: positionConfig.riskTier,
+          universe,
+        });
+        const recyclingPlan = buildRecyclingPlanForHolding(h, currentUnitPriceBook, positionConfig, {
+          convictionGrade: synced.convictionGrade,
+          stockQualityStatus: synced.stockQualityStatus,
+        });
+        recyclingSummary = summarizeRecyclingPlan(recyclingPlan);
+        recyclingSummaries.push(recyclingSummary);
+      }
 
       recoveryPositions.push({
         holding: h,
@@ -456,21 +481,9 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
         currentUnitPriceBook,
         plan,
         priceProvenance,
+        positionConfig,
+        recyclingSummary,
       });
-
-      if (plan.plPct < 0 && currentUnitPriceBook > 0) {
-        const synced = resolveSyncedRecoveryConviction({
-          symbol: sym,
-          plPct: plan.plPct,
-          riskTier: positionConfig.riskTier,
-          universe,
-        });
-        const recyclingPlan = buildRecyclingPlanForHolding(h, currentUnitPriceBook, positionConfig as any, {
-          convictionGrade: synced.convictionGrade,
-          stockQualityStatus: synced.stockQualityStatus,
-        });
-        recyclingSummaries.push(summarizeRecyclingPlan(recyclingPlan));
-      }
     }
   }
 

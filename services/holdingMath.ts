@@ -1,22 +1,34 @@
 import type { Holding } from '../types';
 import { roundAvgCostPerUnit, roundMoney, roundQuantity } from '../utils/money';
 
+export type ApplyBuyToHoldingOpts = {
+  /** Extra amount to add to stored current value (defaults to qAdd × price). */
+  currentValueAdd?: number;
+  /** Restated TOTAL (bank statement / plan value). Replaces stored current value; never added. */
+  currentValueOverride?: number;
+};
+
 export function applyBuyToHolding(
   holding: Pick<Holding, 'quantity' | 'avgCost' | 'currentValue'>,
   buyQuantity: number,
   buyPrice: number,
-  opts?: { /** When set (e.g. manual_fund), adds this to current value instead of cost (qAdd × price). */ currentValueAdd?: number }
+  opts?: ApplyBuyToHoldingOpts,
 ): { quantity: number; avgCost: number; currentValue: number } {
   const qOld = Number(holding.quantity) || 0;
   const qAdd = Math.max(0, Number(buyQuantity) || 0);
   const px = roundMoney(Math.max(0, Number(buyPrice) || 0));
   const quantity = roundQuantity(qOld + qAdd);
   const avgCostRaw = quantity > 0 ? (qOld * (Number(holding.avgCost) || 0) + qAdd * px) / quantity : px;
+  const override =
+    opts?.currentValueOverride != null && Number.isFinite(opts.currentValueOverride)
+      ? Math.max(0, Number(opts.currentValueOverride))
+      : undefined;
   const addToValue =
     opts?.currentValueAdd != null && Number.isFinite(opts.currentValueAdd)
       ? Math.max(0, Number(opts.currentValueAdd))
       : qAdd * px;
-  const currentValueRaw = (Number(holding.currentValue) || 0) + addToValue;
+  const currentValueRaw =
+    override != null ? override : (Number(holding.currentValue) || 0) + addToValue;
   return {
     quantity,
     avgCost: roundAvgCostPerUnit(avgCostRaw),
@@ -61,12 +73,16 @@ export function computePositionFieldsAfterTrade(args: {
   side: PositionDeltaSide;
   quantity: number;
   price: number;
-  opts?: { currentValueAdd?: number };
+  opts?: ApplyBuyToHoldingOpts;
 }): ComputedPositionDelta {
   const qty = Math.max(0, Number(args.quantity) || 0);
   const px = Math.max(0, Number(args.price) || 0);
   if (args.side === 'buy') {
     if (!args.existing) {
+      const override =
+        args.opts?.currentValueOverride != null && Number.isFinite(args.opts.currentValueOverride)
+          ? Math.max(0, Number(args.opts.currentValueOverride))
+          : undefined;
       const currentValueAdd =
         args.opts?.currentValueAdd != null && Number.isFinite(args.opts.currentValueAdd)
           ? Math.max(0, Number(args.opts.currentValueAdd))
@@ -75,7 +91,7 @@ export function computePositionFieldsAfterTrade(args: {
         action: 'create',
         quantity: roundQuantity(qty),
         avgCost: roundAvgCostPerUnit(px),
-        currentValue: roundMoney(currentValueAdd),
+        currentValue: roundMoney(override != null ? override : currentValueAdd),
       };
     }
     const bought = applyBuyToHolding(args.existing, qty, px, args.opts);

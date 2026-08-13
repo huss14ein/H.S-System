@@ -319,8 +319,14 @@ interface DataContextType {
    * subscriptions, estate) that persist via Supabase directly then mirror locally.
    */
   applyFinancialDataPatch: (recipe: (prev: FinancialData) => FinancialData) => void;
-  /** Explicit repair — rebuild named symbols from portfolio_id ledger (never runs on trade). */
-  rebuildHoldingsFromLedgerForSymbols: (args: { portfolioId: string; symbols: string[] }) => Promise<void>;
+  /**
+   * Explicit repair — rebuild named symbols from portfolio_id ledger (never runs on trade).
+   * Returns post-repair quantities from dataRef (authoritative after persist) so Restore can verify.
+   */
+  rebuildHoldingsFromLedgerForSymbols: (args: {
+    portfolioId: string;
+    symbols: string[];
+  }) => Promise<{ quantities: Record<string, number> }>;
   /** Recompute FIFO realized P/L on holdings from portfolio-scoped ledger (all portfolios). */
   backfillRealizedPnLForAllPortfolios: () => Promise<{ patchedSymbols: number }>;
   addWatchlistItem: (item: WatchlistItem, opts?: RecordWriteOptions) => Promise<void>;
@@ -842,6 +848,16 @@ function holdingToRow(holding: Partial<Holding> & { quantity: number }): Record<
     const months = holding.typicalPayoutMonths ?? (holding as any).typical_payout_months;
     if (Array.isArray(months) && months.length > 0) {
         row.typical_payout_months = months.filter((m: number) => m >= 1 && m <= 12);
+    }
+    if (holdingType === 'manual_fund') {
+        const currentPriceRaw = holding.currentPrice ?? (holding as { current_price?: number }).current_price;
+        if (currentPriceRaw != null && Number.isFinite(Number(currentPriceRaw))) {
+            row.current_price = Number(currentPriceRaw);
+        }
+        const priceUpdatedAt = holding.priceUpdatedAt ?? (holding as { price_updated_at?: string }).price_updated_at;
+        if (priceUpdatedAt != null && String(priceUpdatedAt).trim() !== '') {
+            row.price_updated_at = String(priceUpdatedAt);
+        }
     }
     return row;
 }
@@ -4309,9 +4325,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const rebuildHoldingsFromLedgerForSymbols = async (args: {
         portfolioId: string;
         symbols: string[];
-    }) => {
-        if (!auth?.user) return;
+    }): Promise<{ quantities: Record<string, number> }> => {
+        if (!auth?.user) return { quantities: {} };
         const userId = auth.user.id;
+        const quantities: Record<string, number> = {};
         await enqueueLotSyncWork(async () => {
             const snapshot = dataRef.current;
             const portfolio = (snapshot?.investments ?? []).find((p) => p.id === args.portfolioId);
@@ -4348,7 +4365,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     }));
                 },
             });
+            const pf = (dataRef.current?.investments ?? []).find((p) => p.id === args.portfolioId);
+            for (const sym of symbols) {
+                const h = pf?.holdings?.find((x) => String(x.symbol ?? '').trim().toUpperCase() === sym);
+                quantities[sym] = Math.max(0, Number(h?.quantity) || 0);
+            }
+            /**
+             * Seal hydrate cache + book generation so Restore/Rebuild cannot be undone by a
+             * stale workspace cache paint on the next session (ATYR Critical missing loop).
+             */
+            sealHoldingsBookAfterTrade();
         });
+        return { quantities };
     };
 
     const backfillRealizedPnLForAllPortfolios = async (): Promise<{ patchedSymbols: number }> => {
