@@ -5353,6 +5353,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const retryReconciliationRun = async (runId: string): Promise<{ ok: boolean; error?: string }> => {
         if (!supabase || !auth?.user) return { ok: false, error: 'Not logged in' };
+        const userId = auth.user.id;
         const snap = dataRef.current ?? data;
         const run = (snap?.reconciliationRuns ?? []).find((r) => r.id === runId);
         if (!run) return { ok: false, error: 'Replay run not found.' };
@@ -5405,7 +5406,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             updateHolding: writers.updateHolding,
                             patchHoldingRealizedPnL: writers.patchHoldingRealizedPnL,
                             supabase,
-                            userId: auth.user.id,
+                            userId,
                             onLotsUpdated: (updatedLots) => {
                                 if (!allowWrite()) return;
                                 applyFinancialDataPatch((prev) => ({
