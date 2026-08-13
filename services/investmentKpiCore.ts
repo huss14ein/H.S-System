@@ -57,21 +57,31 @@ export const LEDGER_INFERRED_FALLBACK_MAX_RATIO = 4.5;
 /** Skip ratio cross-check when fallback gross is tiny (noise vs rounding). */
 export const LEDGER_INFERRED_FALLBACK_MIN_SAR = 400;
 
+export const HEADLINE_NEAR_ZERO_NET_INVESTED_SAR = 1;
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Calendar day only — rejects anything that is not YYYY-MM-DD (XSS / injection defense). */
+export function safeCapitalDepositYmd(raw: string | null | undefined): string | null {
+  const d = String(raw ?? '').slice(0, 10);
+  return YMD_RE.test(d) ? d : null;
+}
+
 export function earliestCapitalDepositYmd(transactions: Array<{ date?: string | null; type?: string | null; note?: string | null; description?: string | null; category?: string | null; idempotencyKey?: string | null }>): string | null {
   let min: string | null = null;
   for (const t of transactions) {
     if (!isCapitalInvestmentDeposit(t)) continue;
-    const d = String(t.date ?? '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    const d = safeCapitalDepositYmd(t.date);
+    if (!d) continue;
     if (!min || d < min) min = d;
   }
   return min;
 }
 
 export function investmentAgeDaysFromYmd(startYmd: string | null | undefined, asOfYmd: string = appCalendarTodayYmd()): number | null {
-  const start = String(startYmd ?? '').slice(0, 10);
-  const asOf = String(asOfYmd ?? '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return null;
+  const start = safeCapitalDepositYmd(startYmd);
+  const asOf = safeCapitalDepositYmd(asOfYmd);
+  if (!start || !asOf) return null;
   const startMs = Date.parse(`${start}T00:00:00`);
   const asOfMs = Date.parse(`${asOf}T00:00:00`);
   if (!Number.isFinite(startMs) || !Number.isFinite(asOfMs) || asOfMs < startMs) return null;
@@ -214,9 +224,15 @@ export function computePersonalInvestmentKpiBreakdown(
   const isCapitalWithdrawal = (t: InvestmentTransaction) => isCapitalInvestmentWithdrawal(t);
 
   /** Economic capital in/out — excludes broker-cash Reconcile Balance adjustments. */
-  const depositsRecordedSar = invTx.filter(isCapitalDeposit).reduce((sum, t) => sum + invTxSar(t), 0);
+  let depositsRecordedSar = 0;
+  let firstCapitalDepositYmd: string | null = null;
+  for (const t of invTx) {
+    if (!isCapitalDeposit(t)) continue;
+    depositsRecordedSar += invTxSar(t);
+    const d = safeCapitalDepositYmd(t.date);
+    if (d && (!firstCapitalDepositYmd || d < firstCapitalDepositYmd)) firstCapitalDepositYmd = d;
+  }
   const totalWithdrawnSar = invTx.filter(isCapitalWithdrawal).reduce((sum, t) => sum + invTxSar(t), 0);
-  const firstCapitalDepositYmd = earliestCapitalDepositYmd(invTx);
   const buysSar = invTx
     .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
     .reduce((sum, t) => sum + invTxSar(t), 0);
@@ -511,13 +527,13 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
   const totalGainLossSar = totalExposureSar - netCapitalSar;
   const principalFullyRecovered =
     breakdown.capitalSource === 'deposits' &&
-    breakdown.depositsRecordedSar > 0 &&
-    netCapitalSar <= 1e-9 &&
-    totalExposureSar > 1e-9;
+    breakdown.depositsRecordedSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    netCapitalSar <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    totalExposureSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
   const roi = principalFullyRecovered
     ? 0
     : sanitizeInvestmentRoiDecimal(netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0);
-  const firstCapitalDepositYmd = breakdown.firstCapitalDepositYmd;
+  const firstCapitalDepositYmd = safeCapitalDepositYmd(breakdown.firstCapitalDepositYmd);
   const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
 
   return {

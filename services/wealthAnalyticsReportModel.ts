@@ -15,6 +15,7 @@ import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { getPersonalAccounts, getPersonalInvestments } from '../utils/wealthScope';
 import { resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { wealthKpiAccent, wealthKpiToneFromStatus, type WealthKpiTone } from './wealthReportPresentation';
+import { presentHeadlineInvestmentGrowth } from './extendedMetricsPresentation';
 
 export type WealthMetricPassportKey =
   | 'netWorth'
@@ -53,6 +54,9 @@ export type WealthAnalyticsReportModel = {
   liquidCashSar: number;
   budgetVariance: number;
   investmentRoiPct: number;
+  investmentNetInvestedSar: number;
+  investmentGrowthSar: number;
+  investmentPrincipalFullyRecovered: boolean;
   disciplineScore: number;
   liquidityRunwayMonths: number;
 };
@@ -85,6 +89,7 @@ export function buildWealthAnalyticsReportModel(input: {
   const monthlyPnL = input.kpiSnapshot?.monthlyPnL ?? 0;
   const budgetVariance = input.kpiSnapshot?.budgetVariance ?? 0;
   const roi = input.kpiSnapshot?.roi ?? 0;
+  const presentedRoi = presentHeadlineInvestmentGrowth(input.kpiSnapshot?.headlineInvestmentExposure);
   const liquidCash = input.kpiSnapshot?.liquidCashSar ?? 0;
   const impliedMonthStart = netWorth - monthlyPnL;
 
@@ -170,13 +175,13 @@ export function buildWealthAnalyticsReportModel(input: {
     {
       key: 'investmentRoi',
       label: 'Investment ROI',
-      valueDisplay: `${(roi * 100).toFixed(1)}%`,
+      valueDisplay: presentedRoi?.valueDisplay ?? `${(roi * 100).toFixed(1)}%`,
       targetDisplay: '0%',
-      statusLabel: statusLabelForSigned(roi, 'Gain', 'Loss'),
-      tone: wealthKpiToneFromStatus(statusLabelForSigned(roi, 'Gain', 'Loss')),
+      statusLabel: presentedRoi?.statusLabel ?? statusLabelForSigned(roi, 'Gain', 'Loss'),
+      tone: wealthKpiToneFromStatus(presentedRoi?.statusLabel ?? statusLabelForSigned(roi, 'Gain', 'Loss')),
       accentColor: wealthKpiAccent('investmentRoi'),
       sparkline: twoPointTrend(roi * 100, 0),
-      numericValue: roi * 100,
+      numericValue: presentedRoi?.principalFullyRecovered ? presentedRoi.growthSar : roi * 100,
       targetNumeric: 0,
     },
     {
@@ -210,7 +215,10 @@ export function buildWealthAnalyticsReportModel(input: {
     investmentsTotalSar: input.investmentsTotalSar,
     liquidCashSar: liquidCash,
     budgetVariance,
-    investmentRoiPct: roi * 100,
+    investmentRoiPct: presentedRoi?.roiPct ?? roi * 100,
+    investmentNetInvestedSar: presentedRoi?.netInvestedSar ?? 0,
+    investmentGrowthSar: presentedRoi?.growthSar ?? 0,
+    investmentPrincipalFullyRecovered: presentedRoi?.principalFullyRecovered === true,
     disciplineScore: input.wealthSummaryPayload.disciplineScore,
     liquidityRunwayMonths: input.wealthSummaryPayload.liquidityRunwayMonths,
   };

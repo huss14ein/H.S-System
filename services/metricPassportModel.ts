@@ -90,7 +90,7 @@ export function buildMetricPassportModel(
   } else if (key === 'weeklyPnL' || key === 'portfolioPeriodPnL') {
     sectionC = `Portfolio week P/L ${money(report.weeklyPnLTotalSar)}; financial-month portfolio P/L ${money(report.monthlyPnLTotalSar)}. Mark-to-market from period start: ledger (realized sells, dividends, fees) + market estimate (price change). Realized leg uses FIFO lots when available; otherwise weighted average.`;
   } else if (key === 'investmentRoi') {
-    sectionC = `Platform rollup + commodities + Sukuk vs net invested after withdrawals (computeHeadlinePersonalInvestmentRoiDecimal). Present value ${money(report.investmentsTotalSar)}.`;
+    sectionC = `Present value ${money(report.investmentsTotalSar)}. Net invested after withdrawals ${money(report.investmentNetInvestedSar)}. Growth ${money(report.investmentGrowthSar)}${report.investmentPrincipalFullyRecovered ? ' (principal recovered — leftover value is profit)' : ''}. Same path as Investments: computeHeadlinePersonalInvestmentRoiDecimal.`;
   } else if (key === 'budgetVariance') {
     sectionC = 'Positive = under budget this financial month. Same path as Dashboard KPI row.';
   } else {

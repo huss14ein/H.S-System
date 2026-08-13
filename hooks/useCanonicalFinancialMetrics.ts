@@ -24,6 +24,7 @@ export {
   pickHeadlineInvestmentExposure,
   hasHeadlineInvestmentKpis,
   buildInvestmentsHeadlineKpiRow,
+  presentHeadlineInvestmentGrowth,
   headlineKpiMathIsConsistent,
   pickDashboardRoiDecimal,
   pickInvestmentsTotalSar,

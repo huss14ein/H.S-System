@@ -5775,13 +5775,18 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       totalValueSAR: totalValue,
       unrealizedGainLossSAR: totalGainLoss,
       roiPct: roi,
+      netInvestedSAR: netInvestedSar,
+      depositsSAR: depositsRecordedSar,
+      withdrawnSAR: totalWithdrawnSar,
+      principalFullyRecovered,
+      investmentAgeLabel: investmentAgeLabel ?? undefined,
       dailyPnLSAR: totalDailyPnL,
       commoditiesValueSAR,
       sukukPositionsValueSAR,
       appDisplayCurrency,
       executionLogCount,
     };
-  }, [data, activeTab, totalValue, totalGainLoss, roi, totalDailyPnL, commoditiesValueSAR, sukukPositionsValueSAR, appDisplayCurrency]);
+  }, [data, activeTab, totalValue, totalGainLoss, roi, netInvestedSar, depositsRecordedSar, totalWithdrawnSar, principalFullyRecovered, investmentAgeLabel, totalDailyPnL, commoditiesValueSAR, sukukPositionsValueSAR, appDisplayCurrency]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;

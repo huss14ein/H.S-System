@@ -8,6 +8,7 @@ import {
   netWorthSparklineFromSnapshots,
   twoPointTrend,
 } from '../../services/executiveKpiSparklines';
+import { presentHeadlineInvestmentGrowth } from '../../services/extendedMetricsPresentation';
 import { ExecutiveKpiCard, type ExecutiveKpiStatus } from './ExecutiveKpiCard';
 
 function statusFromSigned(value: number, goodWhenPositive = true): ExecutiveKpiStatus {
@@ -50,6 +51,7 @@ export const ExecutiveKpiGrid: React.FC<{
     const monthlyPnL = kpiSnapshot?.monthlyPnL ?? 0;
     const budgetVariance = kpiSnapshot?.budgetVariance ?? 0;
     const roi = kpiSnapshot?.roi ?? 0;
+    const presentedRoi = presentHeadlineInvestmentGrowth(kpiSnapshot?.headlineInvestmentExposure);
     const impliedMonthStart = netWorth - monthlyPnL;
 
     const nwSpark =
@@ -126,11 +128,17 @@ export const ExecutiveKpiGrid: React.FC<{
       {
         key: 'investmentRoi',
         title: t('investmentRoi'),
-        currentValue: `${(roi * 100).toFixed(1)}%`,
+        currentValue: presentedRoi?.valueDisplay ?? `${(roi * 100).toFixed(1)}%`,
         targetValue: '0%',
         targetLabel: t('kpiTargetBreakEven'),
-        status: statusFromSigned(roi),
-        statusLabel: roi >= 0 ? t('kpiStatusGain') : t('kpiStatusLoss'),
+        status: presentedRoi?.principalFullyRecovered
+          ? 'good'
+          : statusFromSigned(roi),
+        statusLabel: presentedRoi?.principalFullyRecovered
+          ? t('principalRecovered')
+          : presentedRoi?.isGrowing
+            ? t('kpiStatusGain')
+            : t('kpiStatusLoss'),
         sparkline: roiSpark,
         sparklineTarget: 0,
         accentStroke: '#8b5cf6',

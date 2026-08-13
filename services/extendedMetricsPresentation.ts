@@ -1,6 +1,10 @@
 import type { UseCanonicalFinancialMetricsResult } from '../hooks/canonicalFinancialMetricsBundle';
 import type { HeadlinePersonalInvestmentRoi } from './investmentKpiCore';
-import { formatInvestmentAgeLabel } from './investmentKpiCore';
+import {
+  formatInvestmentAgeLabel,
+  HEADLINE_NEAR_ZERO_NET_INVESTED_SAR,
+  safeCapitalDepositYmd,
+} from './investmentKpiCore';
 
 export type ExtendedMetricsPickSource = Pick<
   UseCanonicalFinancialMetricsResult,
@@ -130,7 +134,7 @@ export function buildInvestmentsHeadlineKpiRow(
     totalWithdrawnSar: h.totalWithdrawnSar,
     capitalSource: h.capitalSource,
     principalFullyRecovered: h.principalFullyRecovered,
-    firstCapitalDepositYmd: h.firstCapitalDepositYmd,
+    firstCapitalDepositYmd: safeCapitalDepositYmd(h.firstCapitalDepositYmd),
     investmentAgeDays,
     investmentAgeLabel: formatInvestmentAgeLabel(investmentAgeDays),
   };
@@ -143,10 +147,58 @@ export function pickDashboardRoiDecimal(metrics: HeadlineExposurePickSource): nu
   return snap != null && Number.isFinite(snap) ? snap : null;
 }
 
+export type HeadlineInvestmentGrowthPresentation = {
+  valueDisplay: string;
+  roiPct: number;
+  presentValueSar: number;
+  netInvestedSar: number;
+  growthSar: number;
+  depositsRecordedSar: number;
+  totalWithdrawnSar: number;
+  principalFullyRecovered: boolean;
+  isGrowing: boolean;
+  statusLabel: string;
+  investmentAgeLabel: string | null;
+  firstCapitalDepositYmd: string | null;
+  definition: string;
+};
+
+/** Single display object for Dashboard, Analytics, Analysis, passport, AI, and exports. */
+export function presentHeadlineInvestmentGrowth(
+  h: HeadlinePersonalInvestmentRoi | null | undefined,
+): HeadlineInvestmentGrowthPresentation | null {
+  if (!h) return null;
+  const principalFullyRecovered = h.principalFullyRecovered === true;
+  const roiPct = Number.isFinite(h.roi) ? h.roi * 100 : 0;
+  const growthSar = Number.isFinite(h.totalGainLossSar) ? h.totalGainLossSar : 0;
+  return {
+    valueDisplay: principalFullyRecovered ? 'Principal recovered' : `${roiPct.toFixed(1)}%`,
+    roiPct,
+    presentValueSar: Number.isFinite(h.totalExposureSar) ? h.totalExposureSar : 0,
+    netInvestedSar: Number.isFinite(h.netCapitalSar) ? h.netCapitalSar : 0,
+    growthSar,
+    depositsRecordedSar: Number.isFinite(h.depositsRecordedSar) ? h.depositsRecordedSar : 0,
+    totalWithdrawnSar: Number.isFinite(h.totalWithdrawnSar) ? h.totalWithdrawnSar : 0,
+    principalFullyRecovered,
+    isGrowing: principalFullyRecovered || growthSar >= 0,
+    statusLabel: principalFullyRecovered
+      ? 'Principal recovered'
+      : growthSar > 0.5
+        ? 'Growing'
+        : growthSar < -0.5
+          ? 'Shrinking'
+          : 'Flat',
+    investmentAgeLabel: formatInvestmentAgeLabel(h.investmentAgeDays),
+    firstCapitalDepositYmd: safeCapitalDepositYmd(h.firstCapitalDepositYmd),
+    definition:
+      'Present value minus net invested (deposits − withdrawals + commodity/Sukuk cost). Cost basis is a floor only when deposits were never recorded.',
+  };
+}
+
 /** True when gain/loss, ROI, and daily P/L are internally consistent (same rollup object). */
 export function headlineKpiMathIsConsistent(h: HeadlinePersonalInvestmentRoi): boolean {
   if (h.principalFullyRecovered) {
-    return Math.abs(h.netCapitalSar) <= 1e-9 && Math.abs(h.totalGainLossSar - h.totalExposureSar) < 0.01 && h.roi === 0;
+    return h.netCapitalSar <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR + 1e-9 && h.roi === 0;
   }
   if (!(h.netCapitalSar > 0)) return h.totalGainLossSar === 0 && h.roi === 0;
   const impliedRoi = h.totalGainLossSar / h.netCapitalSar;

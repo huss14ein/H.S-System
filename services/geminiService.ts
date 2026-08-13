@@ -1892,8 +1892,13 @@ export interface InvestmentHubAiMeta {
   totalValueSAR?: number;
   /** Paper P/L in SAR (from app engine — do not invent). */
   unrealizedGainLossSAR?: number;
-  /** Simple ROI % on net capital. */
+  /** ROI % on net invested after withdrawals. */
   roiPct?: number;
+  netInvestedSAR?: number;
+  withdrawnSAR?: number;
+  depositsSAR?: number;
+  principalFullyRecovered?: boolean;
+  investmentAgeLabel?: string;
   /** Estimated one-day change SAR. */
   dailyPnLSAR?: number;
   commoditiesValueSAR?: number;
@@ -1906,7 +1911,7 @@ export interface InvestmentHubAiMeta {
 export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: InvestmentHubAiMeta): Promise<string> => {
   const symKey = holdings.map((h) => (h.symbol ?? '') + h.quantity).join(',');
   const metaKey = meta
-    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.sukukPositionsValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
+    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.netInvestedSAR ?? ''}|${meta.principalFullyRecovered ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.sukukPositionsValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
     : '';
   const cacheKey = `getInvestmentAIAnalysis:${symKey}:${metaKey}`;
   const cached = getFromCache(cacheKey);
@@ -1916,9 +1921,14 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: Invest
     if (meta) {
       facts.push(`Tab: ${meta.activeTab ?? 'Investments'}.`);
       facts.push(`Portfolios (personal): ${meta.portfolioCount ?? 'n/a'}; holdings listed: ${meta.holdingCount ?? 'n/a'}; watchlist symbols: ${meta.watchlistCount ?? 'n/a'}.`);
-      if (typeof meta.totalValueSAR === 'number') facts.push(`Total portfolio value (SAR, app-calculated): ${meta.totalValueSAR.toFixed(0)}.`);
-      if (typeof meta.unrealizedGainLossSAR === 'number') facts.push(`Unrealized P/L (SAR): ${meta.unrealizedGainLossSAR.toFixed(0)}.`);
-      if (typeof meta.roiPct === 'number' && Number.isFinite(meta.roiPct)) facts.push(`Portfolio ROI (%): ${meta.roiPct.toFixed(2)}.`);
+      if (typeof meta.totalValueSAR === 'number') facts.push(`Present value (SAR, app-calculated): ${meta.totalValueSAR.toFixed(0)}.`);
+      if (typeof meta.netInvestedSAR === 'number') facts.push(`Net invested after withdrawals (SAR): ${meta.netInvestedSAR.toFixed(0)}.`);
+      if (typeof meta.depositsSAR === 'number') facts.push(`Deposits recorded (SAR): ${meta.depositsSAR.toFixed(0)}.`);
+      if (typeof meta.withdrawnSAR === 'number') facts.push(`Withdrawals recorded (SAR): ${meta.withdrawnSAR.toFixed(0)}.`);
+      if (typeof meta.unrealizedGainLossSAR === 'number') facts.push(`Growth vs net invested (SAR): ${meta.unrealizedGainLossSAR.toFixed(0)}.`);
+      if (meta.principalFullyRecovered) facts.push('Principal fully recovered — remaining value is profit.');
+      else if (typeof meta.roiPct === 'number' && Number.isFinite(meta.roiPct)) facts.push(`Portfolio ROI on net invested after withdrawals (%): ${meta.roiPct.toFixed(2)}.`);
+      if (meta.investmentAgeLabel) facts.push(`Time invested: ${meta.investmentAgeLabel}.`);
       if (typeof meta.dailyPnLSAR === 'number') facts.push(`Estimated daily P/L (SAR): ${meta.dailyPnLSAR.toFixed(0)}.`);
       if (typeof meta.commoditiesValueSAR === 'number') facts.push(`Commodities value (SAR): ${meta.commoditiesValueSAR.toFixed(0)}.`);
       if (typeof meta.sukukPositionsValueSAR === 'number' && meta.sukukPositionsValueSAR > 0) {

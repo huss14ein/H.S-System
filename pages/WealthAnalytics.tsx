@@ -5,6 +5,7 @@ import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPl
 import { DataContext } from '../context/DataContext';
 import { AuthContext } from '../context/AuthContext';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
+import { presentHeadlineInvestmentGrowth } from '../services/extendedMetricsPresentation';
 import { useLiveQuotePrices } from '../hooks/useLiveQuotePrices';
 import { usePortfolioPeriodPnLSnapshot } from '../hooks/usePortfolioPeriodPnLSnapshot';
 import { useFormatCurrency } from '../hooks/useFormatCurrency';
@@ -75,6 +76,7 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
     simulatedPrices: kpiQuotePrices,
     salaryInvestment,
   } = useExtendedCanonicalMetrics();
+  const presentedRoi = presentHeadlineInvestmentGrowth(kpiSnapshot?.headlineInvestmentExposure);
 
   const personalTransactions = useMemo(() => getPersonalTransactions(engineData), [engineData]);
   const personalAccounts = useMemo(() => getPersonalAccounts(engineData), [engineData]);
@@ -203,8 +205,8 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
                 netWorthSar={netWorth ?? 0}
                 monthlyPnLDisplay={maskBalance(formatCurrencyString(kpiSnapshot?.monthlyPnL ?? 0, { digits: 0 }))}
                 monthlyPnLPositive={(kpiSnapshot?.monthlyPnL ?? 0) >= 0}
-                roiDisplay={`${((kpiSnapshot?.roi ?? 0) * 100).toFixed(1)}%`}
-                roiPositive={(kpiSnapshot?.roi ?? 0) >= 0}
+                roiDisplay={presentedRoi?.valueDisplay ?? `${((kpiSnapshot?.roi ?? 0) * 100).toFixed(1)}%`}
+                roiPositive={presentedRoi?.isGrowing ?? (kpiSnapshot?.roi ?? 0) >= 0}
                 headline={headline}
                 kpiSnapshot={kpiSnapshot}
                 data={data}

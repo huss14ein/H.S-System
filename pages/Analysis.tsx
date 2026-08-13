@@ -23,7 +23,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR } from '../utils/currencyMath';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi } from '../services/transactionFilters';
 import { computeAllNetWorthChartBucketsSAR } from '../services/personalNetWorth';
-import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices, useCanonicalSpotFx, pickInvestmentsTotalSar } from '../hooks/useCanonicalFinancialMetrics';
+import { useExtendedCanonicalMetrics, useCanonicalSimulatedPrices, useCanonicalSpotFx, pickInvestmentsTotalSar, presentHeadlineInvestmentGrowth } from '../hooks/useCanonicalFinancialMetrics';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
 import { useHydrateSarPerUsdDailySeries } from '../hooks/useHydrateSarPerUsdDailySeries';
@@ -177,6 +177,7 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
         extendedReady,
         salaryInvestment,
     } = metrics;
+    const presentedRoi = presentHeadlineInvestmentGrowth(kpiSnapshot?.headlineInvestmentExposure);
     useHydrateSarPerUsdDailySeries(engineData, headlineFx);
     const investmentsTotalSar = pickInvestmentsTotalSar(metrics, extendedReady);
     const { scope, periodPreset, analysisStudioTab, setAnalysisStudioTab } = useAnalyticsWorkspace();
@@ -383,15 +384,15 @@ const Analysis: React.FC<{ setActivePage?: (page: Page) => void; triggerPageActi
                     <div>
                         <p className="text-slate-600">Investment ROI (headline)</p>
                         <ExtendedMetricGate ready={extendedReady} compact>
-                            <p className="font-bold text-slate-900 tabular-nums">{kpiSnapshot ? `${(kpiSnapshot.roi * 100).toFixed(1)}%` : '—'}</p>
+                            <p className="font-bold text-slate-900 tabular-nums">{presentedRoi?.valueDisplay ?? (kpiSnapshot ? `${(kpiSnapshot.roi * 100).toFixed(1)}%` : '—')}</p>
                             {kpiSnapshot ? (
                                 <button
                                     type="button"
                                     className="text-[10px] font-semibold text-primary hover:underline mt-0.5"
                                     onClick={() => {
                                         const m = buildMetricPassportModel(null, 'investmentRoi', {
-                                            valueDisplay: `${(kpiSnapshot.roi * 100).toFixed(1)}%`,
-                                            statusLabel: kpiSnapshot.roi >= 0 ? 'Gain' : 'Loss',
+                                            valueDisplay: presentedRoi?.valueDisplay ?? `${(kpiSnapshot.roi * 100).toFixed(1)}%`,
+                                            statusLabel: presentedRoi?.statusLabel ?? (kpiSnapshot.roi >= 0 ? 'Gain' : 'Loss'),
                                             sarPerUsd: headlineFx,
                                         });
                                         if (m) openPassport(m);

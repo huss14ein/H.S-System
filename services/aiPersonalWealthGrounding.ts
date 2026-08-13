@@ -8,6 +8,7 @@ import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
 import { computeDashboardKpiSnapshot, financialMonthNetCashflowSar } from './dashboardKpiSnapshot';
+import { presentHeadlineInvestmentGrowth } from './extendedMetricsPresentation';
 import { formatGoalsProgressForPrompt } from './goalResolvedTotals';
 import {
   financialMonthLabel,
@@ -156,7 +157,8 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     return `${t.date?.slice(0, 10) ?? ''}: ${(t.description || '').slice(0, 48)} | ${fmt(Math.abs(Number(t.amount) || 0))} SAR | ${cat}`;
   });
 
-  const roiPct = snap ? snap.roi * 100 : 0;
+  const presentedRoi = presentHeadlineInvestmentGrowth(snap?.headlineInvestmentExposure);
+  const roiPct = presentedRoi?.roiPct ?? (snap ? snap.roi * 100 : 0);
   const salaryInvestment = computeSalaryInvestmentKpis(data, exchangeRate);
   const promptBlock = [
     '=== FINOVA GROUND TRUTH (use only these figures for SAR amounts; do not invent) ===',
@@ -168,7 +170,9 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     `Rewards memo (SAR, not cash/Zakat): ${fmt(rewardsSar)}${expiringN ? `; ${expiringN} lot(s) expire ≤30d` : ''}`,
     `This financial month — income ${fmt(cf.monthlyIncomeSar)} SAR, expenses ${fmt(cf.monthlyExpensesSar)} SAR, net ${fmt(cf.monthlyPnLSar)} SAR`,
     `Salary to investment — salary ${fmt(salaryInvestment?.salaryIncomeSarMonth ?? 0)} SAR, funded from salary ${fmt(salaryInvestment?.investedFromSalarySarMonth ?? 0)} SAR, invest rate ${(salaryInvestment?.salaryInvestRatePct ?? 0).toFixed(1)}%, funded not deployed ${fmt(salaryInvestment?.fundedNotDeployedSar ?? 0)} SAR`,
-    `Investment ROI (% on net capital, app): ${roiPct.toFixed(2)}`,
+    presentedRoi
+      ? `Investment growth after withdrawals — present value ${fmt(presentedRoi.presentValueSar)} SAR, net invested ${fmt(presentedRoi.netInvestedSar)} SAR (deposits ${fmt(presentedRoi.depositsRecordedSar)} − withdrawals ${fmt(presentedRoi.totalWithdrawnSar)}), growth ${fmt(presentedRoi.growthSar)} SAR, ROI ${presentedRoi.valueDisplay}${presentedRoi.investmentAgeLabel ? `, ${presentedRoi.investmentAgeLabel}` : ''}`
+      : `Investment ROI (% on net invested after withdrawals, app): ${roiPct.toFixed(2)}`,
     overspentBudgetLines.length ? `Budget pressure (≥75% used): ${overspentBudgetLines.join('; ')}` : 'Budget pressure: none ≥75% this month',
     `Goals (resolved linked wealth): ${goalsProgress || 'none set'}`,
     holdings.length ? `Top holdings: ${holdings.join('; ')}` : 'Top holdings: none',

@@ -13,12 +13,14 @@ import {
   formatInvestmentAgeLabel,
   investmentAgeDaysFromYmd,
   resolveHeadlinePlatformNetCapitalSar,
+  safeCapitalDepositYmd,
 } from '../services/investmentKpiCore';
 import { computeDashboardKpiSnapshot } from '../services/dashboardKpiSnapshot';
 import { computeCanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
 import {
   buildInvestmentsHeadlineKpiRow,
   headlineKpiMathIsConsistent,
+  presentHeadlineInvestmentGrowth,
 } from '../services/extendedMetricsPresentation';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
@@ -257,6 +259,34 @@ describe('headline ROI after withdrawals', () => {
     expect(formatInvestmentAgeLabel(45)).toBe('1 month invested');
     expect(formatInvestmentAgeLabel(400)).toBe('1y 1mo invested');
   });
+
+  it('rejects non-calendar deposit dates (XSS / injection)', () => {
+    expect(safeCapitalDepositYmd('2024-01-01<script>')).toBe('2024-01-01');
+    expect(safeCapitalDepositYmd('javascript:alert(1)')).toBeNull();
+    expect(safeCapitalDepositYmd('2024-1-1')).toBeNull();
+    expect(safeCapitalDepositYmd('<img src=x onerror=alert(1)>')).toBeNull();
+  });
+
+  it('treats leftover net invested under 1 SAR as principal recovered', () => {
+    const financial = dataWith({
+      holdings: [holding(150, 100, 200)],
+      transactions: [
+        tx({ id: 'd1', type: 'deposit', total: 20_000, date: '2024-01-01' }),
+        tx({ id: 'w1', type: 'withdrawal', total: 19_999.6, date: '2025-12-01' }),
+      ],
+    });
+    const headline = computeHeadlinePersonalInvestmentRoiDecimal(
+      financial,
+      SAR_PER_USD,
+      getCashZero,
+      { '2222.SR': { price: 200 } },
+    );
+    expect(headline.principalFullyRecovered).toBe(true);
+    expect(headline.roi).toBe(0);
+    const presented = presentHeadlineInvestmentGrowth(headline);
+    expect(presented?.valueDisplay).toBe('Principal recovered');
+    expect(presented?.firstCapitalDepositYmd).toBe('2024-01-01');
+  });
 });
 
 describe('ROI-after-withdrawals surface wiring', () => {
@@ -282,5 +312,27 @@ describe('ROI-after-withdrawals surface wiring', () => {
   it('Dashboard ROI card explains withdrawals', () => {
     expect(read('pages/Dashboard.tsx')).toContain('net invested after withdrawals');
     expect(read('pages/Dashboard.tsx')).toContain('commodities + Sukuk');
+    expect(read('pages/Dashboard.tsx')).toContain('presentHeadlineInvestmentGrowth');
+  });
+
+  it('every ROI surface uses the shared growth presenter (no ad-hoc 0% on recovered principal)', () => {
+    const surfaces: Array<[string, string[]]> = [
+      ['pages/Dashboard.tsx', ['presentHeadlineInvestmentGrowth']],
+      ['pages/Analysis.tsx', ['presentHeadlineInvestmentGrowth']],
+      ['pages/WealthAnalytics.tsx', ['presentHeadlineInvestmentGrowth']],
+      ['components/analytics/ExecutiveKpiGrid.tsx', ['presentHeadlineInvestmentGrowth']],
+      ['services/wealthAnalyticsReportModel.ts', ['presentHeadlineInvestmentGrowth']],
+      ['services/aiPersonalWealthGrounding.ts', ['presentHeadlineInvestmentGrowth', 'net invested']],
+      ['services/geminiService.ts', ['Net invested after withdrawals', 'Principal fully recovered']],
+      ['services/metricPassportModel.ts', ['Net invested after withdrawals']],
+      ['services/reportingEngine.ts', ['Net invested after withdrawals']],
+      ['pages/Investments.tsx', ['netInvestedSAR', 'principalFullyRecovered']],
+    ];
+    for (const [path, patterns] of surfaces) {
+      const src = read(path);
+      for (const p of patterns) {
+        expect(src, `${path} missing ${p}`).toContain(p);
+      }
+    }
   });
 });
