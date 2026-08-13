@@ -1,5 +1,6 @@
 import type { UseCanonicalFinancialMetricsResult } from '../hooks/canonicalFinancialMetricsBundle';
 import type { HeadlinePersonalInvestmentRoi } from './investmentKpiCore';
+import { formatInvestmentAgeLabel } from './investmentKpiCore';
 
 export type ExtendedMetricsPickSource = Pick<
   UseCanonicalFinancialMetricsResult,
@@ -24,7 +25,7 @@ export type HeadlineExposurePickSource = Pick<ExtendedMetricsPickSource, 'headli
   investmentExposure?: ExtendedMetricsPickSource['investmentExposure'];
 };
 
-/** Total investment exposure (SAR) — matches Investments hub Total Value card. */
+/** Total investment exposure (SAR) — matches Investments hub Present value card. */
 export function pickHeadlineInvestmentsExposureSar(metrics: HeadlineExposurePickSource): number {
   return pickHeadlineInvestmentExposure(metrics)?.totalExposureSar ?? headlineInvestmentsBucketSar(metrics);
 }
@@ -92,6 +93,15 @@ export type InvestmentsHeadlineKpiRow = {
   platformsRollupSAR: number;
   commoditiesValueSAR: number;
   sukukPositionsValueSAR: number;
+  /** Deposits − withdrawals (+ commodity/Sukuk cost) used as ROI denominator. */
+  netInvestedSar: number;
+  depositsRecordedSar: number;
+  totalWithdrawnSar: number;
+  capitalSource: HeadlinePersonalInvestmentRoi['capitalSource'];
+  principalFullyRecovered: boolean;
+  firstCapitalDepositYmd: string | null;
+  investmentAgeDays: number | null;
+  investmentAgeLabel: string | null;
 };
 
 export function buildInvestmentsHeadlineKpiRow(
@@ -105,6 +115,7 @@ export function buildInvestmentsHeadlineKpiRow(
   const totalDailyPnL = h.platformsDailyPnLSar + h.commoditiesDailyPnLSar;
   const previousTotalValue = totalValue - totalDailyPnL;
   const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
+  const investmentAgeDays = h.investmentAgeDays ?? null;
   return {
     totalValue,
     totalGainLoss,
@@ -114,6 +125,14 @@ export function buildInvestmentsHeadlineKpiRow(
     platformsRollupSAR: h.platformsRollupSar,
     commoditiesValueSAR: h.commoditiesValueSar,
     sukukPositionsValueSAR: h.sukukPositionsValueSar,
+    netInvestedSar: h.netCapitalSar,
+    depositsRecordedSar: h.depositsRecordedSar,
+    totalWithdrawnSar: h.totalWithdrawnSar,
+    capitalSource: h.capitalSource,
+    principalFullyRecovered: h.principalFullyRecovered,
+    firstCapitalDepositYmd: h.firstCapitalDepositYmd,
+    investmentAgeDays,
+    investmentAgeLabel: formatInvestmentAgeLabel(investmentAgeDays),
   };
 }
 
@@ -126,6 +145,9 @@ export function pickDashboardRoiDecimal(metrics: HeadlineExposurePickSource): nu
 
 /** True when gain/loss, ROI, and daily P/L are internally consistent (same rollup object). */
 export function headlineKpiMathIsConsistent(h: HeadlinePersonalInvestmentRoi): boolean {
+  if (h.principalFullyRecovered) {
+    return Math.abs(h.netCapitalSar) <= 1e-9 && Math.abs(h.totalGainLossSar - h.totalExposureSar) < 0.01 && h.roi === 0;
+  }
   if (!(h.netCapitalSar > 0)) return h.totalGainLossSar === 0 && h.roi === 0;
   const impliedRoi = h.totalGainLossSar / h.netCapitalSar;
   return Math.abs(impliedRoi - h.roi) < 0.0001;

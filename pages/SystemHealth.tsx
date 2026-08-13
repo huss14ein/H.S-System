@@ -581,12 +581,17 @@ const SystemHealth: React.FC<{
       const headlineRoi = computeHeadlinePersonalInvestmentRoiDecimal(financialData, rate, getAvailableCash, liveQuoteMap as SimulatedPriceMap);
 
       const platformNetAfterFloorSar = headlineRoi.platformNetForHeadlineSar;
-      const economicFloorApplied = platformNetAfterFloorSar > b.netCapitalSar + 1e-9;
+      const economicFloorApplied = headlineRoi.economicFloorApplied;
 
       const notes: string[] = [];
       if (!(b.depositsRecordedSar > 0) && (b.buysSar > 0 || b.sellsSar > 0)) {
         notes.push(
           'No deposit transactions found — net capital uses ledger-inferred or average-cost fallback (see capital source). Add deposits/withdrawals that match your broker funding for trustworthy ROI.',
+        );
+      }
+      if (b.capitalSource === 'deposits') {
+        notes.push(
+          'Deposit history exists — headline ROI uses deposits − withdrawals (not cost basis). Withdrawals reduce net invested so growth is measured on money still in the platform.',
         );
       }
       if (b.capitalSource === 'ledger_inferred') {
@@ -1430,7 +1435,7 @@ const SystemHealth: React.FC<{
               <h4 className="text-sm font-semibold text-slate-800">Investment KPI reconciliation</h4>
               <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                 <strong>Section A</strong> uses <code className="text-[11px]">computePersonalInvestmentKpiBreakdown</code> (same SAR basis as portfolio/account balances).{' '}
-                <strong>Section B</strong> uses <code className="text-[11px]">computeHeadlinePersonalInvestmentRoiDecimal</code>: live equity quotes from Market Data, commodities/Sukuk marks, and an <strong>economic floor</strong> on platform net capital (max of ledger net capital vs holdings cost basis + broker cash) — identical to the Investments headline cards.
+                <strong>Section B</strong> uses <code className="text-[11px]">computeHeadlinePersonalInvestmentRoiDecimal</code>: live equity quotes from Market Data, commodities/Sukuk marks, and platform net capital = <strong>deposits − withdrawals</strong> when funding history exists. An <strong>economic floor</strong> (max of ledger net capital vs holdings cost basis + broker cash) applies only when deposits are missing — identical to the Investments headline cards.
               </p>
 
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mt-3 mb-1">A — Stocks &amp; broker cash only (canonical)</p>
@@ -1549,12 +1554,14 @@ const SystemHealth: React.FC<{
                     {integritySummary.investmentKpiReconciliation.investmentsHeadline.combinedNetCapitalSar.toFixed(2)} SAR
                   </p>
                   <p className="text-xs text-slate-600 mt-1 tabular-nums leading-relaxed">
-                    Platform slice after floor {integritySummary.investmentKpiReconciliation.investmentsHeadline.platformNetAfterFloorSar.toFixed(2)} + commodity cost{' '}
+                    Platform net invested {integritySummary.investmentKpiReconciliation.investmentsHeadline.platformNetAfterFloorSar.toFixed(2)} + commodity cost{' '}
                     {integritySummary.investmentKpiReconciliation.investmentsHeadline.commodityCostSar.toFixed(2)} + Sukuk cost{' '}
-                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.sukukCostSar.toFixed(2)}. Floor = max(Section A net capital{' '}
-                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.stocksNetCapitalBeforeFloorSar.toFixed(2)}, holdings cost + broker cash{' '}
-                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.holdingsCostBasisPlusBrokerCashSar.toFixed(2)})
-                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.economicFloorApplied ? ' — floor applied.' : ' — floor not raised.'}
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.sukukCostSar.toFixed(2)}. When deposits exist this is deposits − withdrawals (
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.stocksNetCapitalBeforeFloorSar.toFixed(2)}
+                    ); cost-basis + broker cash (
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.holdingsCostBasisPlusBrokerCashSar.toFixed(2)}
+                    ) is a floor only if deposits are missing
+                    {integritySummary.investmentKpiReconciliation.investmentsHeadline.economicFloorApplied ? ' — floor applied.' : ' — floor not used.'}
                   </p>
                 </div>
                 <div className={`rounded-lg border p-3 ${

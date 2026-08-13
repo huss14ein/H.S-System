@@ -82,6 +82,7 @@ describe('Investments headline KPI E2E', () => {
     expect(row!.totalValue).toBe(m.investmentsTotalSar);
     expect(row!.totalGainLoss).toBe(exposure!.totalGainLossSar);
     expect(row!.roi).toBeCloseTo(exposure!.roi * 100, 6);
+    expect(row!.netInvestedSar).toBe(exposure!.netCapitalSar);
     expect(row!.totalDailyPnL).toBeCloseTo(
       exposure!.platformsDailyPnLSar + exposure!.commoditiesDailyPnLSar,
       6,

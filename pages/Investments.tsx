@@ -2886,6 +2886,7 @@ const PlatformCardInner: React.FC<{
         dailyPnLSAR,
         totalInvestedSAR,
         totalWithdrawnSAR,
+        netCapitalSAR,
         roi,
     } = useMemo(
         () =>
@@ -3215,9 +3216,17 @@ const PlatformCardInner: React.FC<{
                         <dd className={`metric-value w-full mt-1.5 font-bold text-lg tabular-nums ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{roi.toFixed(1)}%</dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
-                        <dt className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight">Invested</dt>
-                        <dd className="metric-value w-full mt-1.5 flex justify-center text-slate-800">
-                            <CurrencyDualDisplay value={totalInvestedSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
+                        <dt
+                            className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
+                            title="Deposits minus withdrawals on this platform (reconcile cash stamps excluded). ROI uses this net invested amount."
+                        >
+                            Net invested
+                        </dt>
+                        <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-slate-800">
+                            <CurrencyDualDisplay value={netCapitalSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
+                            <span className="text-[10px] text-slate-500 mt-1 font-normal">
+                                of {formatCurrencyString(totalInvestedSAR, { inCurrency: 'SAR', digits: 0 })} deposited
+                            </span>
                         </dd>
                     </div>
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
@@ -3382,11 +3391,11 @@ const PlatformCardInner: React.FC<{
                                         {' — '}
                                         {sortedPortfolios.length === 1 ? (
                                           <>
-                                            Platform <strong>Unrealized P/L</strong> and <strong>ROI</strong> are vs net deposits (invested − withdrawn). Per-holding rows still show qty × avg cost. <strong>Invested</strong> / <strong>Withdrawn</strong> are cash flows from the ledger.
+                                            Platform <strong>Unrealized P/L</strong> and <strong>ROI</strong> are vs net invested (deposits − withdrawals). Per-holding rows still show qty × avg cost. <strong>Net invested</strong> / <strong>Withdrawn</strong> are cash flows from the ledger.
                                           </>
                                         ) : (
                                           <>
-                                            <strong>Invested</strong> / <strong>Withdrawn</strong> include deposits &amp; withdrawals tied to this portfolio, plus a <strong>share of account-level transfers</strong> (no portfolio tag) split by position value.
+                                            <strong>Net invested</strong> / <strong>Withdrawn</strong> include deposits &amp; withdrawals tied to this portfolio, plus a <strong>share of account-level transfers</strong> (no portfolio tag) split by position value.
                                             <strong> Unrealized P/L</strong> and <strong>ROI</strong> use position vs average cost like the holdings table. Idle cash is shared — <strong>Available cash</strong> matches the platform header.
                                             {' '}
                                             <strong>Week / Month P/L</strong> use mark-to-market from period start (end live value − start snapshot − net deposits/withdrawals), same as Wealth Analytics.
@@ -3475,11 +3484,14 @@ const PlatformCardInner: React.FC<{
                                             </dd>
                                         </div>
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
-                                            <dt className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5">
-                                                Invested
+                                            <dt
+                                                className="metric-label shrink-0 w-full text-[10px] sm:text-[11px] font-semibold text-slate-500 uppercase tracking-[0.12em] leading-tight px-0.5"
+                                                title="Deposits minus withdrawals attributed to this portfolio."
+                                            >
+                                                Net invested
                                             </dt>
                                             <dd className="metric-value flex flex-1 flex-col items-center justify-center mt-2 text-slate-800 min-h-0">
-                                                <CurrencyDualDisplay value={pk.totalInvestedSAR} inCurrency="SAR" digits={0} size="base" weight="bold" />
+                                                <CurrencyDualDisplay value={pk.netCapitalSAR} inCurrency="SAR" digits={0} size="base" weight="bold" />
                                             </dd>
                                         </div>
                                         <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-3 py-3.5 sm:px-4 min-w-0 shadow-sm flex flex-col text-center min-h-[118px] h-full">
@@ -5725,6 +5737,12 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     platformsRollupSAR,
     commoditiesValueSAR,
     sukukPositionsValueSAR,
+    netInvestedSar,
+    depositsRecordedSar,
+    totalWithdrawnSar,
+    principalFullyRecovered,
+    investmentAgeLabel,
+    firstCapitalDepositYmd,
   } = headlineKpis ?? {
     totalValue: 0,
     totalGainLoss: 0,
@@ -5734,6 +5752,12 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     platformsRollupSAR: 0,
     commoditiesValueSAR: 0,
     sukukPositionsValueSAR: 0,
+    netInvestedSar: 0,
+    depositsRecordedSar: 0,
+    totalWithdrawnSar: 0,
+    principalFullyRecovered: false,
+    investmentAgeLabel: null,
+    firstCapitalDepositYmd: null,
   };
 
   const investmentsHubAiContext = useMemo(() => {
@@ -6243,7 +6267,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
 
         <section className="cards-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" aria-label="Investment summary">
             <Card
-                title="Total Value"
+                title="Present value"
                 value={
                     headlineKpisReady ? (
                         <CurrencyDualDisplay value={totalValue} inCurrency="SAR" digits={2} size="2xl" />
@@ -6255,10 +6279,11 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 indicatorColor="green"
                 valueColor="text-emerald-700"
                 icon={<ChartPieIcon className="h-5 w-5 text-emerald-600" aria-hidden />}
-                tooltip="Everything you have invested right now: stocks and funds at today's prices, idle cash on broker accounts, commodities, and direct Sukuk contracts. US-listed prices use your FX rate so the total matches net worth."
+                tooltip="Present value of money still on this platform: stocks and funds at today's prices, idle broker cash, commodities, and direct Sukuk. Same total as net worth's investments bucket."
+                footer={headlineKpisReady && investmentAgeLabel ? investmentAgeLabel : undefined}
             />
             <Card
-                title="Net Gain/Loss"
+                title="Growth"
                 value={
                     headlineKpisReady ? (
                         <CurrencyDualDisplay value={totalGainLoss} inCurrency="SAR" digits={2} colorize size="2xl" />
@@ -6270,22 +6295,38 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Net gain/loss vs net contributions: current value minus (deposits − withdrawals) minus commodity and direct Sukuk purchase costs."
+                tooltip="Present value minus net invested. Net invested is deposits minus withdrawals (broker-cash reconcile stamps excluded), plus commodity and direct Sukuk purchase costs."
+                trend={
+                    headlineKpisReady
+                      ? principalFullyRecovered
+                        ? 'Principal recovered — remaining is profit'
+                        : totalGainLoss >= 0
+                          ? 'Growing vs net invested'
+                          : 'Shrinking vs net invested'
+                      : undefined
+                }
             />
             <Card
                 title="Portfolio ROI"
                 value={
                     headlineKpisReady ? (
-                        `${roi.toFixed(2)}%`
+                        principalFullyRecovered ? 'Principal recovered' : `${roi.toFixed(2)}%`
                     ) : (
                         <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
                     )
                 }
-                valueColor={roi >= 0 ? 'text-emerald-700' : 'text-rose-700'}
+                valueColor={roi >= 0 || principalFullyRecovered ? 'text-emerald-700' : 'text-rose-700'}
                 density="compact"
-                indicatorColor={roi >= 0 ? 'green' : 'red'}
-                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Return on capital at risk: net gain or loss divided by the larger of (deposits − withdrawals) and (position cost basis + idle broker cash), plus commodity and Sukuk purchase costs. The floor avoids overstated returns when deposit history is incomplete but your books show real deployed capital."
+                indicatorColor={roi >= 0 || principalFullyRecovered ? 'green' : 'red'}
+                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${roi >= 0 || principalFullyRecovered ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
+                tooltip="Growth ÷ net invested after withdrawals. When deposit history exists this is (present value − (deposits − withdrawals + commodity/Sukuk cost)) ÷ that net invested. Cost-basis is used only if deposits were never recorded."
+                footer={
+                    headlineKpisReady
+                      ? principalFullyRecovered
+                        ? 'You withdrew all deposits; leftover value is profit.'
+                        : `On ${formatCurrencyString(netInvestedSar, { inCurrency: 'SAR', digits: 0 })} still invested`
+                      : undefined
+                }
             />
             <Card
                 title="Daily P/L"
@@ -6304,6 +6345,52 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalDailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
             />
         </section>
+        {headlineKpisReady && (
+            <section
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm -mt-2"
+                aria-label="Net invested after withdrawals"
+            >
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                    <div>
+                        <p className="font-semibold text-slate-500 uppercase tracking-wide">Net invested</p>
+                        <p className="tabular-nums mt-1 text-sm font-semibold text-slate-900">
+                            {formatCurrencyString(netInvestedSar, { inCurrency: 'SAR', digits: 2 })}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                            Deposited {formatCurrencyString(depositsRecordedSar, { inCurrency: 'SAR', digits: 0 })} − withdrawn {formatCurrencyString(totalWithdrawnSar, { inCurrency: 'SAR', digits: 0 })}
+                        </p>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-slate-500 uppercase tracking-wide">Present value</p>
+                        <p className="tabular-nums mt-1 text-sm font-semibold text-slate-900">
+                            {formatCurrencyString(totalValue, { inCurrency: 'SAR', digits: 2 })}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">What the remaining money is worth today</p>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-slate-500 uppercase tracking-wide">
+                            {totalGainLoss >= 0 ? 'Growing by' : 'Shrinking by'}
+                        </p>
+                        <p className={`tabular-nums mt-1 text-sm font-semibold ${totalGainLoss >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
+                            {formatCurrencyString(Math.abs(totalGainLoss), { inCurrency: 'SAR', digits: 2 })}
+                            {!principalFullyRecovered && netInvestedSar > 0 ? ` (${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%)` : ''}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                            {principalFullyRecovered ? 'Principal withdrawn; leftover is profit' : 'Present value − net invested'}
+                        </p>
+                    </div>
+                    <div>
+                        <p className="font-semibold text-slate-500 uppercase tracking-wide">Time invested</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {investmentAgeLabel ?? '—'}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                            {firstCapitalDepositYmd ? `First deposit ${firstCapitalDepositYmd}` : 'Add deposits to date this book'}
+                        </p>
+                    </div>
+                </div>
+            </section>
+        )}
         {headlineKpisReady && (platformsRollupSAR > 0 || commoditiesValueSAR > 0 || sukukPositionsValueSAR > 0) && (
             <p className="text-xs text-slate-500 -mt-2 px-0.5 leading-relaxed" role="note">
                 KPIs aggregate personal portfolios in <strong>each portfolio&apos;s base currency</strong> (USD or SAR), convert to SAR using your FX settings, then show amounts in your app currency ({appDisplayCurrency}). Commodities are valued in USD and converted consistently.
@@ -6408,30 +6495,34 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
 
         <details className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <summary className="cursor-pointer select-none text-sm font-semibold text-slate-800">
-                How is “Net Gain/Loss” calculated?
+                How is growth and ROI calculated?
             </summary>
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="font-semibold text-slate-700">Total value (SAR)</p>
-                    <p className="tabular-nums text-slate-900 mt-1">{formatCurrencyString(totalValue, { inCurrency: 'SAR', digits: 2 })}</p>
+                    <p className="font-semibold text-slate-700">Deposited (SAR)</p>
+                    <p className="tabular-nums text-slate-900 mt-1">{formatCurrencyString(depositsRecordedSar, { inCurrency: 'SAR', digits: 2 })}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                    <p className="font-semibold text-slate-700">Net capital (SAR)</p>
+                    <p className="font-semibold text-slate-700">Withdrawn (SAR)</p>
+                    <p className="tabular-nums text-slate-900 mt-1">{formatCurrencyString(totalWithdrawnSar, { inCurrency: 'SAR', digits: 2 })}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <p className="font-semibold text-slate-700">Net invested (SAR)</p>
                     <p className="tabular-nums text-slate-900 mt-1">
-                        {formatCurrencyString(Math.max(0, totalValue - totalGainLoss), { inCurrency: 'SAR', digits: 2 })}
+                        {formatCurrencyString(netInvestedSar, { inCurrency: 'SAR', digits: 2 })}
                     </p>
                     <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                        Deposits − withdrawals (platforms) + commodity purchase cost + Sukuk purchase cost.
+                        Deposits − withdrawals, plus commodity and Sukuk purchase costs. Broker-cash reconcile rows are excluded.
                     </p>
                 </div>
                 <div className={`rounded-xl border px-3 py-2 ${
                     totalGainLoss >= 0 ? 'border-emerald-200 bg-emerald-50/60' : 'border-rose-200 bg-rose-50/60'
                 }`}>
-                    <p className="font-semibold text-slate-700">Net gain/loss (SAR)</p>
+                    <p className="font-semibold text-slate-700">Growth (SAR)</p>
                     <p className={`tabular-nums mt-1 font-semibold ${totalGainLoss >= 0 ? 'text-emerald-800' : 'text-rose-800'}`}>
                         {formatCurrencyString(totalGainLoss, { inCurrency: 'SAR', digits: 2 })}
                     </p>
-                    <p className="text-[11px] text-slate-600 mt-1">Total value − net capital</p>
+                    <p className="text-[11px] text-slate-600 mt-1">Present value − net invested</p>
                 </div>
             </div>
             <p className="mt-3 text-xs text-slate-600 leading-relaxed">

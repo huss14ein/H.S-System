@@ -34,7 +34,7 @@ const FALLBACK_DEFINITIONS: Record<MetricPassportModel['key'], string> = {
   portfolioPeriodPnL:
     'Financial-month portfolio mark-to-market P/L — same engine as Wealth Analytics and Investments platform rows (cost start + live end; seeded start-cash reconstruct).',
   investmentRoi:
-    'Platform rollup + commodities + direct Sukuk vs net capital (computeHeadlinePersonalInvestmentRoiDecimal).',
+    'Platform rollup + commodities + direct Sukuk vs net invested after withdrawals (computeHeadlinePersonalInvestmentRoiDecimal).',
   emergencyFund:
     'Liquid cash (bank + idle broker cash) divided by essential monthly expenses. Target: 6 months.',
   budgetVariance:
@@ -90,7 +90,7 @@ export function buildMetricPassportModel(
   } else if (key === 'weeklyPnL' || key === 'portfolioPeriodPnL') {
     sectionC = `Portfolio week P/L ${money(report.weeklyPnLTotalSar)}; financial-month portfolio P/L ${money(report.monthlyPnLTotalSar)}. Mark-to-market from period start: ledger (realized sells, dividends, fees) + market estimate (price change). Realized leg uses FIFO lots when available; otherwise weighted average.`;
   } else if (key === 'investmentRoi') {
-    sectionC = `Platform rollup + commodities + Sukuk vs net capital (computeHeadlinePersonalInvestmentRoiDecimal). Total exposure ${money(report.investmentsTotalSar)}.`;
+    sectionC = `Platform rollup + commodities + Sukuk vs net invested after withdrawals (computeHeadlinePersonalInvestmentRoiDecimal). Present value ${money(report.investmentsTotalSar)}.`;
   } else if (key === 'budgetVariance') {
     sectionC = 'Positive = under budget this financial month. Same path as Dashboard KPI row.';
   } else {

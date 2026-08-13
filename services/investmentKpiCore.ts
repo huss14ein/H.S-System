@@ -14,6 +14,7 @@ import { isInvestmentTransactionType } from '../utils/investmentTransactionType'
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import { isCapitalInvestmentDeposit, isCapitalInvestmentWithdrawal } from './reconciliation/cashDelta';
+import { appCalendarTodayYmd } from './reconciliation/constants';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
   computePersonalPlatformsRollupSAR,
@@ -56,10 +57,68 @@ export const LEDGER_INFERRED_FALLBACK_MAX_RATIO = 4.5;
 /** Skip ratio cross-check when fallback gross is tiny (noise vs rounding). */
 export const LEDGER_INFERRED_FALLBACK_MIN_SAR = 400;
 
+export function earliestCapitalDepositYmd(transactions: Array<{ date?: string | null; type?: string | null; note?: string | null; description?: string | null; category?: string | null; idempotencyKey?: string | null }>): string | null {
+  let min: string | null = null;
+  for (const t of transactions) {
+    if (!isCapitalInvestmentDeposit(t)) continue;
+    const d = String(t.date ?? '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    if (!min || d < min) min = d;
+  }
+  return min;
+}
+
+export function investmentAgeDaysFromYmd(startYmd: string | null | undefined, asOfYmd: string = appCalendarTodayYmd()): number | null {
+  const start = String(startYmd ?? '').slice(0, 10);
+  const asOf = String(asOfYmd ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return null;
+  const startMs = Date.parse(`${start}T00:00:00`);
+  const asOfMs = Date.parse(`${asOf}T00:00:00`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(asOfMs) || asOfMs < startMs) return null;
+  return Math.floor((asOfMs - startMs) / 86_400_000);
+}
+
+export function formatInvestmentAgeLabel(days: number | null | undefined): string | null {
+  if (days == null || !Number.isFinite(days) || days < 0) return null;
+  const n = Math.floor(days);
+  if (n < 1) return 'Started today';
+  if (n === 1) return '1 day invested';
+  if (n < 31) return `${n} days invested`;
+  const months = Math.floor(n / 30.4375);
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'} invested`;
+  const years = Math.floor(months / 12);
+  const remMonths = months % 12;
+  if (remMonths === 0) return `${years} year${years === 1 ? '' : 's'} invested`;
+  return `${years}y ${remMonths}mo invested`;
+}
+
+/**
+ * Headline platform capital: deposits − withdrawals when funding history exists.
+ * Cost-basis + idle cash is a floor only when deposits are missing (incomplete books).
+ */
+export function resolveHeadlinePlatformNetCapitalSar(args: {
+  capitalSource: InvestmentCapitalSource;
+  ledgerNetCapitalSar: number;
+  economicDeployedSar: number;
+}): { platformNetSar: number; economicFloorApplied: boolean } {
+  const ledger = Math.max(0, Number.isFinite(args.ledgerNetCapitalSar) ? args.ledgerNetCapitalSar : 0);
+  const economic = Math.max(0, Number.isFinite(args.economicDeployedSar) ? args.economicDeployedSar : 0);
+  if (args.capitalSource === 'deposits') {
+    return { platformNetSar: ledger, economicFloorApplied: false };
+  }
+  const platformNetSar = Math.max(ledger, economic);
+  return {
+    platformNetSar,
+    economicFloorApplied: platformNetSar > ledger + 1e-9,
+  };
+}
+
 export type PersonalInvestmentKpiBreakdown = PersonalInvestmentKpisSar & {
   capitalSource: InvestmentCapitalSource;
   /** Sum of deposit transactions (SAR). */
   depositsRecordedSar: number;
+  /** Earliest economic deposit calendar day (YYYY-MM-DD), if any. */
+  firstCapitalDepositYmd: string | null;
   /** Used only when deposits are missing: max(0, buys − sells − dividends + brokerageCash + withdrawals). */
   inferredInvestedFromLedgerSar: number;
   /** Rolling average-cost basis of open holdings (SAR). */
@@ -157,6 +216,7 @@ export function computePersonalInvestmentKpiBreakdown(
   /** Economic capital in/out — excludes broker-cash Reconcile Balance adjustments. */
   const depositsRecordedSar = invTx.filter(isCapitalDeposit).reduce((sum, t) => sum + invTxSar(t), 0);
   const totalWithdrawnSar = invTx.filter(isCapitalWithdrawal).reduce((sum, t) => sum + invTxSar(t), 0);
+  const firstCapitalDepositYmd = earliestCapitalDepositYmd(invTx);
   const buysSar = invTx
     .filter((t) => isInvestmentTransactionType(t.type, 'buy'))
     .reduce((sum, t) => sum + invTxSar(t), 0);
@@ -247,6 +307,7 @@ export function computePersonalInvestmentKpiBreakdown(
     roi,
     capitalSource,
     depositsRecordedSar,
+    firstCapitalDepositYmd,
     inferredInvestedFromLedgerSar,
     holdingsCostBasisSar,
     fallbackInvestedSar,
@@ -385,9 +446,19 @@ export type HeadlinePersonalInvestmentRoi = {
   /** Same inputs as headline net capital decomposition (single source for reconciliation UI). */
   commodityCostSar: number;
   sukukPositionsCostSar: number;
-  /** max(ledger net capital, holdings cost basis + floored broker cash) — platform slice before commodities/Sukuk. */
+  /** Platform net capital used in headline (deposits − withdrawals when funding exists). */
   platformNetForHeadlineSar: number;
   economicDeployedPlatformSar: number;
+  /** True only when deposit history is missing and cost-basis + cash raised the denominator. */
+  economicFloorApplied: boolean;
+  depositsRecordedSar: number;
+  totalWithdrawnSar: number;
+  /** Platform net capital before any incomplete-books floor (deposits − withdrawals, or inferred/fallback net). */
+  ledgerPlatformNetCapitalSar: number;
+  /** Deposits exist, net invested is 0, but present value remains — remaining MV is profit after recovering principal. */
+  principalFullyRecovered: boolean;
+  firstCapitalDepositYmd: string | null;
+  investmentAgeDays: number | null;
 };
 
 /**
@@ -425,17 +496,29 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
 
   const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukPositionsValueSar;
   /**
-   * Deposit/withdrawal history alone often understates capital still deployed (reinvested dividends, transfers
-   * not logged as deposits). Floor platform net capital at cost basis + idle broker cash so headline ROI / gain
-   * do not imply triple-digit returns purely from ledger gaps.
+   * When deposit history exists, net invested is deposits − withdrawals. Do not floor at cost basis + idle
+   * cash — that treats remaining book cost as still-invested capital after withdrawals and understates growth.
+   * Floor only when deposits are missing (ledger_inferred / cost_basis_fallback) so incomplete books do not
+   * produce triple-digit ROI.
    */
   const economicDeployedSar = Math.max(0, breakdown.holdingsCostBasisSar + breakdown.brokerageCashSar);
-  const platformNetForHeadline = Math.max(breakdown.netCapitalSar, economicDeployedSar);
+  const { platformNetSar: platformNetForHeadline, economicFloorApplied } = resolveHeadlinePlatformNetCapitalSar({
+    capitalSource: breakdown.capitalSource,
+    ledgerNetCapitalSar: breakdown.netCapitalSar,
+    economicDeployedSar,
+  });
   const netCapitalSar = Math.max(0, platformNetForHeadline + commodityCost + sukukPositionsCostSar);
   const totalGainLossSar = totalExposureSar - netCapitalSar;
-  const roi = sanitizeInvestmentRoiDecimal(
-    netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0,
-  );
+  const principalFullyRecovered =
+    breakdown.capitalSource === 'deposits' &&
+    breakdown.depositsRecordedSar > 0 &&
+    netCapitalSar <= 1e-9 &&
+    totalExposureSar > 1e-9;
+  const roi = principalFullyRecovered
+    ? 0
+    : sanitizeInvestmentRoiDecimal(netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0);
+  const firstCapitalDepositYmd = breakdown.firstCapitalDepositYmd;
+  const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
 
   return {
     totalGainLossSar,
@@ -452,5 +535,12 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     sukukPositionsCostSar,
     platformNetForHeadlineSar: platformNetForHeadline,
     economicDeployedPlatformSar: economicDeployedSar,
+    economicFloorApplied,
+    depositsRecordedSar: breakdown.depositsRecordedSar,
+    totalWithdrawnSar: breakdown.totalWithdrawnSar,
+    ledgerPlatformNetCapitalSar: breakdown.netCapitalSar,
+    principalFullyRecovered,
+    firstCapitalDepositYmd,
+    investmentAgeDays,
   };
 }

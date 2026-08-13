@@ -829,7 +829,7 @@ export function generateWealthMetricPassportHtml(
   } else if (metric === 'weeklyPnL' || metric === 'portfolioPeriodPnL') {
     sectionC = `Portfolio mark-to-market P/L: week ${money(model.weeklyPnLTotalSar)}, financial month ${money(model.monthlyPnLTotalSar)}. Ledger + market estimate from period start. Not the same as Dashboard cashflow monthly P/L.`;
   } else if (metric === 'investmentRoi') {
-    sectionC = `Platform rollup + commodities + Sukuk vs net capital (computeHeadlinePersonalInvestmentRoiDecimal). Total exposure ${money(model.investmentsTotalSar)}.`;
+    sectionC = `Platform rollup + commodities + Sukuk vs net invested after withdrawals (computeHeadlinePersonalInvestmentRoiDecimal). Present value ${money(model.investmentsTotalSar)}.`;
   } else if (metric === 'budgetVariance') {
     sectionC = 'Positive = under budget this financial month. Same path as Dashboard KPI row.';
   } else {

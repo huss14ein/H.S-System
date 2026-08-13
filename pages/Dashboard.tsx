@@ -407,6 +407,7 @@ const DashboardContent: React.FC<{
                 liquidCashSar,
                 avgMonthlyIncomeSar6Mo,
                 investmentCapitalSource,
+                headlineInvestmentExposure,
             } = snap;
 
             const investmentTreemapData = buildPersonalInvestmentTreemapRows(workingData, sarPerUsd, liveQuotePrices);
@@ -503,6 +504,7 @@ const DashboardContent: React.FC<{
                     liquidCashSar,
                     avgMonthlyIncomeSar6Mo,
                     investmentCapitalSource,
+                    headlineInvestmentExposure,
                 },
                 projectedCash30d,
                 currentCash,
@@ -569,6 +571,16 @@ const DashboardContent: React.FC<{
     const kpiCards = useMemo(() => {
         const cardProps = { density: kpiDensity as 'compact' | 'comfortable' };
         const invCapitalSrc = (kpiSummary as { investmentCapitalSource?: InvestmentCapitalSource }).investmentCapitalSource;
+        const invExp = (kpiSummary as {
+          headlineInvestmentExposure?: {
+            principalFullyRecovered?: boolean;
+            totalGainLossSar?: number;
+            netCapitalSar?: number;
+          };
+        }).headlineInvestmentExposure;
+        const principalRecovered = invExp?.principalFullyRecovered === true;
+        const growthSar = Number(invExp?.totalGainLossSar);
+        const roiPct = (kpiSummary.roi || 0) * 100;
         const efTrend = !emergencyFund.hasEssentialExpenseEstimate
             ? 'Add expense data'
             : emergencyFund.status === 'healthy'
@@ -608,7 +620,7 @@ const DashboardContent: React.FC<{
                 icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />}
             />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
-            investmentRoi: <Card {...cardProps} title="Investment ROI" value={`${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={`${(kpiSummary.roi || 0) >= 0 ? '+' : ''}${((kpiSummary.roi || 0) * 100).toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Same formula as Investments: platform value (live rollup) + commodities + Sukuk vs net capital (deposits or fallback) including commodity and Sukuk cost. Uses your live quote feed when available." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
+            investmentRoi: <Card {...cardProps} title="Investment ROI" value={principalRecovered ? 'Principal recovered' : `${roiPct.toFixed(1)}%`} valueColor={(kpiSummary.roi || 0) >= 0 || principalRecovered ? 'text-success' : 'text-danger'} trend={principalRecovered ? 'Remaining value is profit' : Number.isFinite(growthSar) ? `${growthSar >= 0 ? '+' : ''}${formatCurrencyString(growthSar, { digits: 0 })} vs net invested` : `${roiPct >= 0 ? '+' : ''}${roiPct.toFixed(1)}%`} indicatorColor={(kpiSummary.roi || 0) >= 0 || principalRecovered ? 'green' : 'red'} tooltip="Same formula as Investments: present value (platform live rollup + commodities + Sukuk) minus net invested after withdrawals (deposits − withdrawals, plus commodity/Sukuk cost). Cost basis is used only when deposit history is missing. Uses your live quote feed when available." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
                 <button type="button" className="text-left w-full font-medium text-primary hover:underline" onClick={(e) => { e.stopPropagation(); goToInvestmentKpiReconciliation(); }}>
                     Ledger-inferred capital — open Investment KPI reconciliation →
                 </button>
