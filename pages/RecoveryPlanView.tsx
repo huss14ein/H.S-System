@@ -37,6 +37,7 @@ import { ResolvedSymbolLabel, formatSymbolWithCompany } from '../components/Symb
 import { toast } from '../context/ToastContext';
 import { recoveryOrderDraftToPlannedTrade, plannedTradeMatchesRecoveryDraft } from '../services/recoveryToPlannedTrade';
 import UnifiedRecoveryPanel from '../components/UnifiedRecoveryPanel';
+import RecoveryDecisionScorecard from '../components/RecoveryDecisionScorecard';
 import { type PositionRecyclingPrefsUi } from '../components/PositionRecyclingPanel';
 import {
   buildRecyclingPlanForHolding,
@@ -53,7 +54,14 @@ import {
 import {
   buildRecyclingPathBrief,
   buildRecoveryLadderPathBrief,
+  suggestDefaultRecoveryPathMode,
 } from '../services/recoveryPathSummaries';
+import {
+  rankRecoveryDecisions,
+  decisionTone,
+  sumAllocatedLadderSpendSar,
+} from '../services/recoveryDecisionEngine';
+import { toSAR } from '../utils/currencyMath';
 import {
   loadRecyclingPrefs,
   saveRecyclingPrefs,
@@ -81,6 +89,8 @@ interface RecoveryPlanViewProps {
   onOpenWealthUltra?: () => void;
   setActivePage?: (page: Page) => void;
   triggerPageAction?: (page: Page, action: string) => void;
+  pageAction?: string | null;
+  clearPageAction?: () => void;
 }
 
 const deriveDynamicPositionConfig = (
@@ -99,7 +109,7 @@ const deriveDynamicPositionConfig = (
     plPct,
     recoveryBudgetPct,
   });
-function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage, triggerPageAction }: RecoveryPlanViewProps) {
+function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage, triggerPageAction, pageAction, clearPageAction }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
   const { data, getAvailableCashForAccount, addPlannedTrade } = ctx;
   const { exchangeRate } = useCurrency();
@@ -297,15 +307,85 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     [losingPositions],
   );
 
+  const watchlistScores = useMemo(() => {
+    const changeBySymbol: Record<string, number> = {};
+    for (const [sym, q] of Object.entries(liveQuotePrices ?? {})) {
+      const ch = Number((q as { change?: number })?.change);
+      if (Number.isFinite(ch)) changeBySymbol[sym.toUpperCase()] = ch;
+    }
+    return buildWatchlistScoresFromItems(data?.watchlist ?? [], changeBySymbol);
+  }, [data?.watchlist, liveQuotePrices]);
+
+  const recoveryBudgetSar = deployableCashSAR * globalConfig.recoveryBudgetPct;
+
+  const rankedDecisions = useMemo(() => {
+    const mvByPortfolio = new Map<string, number>();
+    for (const p of positionsWithRecovery) {
+      const pid = String(p.portfolioId ?? '');
+      mvByPortfolio.set(pid, (mvByPortfolio.get(pid) ?? 0) + Math.max(0, Number(p.plan.marketValue) || 0));
+    }
+    const universe = data?.portfolioUniverse ?? [];
+    return rankRecoveryDecisions(
+      losingPositions.map((p) => {
+        const pid = String(p.portfolioId ?? '');
+        const portMv = mvByPortfolio.get(pid) ?? 0;
+        const conviction = resolveSyncedRecoveryConviction({
+          symbol: (p.holding.symbol || '').toUpperCase(),
+          plPct: p.plan.plPct,
+          riskTier: p.positionConfig.riskTier,
+          universe,
+          watchlistItems: watchlistScores,
+        });
+        return {
+          holdingId: p.holding.id,
+          symbol: p.holding.symbol ?? '',
+          plan: p.plan,
+          positionConfig: p.positionConfig,
+          recyclingSummary: p.recyclingSummary,
+          conviction,
+          quoteStale: p.priceProvenance?.quoteFreshness?.isStale === true,
+          portfolioWeightPct: portMv > 0 ? ((Number(p.plan.marketValue) || 0) / portMv) * 100 : 0,
+          bookCurrency: p.bookCurrency,
+        };
+      }),
+      { recoveryBudgetSar, sarPerUsd },
+    );
+  }, [
+    losingPositions,
+    positionsWithRecovery,
+    data?.portfolioUniverse,
+    watchlistScores,
+    recoveryBudgetSar,
+    sarPerUsd,
+  ]);
+
+  const decisionByHoldingId = useMemo(
+    () => new Map(rankedDecisions.map((d) => [d.holdingId, d])),
+    [rankedDecisions],
+  );
+
+  const rankedLosingPositions = useMemo(() => {
+    const byId = new Map(losingPositions.map((p) => [p.holding.id, p]));
+    const ordered = rankedDecisions
+      .map((d) => byId.get(d.holdingId))
+      .filter((row): row is (typeof losingPositions)[number] => Boolean(row));
+    for (const p of losingPositions) {
+      if (!decisionByHoldingId.has(p.holding.id)) ordered.push(p);
+    }
+    return ordered;
+  }, [losingPositions, rankedDecisions, decisionByHoldingId]);
+
+  const actFirstDecision = rankedDecisions[0] ?? null;
+  const addLadderCount = rankedDecisions.filter((d) => d.action === 'add_ladder').length;
+
   const estimatedRecoveryDeploymentSAR = useMemo(() => {
-    const uncapped = qualifiedPositions.reduce((sum, p) => {
-      const cost = p.plan.totalPlannedCost ?? 0;
-      if (!Number.isFinite(cost) || cost <= 0) return sum;
-      return sum + (p.bookCurrency === 'SAR' ? cost : cost * sarPerUsd);
-    }, 0);
-    const budgetCap = deployableCashSAR * globalConfig.recoveryBudgetPct;
-    return Math.min(uncapped, Number.isFinite(budgetCap) ? Math.max(0, budgetCap) : uncapped);
-  }, [qualifiedPositions, sarPerUsd, deployableCashSAR, globalConfig.recoveryBudgetPct]);
+    const byId = new Map(losingPositions.map((p) => [p.holding.id, p]));
+    return sumAllocatedLadderSpendSar(rankedDecisions, (holdingId, cash) => {
+      const row = byId.get(holdingId);
+      const cur = row?.bookCurrency === 'SAR' ? 'SAR' : 'USD';
+      return toSAR(cash, cur, sarPerUsd);
+    });
+  }, [rankedDecisions, losingPositions, sarPerUsd]);
 
   // Load recovery statistics dynamically
   useEffect(() => {
@@ -355,15 +435,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     ? positionsWithRecovery.find(p => p.holding.id === selectedHoldingId)
     : null;
   const selectedPlan = selected?.plan;
-
-  const watchlistScores = useMemo(() => {
-    const changeBySymbol: Record<string, number> = {};
-    for (const [sym, q] of Object.entries(liveQuotePrices ?? {})) {
-      const ch = Number((q as { change?: number })?.change);
-      if (Number.isFinite(ch)) changeBySymbol[sym.toUpperCase()] = ch;
-    }
-    return buildWatchlistScoresFromItems(data?.watchlist ?? [], changeBySymbol);
-  }, [data?.watchlist, liveQuotePrices]);
+  const selectedDecision = selectedHoldingId ? decisionByHoldingId.get(selectedHoldingId) ?? null : null;
 
   const unifiedRecoveryPlan = useMemo(() => {
     if (!selected || !selectedPlan || selectedPlan.currentPrice <= 0) return null;
@@ -411,10 +483,21 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   useEffect(() => {
     const sym = selected?.holding.symbol;
     if (!sym || loadRecoveryPathMode(sym)) return;
-    if (unifiedRecoveryPlan?.suggestedPathMode) {
-      setRecoveryPathMode(unifiedRecoveryPlan.suggestedPathMode);
-    }
-  }, [selected?.holding.id, unifiedRecoveryPlan?.suggestedPathMode]);
+    const mode = suggestDefaultRecoveryPathMode({
+      recyclingReady: unifiedRecoveryPlan?.recyclingSummary?.planAvailable === true,
+      ladderReady: unifiedRecoveryPlan?.cashLadder?.qualified === true,
+      plPct: selectedPlan?.plPct ?? 0,
+      decisionPath: selectedDecision?.suggestedPath,
+    });
+    if (mode) setRecoveryPathMode(mode);
+  }, [
+    selected?.holding.id,
+    unifiedRecoveryPlan?.suggestedPathMode,
+    unifiedRecoveryPlan?.recyclingSummary?.planAvailable,
+    unifiedRecoveryPlan?.cashLadder?.qualified,
+    selectedPlan?.plPct,
+    selectedDecision?.suggestedPath,
+  ]);
 
   useEffect(() => {
     if (!selected || !selectedPlan || selectedPlan.plPct >= 0 || selectedPlan.currentPrice <= 0) return;
@@ -476,11 +559,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [unifiedDraftOrders, unifiedRecoveryPlan?.pendingDrafts, recyclingDraftOrders, draftOrders]);
 
   useEffect(() => {
-    if (selectedHoldingId || losingPositions.length === 0) return;
-    const prefer =
-      losingPositions.find((p) => p.plan.qualified || p.recyclingSummary?.planAvailable) ?? losingPositions[0];
-    setSelectedHoldingId(prefer.holding.id);
-  }, [losingPositions, selectedHoldingId]);
+    if (selectedHoldingId || rankedDecisions.length === 0) return;
+    setSelectedHoldingId(rankedDecisions[0].holdingId);
+  }, [rankedDecisions, selectedHoldingId]);
+
+  useEffect(() => {
+    if (pageAction !== 'focus-recovery-decision') return;
+    const el = document.getElementById('recovery-decision-board');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const t = window.setTimeout(() => clearPageAction?.(), 280);
+    return () => window.clearTimeout(t);
+  }, [pageAction, rankedDecisions.length, clearPageAction]);
 
   // Auto-update recovery execution outcomes when positions change
   useEffect(() => {
@@ -806,6 +896,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             deployableCash: selectedCurrencyDeployableCash,
             bookCurrency: selected.bookCurrency ?? 'USD',
             ladder: unifiedRecoveryPlan.cashLadder,
+            investorMetrics: selectedDecision?.metrics,
           });
     const aiNote = selected.aiNotes ? ` Note: ${selected.aiNotes}` : '';
     return `${brief.headline} — ${brief.oneLiner}${aiNote}`;
@@ -815,6 +906,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     unifiedRecoveryPlan,
     recoveryPathMode,
     selectedCurrencyDeployableCash,
+    selectedDecision?.metrics,
   ]);
 
   useEffect(() => {
@@ -1025,10 +1117,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <div className="min-w-0">
                 <h2 className="text-3xl font-bold text-slate-900 flex flex-wrap items-center gap-2">
                   Recovery Plan (Averaging / Correction Engine)
-                  <InfoHint text="Two tools for underwater positions: (1) Recovery ladder — optional new cash buys when loss exceeds your trigger. (2) Position recycling — sell part of the holding on rebounds and rebuy lower using only that sale cash (core shares never sold). Both integrate with Investment Plan limits." />
+                  <InfoHint text="Ranked investor actions for underwater names: add on weakness, recycle without new cash, wait, do not average, or review an exit. Recovery cash is shared — only the highest-priority ladders spend it." />
                 </h2>
                 <p className="text-lg text-slate-600 mt-2">
-                  Buy ladders, position recycling, and exit targets — with guardrails and Investment Plan export
+                  One decision per losing name — add, recycle, wait, or exit — so cash goes to the best setup first
                 </p>
               </div>
             </div>
@@ -1075,10 +1167,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           </div>
           <div className="bg-slate-50 rounded-xl p-5 sm:p-6 border border-slate-200">
             <p className="text-slate-700 leading-relaxed">
-              Positions in loss are listed below. Open a row and <strong>choose one approach</strong>:{' '}
-              <strong className="text-teal-800">position recycling</strong> (sell/rebuy with sale cash only — no new deposits) or a{' '}
-              <strong className="text-violet-800">recovery buy ladder</strong> (staged buys from deployable cash).
-              Plain-language summaries explain each path. Fills in Investment Plan recompute the remaining steps.
+              Names are <strong>ranked by investor action</strong> — add on weakness, recycle without new cash, wait, do not average, or review an exit.
+              Recovery cash is shared, so only the highest-priority ladders spend it. Open a row for break-even, rebound needed, and the next step.
+              Fills in Investment Plan recompute the remaining steps.
             </p>
           </div>
           {(onNavigateToTab || onOpenWealthUltra) && (
@@ -1146,6 +1237,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                         })
                       : 'Scaled to cash on hand (never above what you can deploy)'}
                   </span>
+                </div>
+              </li>
+              <li className="flex items-start gap-3">
+                <div className="w-2 h-2 bg-violet-500 rounded-full mt-1.5 flex-shrink-0"></div>
+                <div>
+                  <strong className="text-slate-800">Ranked decision</strong>{' '}
+                  <InfoHint text="Core/Upside A/B ladders spend recovery cash first. Spec, broken quality, and concentrated names do not. If two ladders compete, only the higher-priority name gets cash; the other waits or recycles." />
+                  : add on weakness, recycle (no new cash), wait, do not average, or review an exit — never fire every ladder at once.
                 </div>
               </li>
               <li className="flex items-start gap-3">
@@ -1290,7 +1389,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             </div>
           </div>
           <p className="text-3xl font-bold text-dark tabular-nums">{qualifiedPositions.length}</p>
-          <p className="text-sm text-slate-600 mt-1">Positions ready for buy ladder</p>
+          <p className="text-sm text-slate-600 mt-1">
+            {addLadderCount} ranked to add cash · rest recycle or wait
+          </p>
         </div>
         <div className="section-card">
           <div className="flex items-center justify-between mb-3">
@@ -1307,7 +1408,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
               Est. recovery buys (SAR)
-              <InfoHint text="Planned ladder spend for eligible holdings, converted to SAR, then capped at this page’s recovery budget. You would not fire every ladder at once." />
+              <InfoHint text="Spend only for names ranked Add on weakness after the shared recovery budget is allocated. Lower-priority ladders wait or recycle instead of assuming the full budget." />
             </p>
             <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center">
               <span className="text-indigo-700 font-bold text-lg">∑</span>
@@ -1316,12 +1417,43 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <p className="text-2xl font-bold text-dark tabular-nums">
             {formatCurrencyString(estimatedRecoveryDeploymentSAR, { inCurrency: 'SAR', digits: 0 })}
           </p>
-          <p className="text-sm text-slate-600 mt-1">Capped at {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% of deployable cash</p>
+          <p className="text-sm text-slate-600 mt-1">
+            {addLadderCount} funded ladder{addLadderCount === 1 ? '' : 's'} · {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% cash cap
+          </p>
         </div>
       </div>
 
+      {actFirstDecision && (
+        <div
+          id="recovery-act-first"
+          className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-r from-indigo-50 to-violet-50 px-5 py-4 shadow-sm flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-wider text-indigo-700">Act first</p>
+            <p className="text-base font-bold text-indigo-950 mt-0.5">
+              {actFirstDecision.symbol} · {actFirstDecision.label}
+            </p>
+            <p className="text-sm text-indigo-800 mt-1 max-w-3xl">{actFirstDecision.nextStep}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedHoldingId(actFirstDecision.holdingId)}
+            className="px-4 py-2 rounded-lg bg-indigo-700 text-white text-sm font-bold hover:bg-indigo-800 shadow-sm"
+          >
+            Open {actFirstDecision.symbol}
+          </button>
+        </div>
+      )}
+
       {/* Enhanced Losing positions table */}
-      <SectionCard title="Positions in loss" className="overflow-hidden" collapsible collapsibleSummary="Holdings to review" defaultExpanded>
+      <SectionCard
+        id="recovery-decision-board"
+        title="Positions in loss"
+        className="overflow-hidden"
+        collapsible
+        collapsibleSummary="Ranked by investor decision"
+        defaultExpanded
+      >
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-gradient-to-r from-slate-50 to-slate-100">
@@ -1331,7 +1463,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <th className="px-6 py-4 text-right font-bold text-slate-700 uppercase tracking-wider">Cost / Value</th>
                 <th className="px-6 py-4 text-center font-bold text-slate-700 uppercase tracking-wider">
                   Paths
-                  <InfoHint text="♻ Recycling = sell/rebuy with sale cash only. $ Ladder = staged buys from deployable cash. Pick one approach after opening the plan." />
+                  <InfoHint text="♻ Recycling = sell/rebuy with sale cash only. $ Ladder = staged buys from deployable cash. The Decision column says which to use first." />
+                </th>
+                <th className="px-6 py-4 text-left font-bold text-slate-700 uppercase tracking-wider">
+                  Decision
+                  <InfoHint text="Ranked action for this name after shared recovery cash is allocated. Open the row for break-even, rebound, and extra loss if price drops another 10%." />
                 </th>
                 <th className="px-6 py-4 text-center font-bold text-slate-700 uppercase tracking-wider">Action</th>
               </tr>
@@ -1339,7 +1475,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             <tbody className="divide-y divide-slate-100 bg-white">
               {losingPositions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-16 text-center">
+                  <td colSpan={6} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center gap-4">
                       <div className="w-16 h-16 bg-gradient-to-br from-emerald-100 to-emerald-200 rounded-full flex items-center justify-center">
                         <span className="text-emerald-600 text-2xl">✓</span>
@@ -1352,7 +1488,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   </td>
                 </tr>
               ) : (
-                losingPositions.map(({ holding, portfolioName, bookCurrency, plan, recyclingSummary, priceProvenance, positionConfig }) => (
+                rankedLosingPositions.map(({ holding, portfolioName, bookCurrency, plan, recyclingSummary, priceProvenance, positionConfig }) => {
+                  const decision = decisionByHoldingId.get(holding.id);
+                  const tone = decision ? decisionTone(decision.action) : decisionTone('wait');
+                  return (
                   <tr key={holding.id} className={`${isSelected(holding.id) ? 'bg-primary/10 border-l-4 border-primary' : 'hover:bg-slate-50'} transition-colors duration-150`}>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -1445,6 +1584,24 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                         </span>
                       </div>
                     </td>
+                    <td className="px-6 py-4">
+                      {decision ? (
+                        <div className="flex flex-col items-start gap-1 max-w-[220px]">
+                          <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${tone.chip}`}>
+                            {decision.label}
+                          </span>
+                          <span className="text-[11px] text-slate-500 leading-snug">
+                            {decision.metrics.budgetDeferred
+                              ? 'Cash assigned elsewhere'
+                              : decision.action === 'add_ladder'
+                                ? `Rebound ${decision.metrics.reboundToNewBreakevenPct.toFixed(0)}% vs ${decision.metrics.reboundToOldBreakevenPct.toFixed(0)}% hold`
+                                : decision.nextStep}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-center">
                       <button
                         type="button"
@@ -1470,7 +1627,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                       )}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1485,6 +1643,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           collapsibleSummary="Recycling, ladder, targets"
           defaultExpanded
         >
+          {selectedDecision && (
+            <RecoveryDecisionScorecard
+              decision={selectedDecision}
+              bookCurrency={selected.bookCurrency ?? 'USD'}
+              formatMoney={(n) =>
+                formatCurrencyString(n, { inCurrency: selected.bookCurrency ?? 'USD', digits: 0 })
+              }
+            />
+          )}
           {(() => {
             const symbolHistory = getRecoveryExecutionsBySymbol(selected.holding.symbol ?? '');
             if (symbolHistory.length > 0) {
@@ -1722,6 +1889,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 isPushing={insertingPlanKey === '__all__' || insertingPlanKey === '__recycle__'}
                 linkedPlannedTrades={linkedRecoveryPlannedTrades}
                 onOpenInvestmentPlan={() => onNavigateToTab?.('Investment Plan')}
+                investorMetrics={selectedDecision?.metrics}
               />
             </SectionCard>
           ) : (

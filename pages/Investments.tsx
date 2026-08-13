@@ -6041,6 +6041,11 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
             cancelClear();
         };
     }
+    if (pageAction === 'focus-recovery-decision') {
+        prefetchInvestmentTab('Recovery Plan');
+        setActiveTab('Recovery Plan');
+        return;
+    }
     if (pageAction === 'sync-realized-pnl') {
         void backfillRealizedPnLForAllPortfolios();
         return scheduleClearPageAction(clearPageAction);
@@ -6382,6 +6387,8 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                     onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined}
                     setActivePage={setActivePage}
                     triggerPageAction={triggerPageAction}
+                    pageAction={pageAction}
+                    clearPageAction={clearPageAction}
                 />
             );
       case 'AI Rebalancer': return <AIRebalancerView onNavigateToTab={(tab) => setActiveTab(tab as InvestmentSubPage)} onOpenWealthUltra={setActivePage ? () => setActivePage('Wealth Ultra') : undefined} />;

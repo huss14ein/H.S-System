@@ -35,8 +35,13 @@ describe('recovery plan page accuracy wiring', () => {
     expect(summaries).not.toContain('formatMoney(ladder.currentPrice)} toward');
   });
 
-  it('auto-opens a losing position even when the buy ladder is not qualified', () => {
+  it('ranks decisions, auto-opens the highest-priority name, and shows a scorecard', () => {
     const page = read('pages/RecoveryPlanView.tsx');
-    expect(page).toContain('losingPositions.find((p) => p.plan.qualified || p.recyclingSummary?.planAvailable)');
+    expect(page).toContain('rankRecoveryDecisions');
+    expect(page).toContain('rankedDecisions[0].holdingId');
+    expect(page).toContain('RecoveryDecisionScorecard');
+    expect(page).toContain('id="recovery-decision-board"');
+    expect(page).toContain('id="recovery-act-first"');
+    expect(page).toContain('pageAction !== \'focus-recovery-decision\'');
   });
 });

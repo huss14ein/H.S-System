@@ -116,6 +116,7 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
       action === 'focus-dividend-sms' ||
       action === 'focus-salary-invest' ||
       action === 'focus-holdings-integrity' ||
+      action === 'focus-recovery-decision' ||
       action === 'sync-realized-pnl' ||
       action === 'open-corporate-action-wizard' ||
       action === 'open-corporate-action-wizard:from-plan' ||

@@ -9,7 +9,7 @@ import {
 } from '../services/recoveryPathSummaries';
 import PositionRecyclingPanel, { type PositionRecyclingPrefsUi } from './PositionRecyclingPanel';
 import type { PositionRecyclingPlan } from '../services/positionRecyclingPlan';
-import InfoHint from './InfoHint';
+import type { RecoveryInvestorMetrics } from '../services/recoveryDecisionEngine';
 
 const MODE_LABELS: Record<RecoveryPathMode, { title: string; subtitle: string }> = {
   recycling: {
@@ -115,6 +115,7 @@ export interface UnifiedRecoveryPanelProps {
   isPushing?: boolean;
   linkedPlannedTrades?: PlannedTrade[];
   onOpenInvestmentPlan?: () => void;
+  investorMetrics?: RecoveryInvestorMetrics | null;
 }
 
 const UnifiedRecoveryPanel: React.FC<UnifiedRecoveryPanelProps> = ({
@@ -138,6 +139,7 @@ const UnifiedRecoveryPanel: React.FC<UnifiedRecoveryPanelProps> = ({
   isPushing = false,
   linkedPlannedTrades = [],
   onOpenInvestmentPlan,
+  investorMetrics,
 }) => {
   const recyclingBrief = useMemo(
     () =>
@@ -158,8 +160,9 @@ const UnifiedRecoveryPanel: React.FC<UnifiedRecoveryPanelProps> = ({
         deployableCash,
         bookCurrency,
         ladder: plan.cashLadder,
+        investorMetrics,
       }),
-    [plPct, lossTriggerPct, deployableCash, bookCurrency, plan.cashLadder],
+    [plPct, lossTriggerPct, deployableCash, bookCurrency, plan.cashLadder, investorMetrics],
   );
 
   const activeBrief = pathMode === 'recycling' ? recyclingBrief : ladderBrief;

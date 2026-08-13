@@ -123,6 +123,15 @@ const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen,
                 icon: NAVIGATION_ITEMS.find((i) => i.name === 'Investments')!.icon,
             });
             subPages.push({
+                name: 'Open recovery plan decisions',
+                action: () => {
+                    trackAction('focus-recovery-decision', 'Investments');
+                    triggerPageAction('Investments', 'focus-recovery-decision');
+                    setIsOpen(false);
+                },
+                icon: INVESTMENT_SUB_NAV_ITEMS.find((i) => i.name === 'Recovery Plan')!.icon,
+            });
+            subPages.push({
                 name: 'Open investment ROI (Dashboard)',
                 action: () => {
                     trackAction('focus-investment-roi', 'Dashboard');

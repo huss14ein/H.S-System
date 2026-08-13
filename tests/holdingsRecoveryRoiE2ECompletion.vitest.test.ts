@@ -30,13 +30,15 @@ describe('holdings + recovery + ROI end-to-end wiring', () => {
   it('command palette and page actions reach integrity, recovery, and ROI', () => {
     const palette = read('components/CommandPalette.tsx');
     expect(palette).toContain("triggerPageAction('Investments', 'focus-holdings-integrity')");
+    expect(palette).toContain("triggerPageAction('Investments', 'focus-recovery-decision')");
     expect(palette).toContain("triggerPageAction('Dashboard', 'focus-investment-roi')");
     expect(palette).toContain('investment-tab:${item.name}');
     const actions = read('utils/pageActions.ts');
     expect(actions).toContain("action === 'focus-holdings-integrity'");
     expect(actions).toContain("action === 'focus-investment-roi'");
-    expect(actions).toContain("action === 'investment-tab:Recovery Plan'");
+    expect(actions).toContain("action === 'focus-recovery-decision'");
     expect(read('pages/Investments.tsx')).toContain("pageAction === 'focus-holdings-integrity'");
+    expect(read('pages/Investments.tsx')).toContain("pageAction === 'focus-recovery-decision'");
     expect(read('pages/Dashboard.tsx')).toContain('dashboard-investment-roi');
   });
 
@@ -45,6 +47,8 @@ describe('holdings + recovery + ROI end-to-end wiring', () => {
     expect(read('pages/RecoveryPlanView.tsx')).toContain('buildRecoveryGlobalConfig');
     expect(read('services/recoveryPlan.ts')).toContain('MIN_FRACTIONAL_QTY');
     expect(read('services/recoveryPlan.ts')).toContain('allocateQtyForLadderPrice');
+    expect(read('pages/RecoveryPlanView.tsx')).toContain('rankRecoveryDecisions');
+    expect(read('pages/RecoveryPlanView.tsx')).toContain('RecoveryDecisionScorecard');
   });
 
   it('KPI ledger scan is a single pass (no 12× dated FX per row)', () => {

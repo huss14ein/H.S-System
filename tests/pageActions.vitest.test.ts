@@ -37,6 +37,7 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Investments', 'focus-symbol:AAPL')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-dividend-sms')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-holdings-integrity')).toBe(true);
+    expect(isSupportedPageAction('Investments', 'focus-recovery-decision')).toBe(true);
     expect(isSupportedPageAction('Investments', 'sync-realized-pnl')).toBe(true);
     expect(isSupportedPageAction('Statement Upload', 'focus-sms-tab')).toBe(true);
     expect(isSupportedPageAction('Statement Upload', 'focus-bank-tab')).toBe(true);

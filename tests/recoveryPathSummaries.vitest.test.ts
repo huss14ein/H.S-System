@@ -37,6 +37,53 @@ describe('recoveryPathSummaries', () => {
     expect(brief.headline).toContain('Staged buys');
     expect(brief.bullets.length).toBeGreaterThan(0);
   });
+
+  it('includes rebound-to-breakeven when investor metrics are passed', () => {
+    const brief = buildRecoveryLadderPathBrief({
+      plPct: -22,
+      lossTriggerPct: 15,
+      deployableCash: 5000,
+      bookCurrency: 'SAR',
+      ladder: {
+        qualified: true,
+        plPct: -22,
+        currentPrice: 80,
+        avgCost: 100,
+        newAvgCost: 95,
+        newShares: 120,
+        totalPlannedCost: 2000,
+        ladder: [{ level: 1, qty: 10, price: 75, cost: 750 }],
+        state: 'ACTIVE',
+      } as any,
+      investorMetrics: {
+        breakEvenAfter: 95,
+        avgImprovementPct: 5,
+        reboundToNewBreakevenPct: 18.75,
+        reboundToOldBreakevenPct: 25,
+        reboundReductionPct: 6.25,
+        cashToDeploy: 2000,
+        extraLossIfDown10: 200,
+        firstBuyPrice: 75,
+        firstBuyDiscountPct: 6.25,
+        firstBuyCash: 750,
+        sharesToAdd: 10,
+        budgetDeferred: false,
+      },
+    });
+    expect(brief.bullets.some((b) => b.includes('Rally to new break-even'))).toBe(true);
+    expect(brief.bullets.some((b) => b.includes('First buy'))).toBe(true);
+  });
+
+  it('uses the ranked decision path when provided', () => {
+    expect(
+      suggestDefaultRecoveryPathMode({
+        recyclingReady: true,
+        ladderReady: true,
+        plPct: -10,
+        decisionPath: 'recycling',
+      }),
+    ).toBe('recycling');
+  });
 });
 
 describe('unifiedRecoveryPlan path mode', () => {

@@ -6,6 +6,8 @@ import type { RecoveryPlanResult } from '../types';
 import type { RecyclingPlanSummary } from './positionRecyclingIntegration';
 import type { PositionRecyclingPlan } from './positionRecyclingPlan';
 import type { ResolvedRecoveryConviction } from './recoveryConvictionSync';
+import type { RecoveryInvestorMetrics } from './recoveryDecisionEngine';
+import type { RecoveryPathMode } from './recoveryPathMode';
 
 export type PathReadiness = 'ready' | 'blocked' | 'unavailable';
 
@@ -113,6 +115,7 @@ export function buildRecoveryLadderPathBrief(args: {
   deployableCash: number;
   bookCurrency: string;
   ladder: RecoveryPlanResult | null;
+  investorMetrics?: RecoveryInvestorMetrics | null;
 }): RecoveryPathBrief {
   const { plPct, lossTriggerPct, deployableCash, bookCurrency, ladder } = args;
 
@@ -164,19 +167,33 @@ export function buildRecoveryLadderPathBrief(args: {
   const activeLevels = (ladder.ladder ?? []).filter((l) => (Number(l.qty) || 0) > 0);
   const levels = activeLevels.length;
   const cost = ladder.totalPlannedCost;
+  const metrics = args.investorMetrics;
+  const bullets = [
+    `Planned spend: about ${formatMoney(cost)} ${bookCurrency} (within this ticker’s recovery budget)`,
+    `After all fills: ~${ladder.newShares} shares at ~${formatMoney(ladder.newAvgCost)} avg (estimate)`,
+    ladder.state === 'PARTIAL_FILL'
+      ? 'Some levels already filled — remaining steps were recalculated.'
+      : `Loss now: ${formatPct(plPct)} · ladder trigger ${formatPct(-lossTriggerPct)}`,
+  ];
+  if (metrics) {
+    bullets.push(
+      `Rally to new break-even: ${formatPct(metrics.reboundToNewBreakevenPct, 0)} (vs ${formatPct(metrics.reboundToOldBreakevenPct, 0)} if you add nothing)`,
+    );
+    if (metrics.firstBuyPrice != null) {
+      bullets.push(
+        `First buy near ${formatMoney(metrics.firstBuyPrice)}${
+          metrics.firstBuyDiscountPct != null ? ` (${metrics.firstBuyDiscountPct.toFixed(1)}% below last)` : ''
+        }`,
+      );
+    }
+  }
   return {
     mode: 'recovery_ladder',
     readiness: 'ready',
     headline: 'Staged buys with your cash',
     oneLiner: `Place ${levels} limit buy${levels !== 1 ? 's' : ''} below today’s price using deployable cash — average cost can move from ${formatMoney(ladder.avgCost)} toward ${formatMoney(ladder.newAvgCost)}.`,
     indicator: 'green',
-    bullets: [
-      `Planned spend: about ${formatMoney(cost)} ${bookCurrency} (within this ticker’s recovery budget)`,
-      `After all fills: ~${ladder.newShares} shares at ~${formatMoney(ladder.newAvgCost)} avg (estimate)`,
-      ladder.state === 'PARTIAL_FILL'
-        ? 'Some levels already filled — remaining steps were recalculated.'
-        : `Loss now: ${formatPct(plPct)} · ladder trigger ${formatPct(-lossTriggerPct)}`,
-    ],
+    bullets,
   };
 }
 
@@ -184,7 +201,9 @@ export function suggestDefaultRecoveryPathMode(args: {
   recyclingReady: boolean;
   ladderReady: boolean;
   plPct: number;
+  decisionPath?: RecoveryPathMode | null;
 }): 'recycling' | 'recovery_ladder' {
+  if (args.decisionPath === 'recycling' || args.decisionPath === 'recovery_ladder') return args.decisionPath;
   const { recyclingReady, ladderReady, plPct } = args;
   if (recyclingReady && !ladderReady) return 'recycling';
   if (ladderReady && !recyclingReady) return 'recovery_ladder';
