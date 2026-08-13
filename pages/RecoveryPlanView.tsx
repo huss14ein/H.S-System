@@ -75,6 +75,7 @@ import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import {
   buildRecoveryGlobalConfig,
+  buildRecoveryBudgetByAccountId,
   deriveRecoveryPositionConfig,
   withRecoveryAddBounds,
 } from '../services/recoveryPositionSetup';
@@ -137,11 +138,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const sarPerUsd = canonical?.sarPerUsd ?? headlineFx;
 
   const deployableCashSAR = canonical?.recoveryPlan?.deployableCashSar ?? 0;
-
-  const globalConfig: RecoveryGlobalConfig = useMemo(
-    () => buildRecoveryGlobalConfig(deployableCashSAR),
-    [deployableCashSAR],
-  );
 
   const universe = data?.portfolioUniverse ?? [];
   const planCurrency = useMemo(
@@ -331,15 +327,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const recoveryBudgetByAccountId = useMemo(() => {
     const fromSnap = canonical?.recoveryPlan?.recoveryBudgetByAccountId;
     if (fromSnap && Object.keys(fromSnap).length > 0) return fromSnap;
-    const pct = globalConfig.recoveryBudgetPct;
-    const map: Record<string, number> = {};
+    const cashByAccount: Record<string, number> = {};
     for (const p of positionsWithRecovery) {
       const aid = String(p.accountId ?? '').trim();
-      if (!aid || aid in map) continue;
-      map[aid] = Math.max(0, Number(p.platformDeployableCashSar) || 0) * pct;
+      if (!aid || aid in cashByAccount) continue;
+      cashByAccount[aid] = Math.max(0, Number(p.platformDeployableCashSar) || 0);
     }
-    return map;
-  }, [canonical?.recoveryPlan?.recoveryBudgetByAccountId, positionsWithRecovery, globalConfig.recoveryBudgetPct]);
+    return buildRecoveryBudgetByAccountId(cashByAccount);
+  }, [canonical?.recoveryPlan?.recoveryBudgetByAccountId, positionsWithRecovery]);
 
   const rankedDecisions = useMemo(() => {
     const mvByPortfolio = new Map<string, number>();
@@ -378,7 +373,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       }),
       {
         sarPerUsd,
-        recoveryBudgetPct: globalConfig.recoveryBudgetPct,
         recoveryBudgetByAccountId,
       },
     );
@@ -388,7 +382,6 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     data?.portfolioUniverse,
     watchlistScores,
     recoveryBudgetByAccountId,
-    globalConfig.recoveryBudgetPct,
     sarPerUsd,
   ]);
 
@@ -682,14 +675,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       : sarPerUsd > 0
         ? Math.max(0, Number(selected.platformDeployableCashSar) || 0) / sarPerUsd
         : 0
-    : deployableCashSAR;
+    : 0;
   const alternateCurrencyDeployableCash = selected
     ? selected.bookCurrency === 'SAR'
       ? sarPerUsd > 0
         ? Math.max(0, Number(selected.platformDeployableCashSar) || 0) / sarPerUsd
         : 0
       : Math.max(0, Number(selected.platformDeployableCashSar) || 0)
-    : deployableCashSAR / sarPerUsd;
+    : 0;
   const isSelected = (holdingId: string) => selectedHoldingId === holdingId;
 
   const resolveDisplayNameForDraft = useCallback(
@@ -1226,7 +1219,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               <div className="min-w-0">
                 <h2 className="text-3xl font-bold text-slate-900 flex flex-wrap items-center gap-2">
                   Recovery Plan (Averaging / Correction Engine)
-                  <InfoHint text="Ranked investor actions for underwater names: add on weakness, recycle without new cash, wait, do not average, or review an exit. Recovery cash is shared — only the highest-priority ladders spend it." />
+                  <InfoHint text="Ranked investor actions for underwater names: add on weakness, recycle without new cash, wait, do not average, or review an exit. Recovery cash is shared per platform — cash on one broker cannot fund another." />
                 </h2>
                 <p className="text-lg text-slate-600 mt-2">
                   One decision per losing name — add, recycle, wait, or exit — so cash goes to the best setup first
@@ -1277,7 +1270,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <div className="bg-slate-50 rounded-xl p-5 sm:p-6 border border-slate-200">
             <p className="text-slate-700 leading-relaxed">
               Names are <strong>ranked by investor action</strong> — add on weakness, recycle without new cash, wait, do not average, or review an exit.
-              Recovery cash is shared, so only the highest-priority ladders spend it. Open a row for break-even, rebound needed, and the next step.
+              Each holding uses its <strong>mapped portfolio’s platform cash</strong>; budgets do not cross brokers. Open a row for break-even, rebound needed, and the next step.
               Fills in Investment Plan recompute the remaining steps.
             </p>
           </div>
@@ -1325,10 +1318,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
                   <strong className="text-slate-800">Recovery budget</strong>{' '}
-                  <InfoHint text="Maximum share of deployable platform cash that all recovery ladders may use." />
+                  <InfoHint text="Maximum share of that portfolio’s platform (broker) cash that recovery ladders on this broker may use. Each platform has its own budget." />
                   :{' '}
                   <span className="text-emerald-600 font-bold">
-                    {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% of deployable cash
+                    {selected
+                      ? `${(buildRecoveryGlobalConfig(Number(selected.platformDeployableCashSar) || 0).recoveryBudgetPct * 100).toFixed(0)}% of this platform’s cash`
+                      : 'Per platform (~12–22% of that broker’s cash)'}
                   </span>
                 </div>
               </li>
@@ -1336,7 +1331,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
                   <strong className="text-slate-800">Cash cap per ticker</strong>{' '}
-                  <InfoHint text="Max new cash this ticker may use. Scaled to your deployable cash and risk — not a flat 5,000." />
+                  <InfoHint text="Max new cash this ticker may use. Scaled to this portfolio’s platform cash and risk — not a flat 5,000." />
                   :{' '}
                   <span className="text-amber-600 font-bold">
                     {selected
@@ -1352,7 +1347,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 <div className="w-2 h-2 bg-violet-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
                   <strong className="text-slate-800">Ranked decision</strong>{' '}
-                  <InfoHint text="Core/Upside A/B ladders spend recovery cash first. Spec, broken quality, and concentrated names do not. If two ladders compete, only the higher-priority name gets cash; the other waits or recycles." />
+                  <InfoHint text="Core/Upside A/B ladders spend that platform’s recovery cash first. Spec, broken quality, and concentrated names do not. If two ladders compete on the same broker, only the higher-priority name gets cash; the other waits or recycles. Cash never crosses brokers." />
                   : add on weakness, recycle (no new cash), wait, do not average, or review an exit — never fire every ladder at once.
                 </div>
               </li>
@@ -1529,7 +1524,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             {formatCurrencyString(estimatedRecoveryDeploymentSAR, { inCurrency: 'SAR', digits: 0 })}
           </p>
           <p className="text-sm text-slate-600 mt-1">
-            {addLadderCount} funded ladder{addLadderCount === 1 ? '' : 's'} · per-platform {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% cash cap
+            {addLadderCount} funded ladder{addLadderCount === 1 ? '' : 's'} · per-platform cash caps
           </p>
         </div>
       </div>
@@ -2219,7 +2214,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 </p>
                 {whatIfSimulation.overBudget && (
                   <p className="text-rose-700 font-medium text-sm">
-                    This exceeds your total deployable cash shown above (investment platforms only). Lower the amount or add funds first.
+                    This exceeds this platform’s deployable cash shown above. Lower the amount or deposit/transfer to this broker first.
                   </p>
                 )}
               </div>

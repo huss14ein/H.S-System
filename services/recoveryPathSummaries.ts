@@ -156,8 +156,8 @@ export function buildRecoveryLadderPathBrief(args: {
         ? ['Wait for a deeper dip or lower your loss trigger in settings.']
         : [
             deployableCash <= 0
-              ? 'No deployable cash detected for staged buys.'
-              : `Deployable cash (${bookCurrency}): about ${formatMoney(deployableCash)}`,
+              ? 'No deployable cash on this portfolio’s platform for staged buys.'
+              : `This platform’s deployable cash (${bookCurrency}): about ${formatMoney(deployableCash)}`,
             ladder.state === 'FROZEN' ? 'Speculative sleeve may freeze recovery buys.' : reason,
           ],
       caution: needsMoreLoss ? undefined : 'Free up cash or relax caps to unlock the ladder.',
@@ -191,7 +191,7 @@ export function buildRecoveryLadderPathBrief(args: {
     mode: 'recovery_ladder',
     readiness: 'ready',
     headline: 'Staged buys with your cash',
-    oneLiner: `Place ${levels} limit buy${levels !== 1 ? 's' : ''} below today’s price using deployable cash — average cost can move from ${formatMoney(ladder.avgCost)} toward ${formatMoney(ladder.newAvgCost)}.`,
+    oneLiner: `Place ${levels} limit buy${levels !== 1 ? 's' : ''} below today’s price using this platform’s deployable cash — average cost can move from ${formatMoney(ladder.avgCost)} toward ${formatMoney(ladder.newAvgCost)}.`,
     indicator: 'green',
     bullets,
   };

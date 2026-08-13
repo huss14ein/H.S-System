@@ -56,6 +56,30 @@ export function resolvePortfolioRecoveryCash(args: {
   return { accountId, platformName, deployableCashSar, deployableCashBook };
 }
 
+/** Recovery budget SAR for one platform — pct band is from that platform’s cash, not a global sum. */
+export function recoveryBudgetSarForPlatformCash(platformCashSar: number): number {
+  const cash = Math.max(0, Number(platformCashSar) || 0);
+  const pct = buildRecoveryGlobalConfig(cash).recoveryBudgetPct;
+  return cash * pct;
+}
+
+/** Build per-account recovery budgets from platform cash (SAR). */
+export function buildRecoveryBudgetByAccountId(
+  platformCashByAccountId: Record<string, number> | Map<string, number>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  const entries =
+    platformCashByAccountId instanceof Map
+      ? platformCashByAccountId.entries()
+      : Object.entries(platformCashByAccountId);
+  for (const [aid, cash] of entries) {
+    const key = String(aid ?? '').trim();
+    if (!key) continue;
+    out[key] = recoveryBudgetSarForPlatformCash(cash);
+  }
+  return out;
+}
+
 export function deriveRecoveryPositionConfig(args: {
   symbol: string;
   sleeveType: WealthUltraSleeve;

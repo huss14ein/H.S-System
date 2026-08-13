@@ -8,6 +8,7 @@ import { lookupLiveQuoteForSymbol, lookupQuoteUpdatedAtIso } from './finnhubServ
 import { buildRecoveryPlan } from './recoveryPlan';
 import {
   buildRecoveryGlobalConfig,
+  buildRecoveryBudgetByAccountId,
   deriveRecoveryPositionConfig,
   resolvePortfolioRecoveryCash,
   withRecoveryAddBounds,
@@ -416,8 +417,6 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
 
   // --- Recovery Plan (positions in loss) ---
   /** Headline total across platforms — ladders/ranking use per-portfolio platform cash below. */
-  const headlineRecoveryConfig = buildRecoveryGlobalConfig(deployableCashSar);
-  const recoveryBudgetPct = headlineRecoveryConfig.recoveryBudgetPct;
   const platformCashByAccountId = new Map<string, number>();
   for (const a of investAccounts) {
     platformCashByAccountId.set(
@@ -425,10 +424,7 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
       Math.max(0, tradableCashBucketToSAR(getAvailableCashForAccount(a.id), sarPerUsd)),
     );
   }
-  const recoveryBudgetByAccountId: Record<string, number> = {};
-  for (const [aid, cash] of platformCashByAccountId) {
-    recoveryBudgetByAccountId[aid] = cash * recoveryBudgetPct;
-  }
+  const recoveryBudgetByAccountId = buildRecoveryBudgetByAccountId(platformCashByAccountId);
 
   const universe = data?.portfolioUniverse ?? [];
   const coreTickers = new Set(universe.filter((u) => u.status === 'Core').map((u) => safeUpper(u.ticker)));
@@ -586,7 +582,6 @@ export function computeCanonicalPlanningSnapshot(inputs: CanonicalPlanInputs): C
       }),
     {
       sarPerUsd,
-      recoveryBudgetPct,
       recoveryBudgetByAccountId,
     },
   );

@@ -25,7 +25,8 @@ describe('recovery plan page accuracy wiring', () => {
     expect(page).not.toContain('20% of deployable cash');
     expect(page).not.toContain('5,000 (default)');
     expect(page).toContain('How this page decides');
-    expect(page).toContain('globalConfig.recoveryBudgetPct');
+    expect(page).toContain('buildRecoveryGlobalConfig');
+    expect(page).toContain('platformDeployableCashSar');
     expect(page).toContain('positionConfig.lossTriggerPct');
   });
 
@@ -50,8 +51,10 @@ describe('recovery plan page accuracy wiring', () => {
     expect(engine).toContain('fundedQualified');
     expect(engine).toContain('rankRecoveryDecisions');
     expect(engine).toContain('resolvePortfolioRecoveryCash');
+    expect(engine).toContain('buildRecoveryBudgetByAccountId');
     expect(engine).toContain('recoveryBudgetByAccountId');
     expect(page).toContain('platformDeployableCashSar');
     expect(page).toContain('recoveryBudgetByAccountId');
+    expect(page).toContain('buildRecoveryBudgetByAccountId');
   });
 });

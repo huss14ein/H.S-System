@@ -90,7 +90,7 @@ export default function RecoveryDecisionScorecard({
           <div className="rounded-xl border border-slate-200 bg-white p-3">
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">
               Cash to deploy
-              <InfoHint text="Planned ladder spend. Shared recovery budget — lower-priority names wait or recycle. First rung may fund when the full ladder does not fit." />
+              <InfoHint text="Planned ladder spend from this portfolio’s platform cash. Lower-priority names on the same broker wait or recycle. First rung may fund when the full ladder does not fit." />
             </p>
             <p className="mt-1 text-lg font-black tabular-nums text-slate-900">{formatMoney(m.cashToDeploy)}</p>
             <p className="text-xs text-slate-500">

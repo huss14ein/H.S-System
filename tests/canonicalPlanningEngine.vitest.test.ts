@@ -200,5 +200,86 @@ describe('computeCanonicalPlanningSnapshot', () => {
 
     expect(snap.recoveryPlan.deployableCashSar).toBeCloseTo(1000 + 10 * snap.sarPerUsd, 6);
   });
+
+  it('scopes recovery ladders and budgets to each portfolio platform — not the global cash sum', () => {
+    const data = makeData({
+      personalAccounts: [
+        { id: 'inv-rich', type: 'Investment', name: 'Broker Rich', currency: 'USD' } as any,
+        { id: 'inv-dry', type: 'Investment', name: 'Broker Dry', currency: 'USD' } as any,
+      ],
+      personalInvestments: [
+        {
+          id: 'pf-rich',
+          name: 'Rich Port',
+          accountId: 'inv-rich',
+          currency: 'USD',
+          holdings: [
+            {
+              id: 'h-rich',
+              symbol: 'RICH',
+              name: 'Rich Co',
+              quantity: 100,
+              avgCost: 100,
+              currentValue: 7000,
+            },
+          ],
+        } as any,
+        {
+          id: 'pf-dry',
+          name: 'Dry Port',
+          accountId: 'inv-dry',
+          currency: 'USD',
+          holdings: [
+            {
+              id: 'h-dry',
+              symbol: 'DRY',
+              name: 'Dry Co',
+              quantity: 100,
+              avgCost: 100,
+              currentValue: 7000,
+            },
+          ],
+        } as any,
+      ],
+      portfolioUniverse: [
+        { ticker: 'RICH', status: 'Core' },
+        { ticker: 'DRY', status: 'Core' },
+      ] as any,
+    });
+
+    const snap = computeCanonicalPlanningSnapshot({
+      data,
+      exchangeRate: 3.75,
+      sarPerUsd: 3.75,
+      simulatedPrices: {
+        RICH: { price: 70, change: -1 },
+        DRY: { price: 70, change: -1 },
+      },
+      symbolQuoteUpdatedAt: {
+        RICH: new Date().toISOString(),
+        DRY: new Date().toISOString(),
+      },
+      getAvailableCashForAccount: (id) =>
+        id === 'inv-rich' ? { SAR: 0, USD: 20000 } : { SAR: 0, USD: 0 },
+    });
+
+    const rich = snap.recoveryPlan.positions.find((p) => p.holding.symbol === 'RICH');
+    const dry = snap.recoveryPlan.positions.find((p) => p.holding.symbol === 'DRY');
+    expect(rich?.accountId).toBe('inv-rich');
+    expect(dry?.accountId).toBe('inv-dry');
+    expect(rich?.platformDeployableCashSar).toBeCloseTo(20000 * 3.75, 0);
+    expect(dry?.platformDeployableCashSar).toBe(0);
+    expect(snap.recoveryPlan.recoveryBudgetByAccountId['inv-rich']).toBeGreaterThan(0);
+    expect(snap.recoveryPlan.recoveryBudgetByAccountId['inv-dry'] ?? 0).toBe(0);
+
+    const richDecision = snap.recoveryPlan.rankedDecisions.find((d) => d.symbol === 'RICH');
+    const dryDecision = snap.recoveryPlan.rankedDecisions.find((d) => d.symbol === 'DRY');
+    // Dry broker cannot take an add_ladder just because rich broker has cash.
+    expect(dryDecision?.action).not.toBe('add_ladder');
+    expect(dry?.platformDeployableCashSar).toBeLessThan(rich?.platformDeployableCashSar ?? 0);
+    // Rich may still be add_ladder / recycle / wait depending on trigger — but its budget is its own.
+    expect(richDecision?.accountId).toBe('inv-rich');
+    expect(dryDecision?.accountId).toBe('inv-dry');
+  });
 });
 
