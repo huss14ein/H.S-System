@@ -89,11 +89,11 @@ describe('computePortfolioMetricsBundle', () => {
     const mb = bundle.metricsByPortfolioId.get('port-b')!;
     expect(ma.totalInvestedSAR).toBe(500);
     expect(mb.totalInvestedSAR).toBe(200);
-    expect(ma.totalValueInSAR).toBeCloseTo(1000, 5);
-    expect(mb.totalValueInSAR).toBeCloseTo(3000, 5);
-    expect(ma.totalAvailable).toBe(0);
-    expect(mb.totalAvailable).toBe(0);
-    // Unrealized P/L = total value − net capital (deposits − withdrawals).
+    expect(ma.totalValueInSAR).toBeCloseTo(1250, 5);
+    expect(mb.totalValueInSAR).toBeCloseTo(3750, 5);
+    expect(ma.totalAvailable).toBeCloseTo(250, 5);
+    expect(mb.totalAvailable).toBeCloseTo(750, 5);
+    // Growth = present value (holdings + cash share) − net invested (deposits − withdrawals).
     expect(ma.totalGainLossSAR).toBeCloseTo(ma.totalValueInSAR - ma.netCapitalSAR, 5);
     expect(mb.totalGainLossSAR).toBeCloseTo(mb.totalValueInSAR - mb.netCapitalSAR, 5);
     expect(ma.unrealizedPnLBasis ?? 'net_capital').toBe('net_capital');

@@ -15,6 +15,11 @@ import {
   resolveHeadlinePlatformNetCapitalSar,
   safeCapitalDepositYmd,
 } from '../services/investmentKpiCore';
+import {
+  computePlatformCardMetrics,
+  computePortfolioMetricsBundle,
+  presentScopedInvestmentGrowth,
+} from '../services/investmentPlatformCardMetrics';
 import { computeDashboardKpiSnapshot } from '../services/dashboardKpiSnapshot';
 import { computeCanonicalFinancialMetrics } from '../services/canonicalFinancialMetrics';
 import {
@@ -289,6 +294,116 @@ describe('headline ROI after withdrawals', () => {
   });
 });
 
+describe('platform and portfolio ROI after withdrawals', () => {
+  it('platform card uses deposits − withdrawals, growth amount, and first-deposit age', () => {
+    const portfolio = basePortfolio({ holdings: [holding(700, 100, 800)] });
+    const account = baseAccount();
+    const m = computePlatformCardMetrics({
+      portfolios: [portfolio],
+      transactions: [
+        tx({ id: 'd1', type: 'deposit', total: 100_000, date: '2024-08-13' }),
+        tx({ id: 'w1', type: 'withdrawal', total: 50_000, date: '2025-06-01' }),
+      ],
+      accounts: [account],
+      allInvestments: [portfolio],
+      sarPerUsd: SAR_PER_USD,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices: { '2222.SR': { price: 800 } },
+      platformCurrency: 'SAR',
+    });
+    expect(m.totalInvestedSAR).toBeCloseTo(100_000, 5);
+    expect(m.totalWithdrawnSAR).toBeCloseTo(50_000, 5);
+    expect(m.netCapitalSAR).toBeCloseTo(50_000, 5);
+    expect(m.totalValueInSAR).toBeCloseTo(80_000, 0);
+    expect(m.totalGainLossSAR).toBeCloseTo(30_000, 0);
+    expect(m.roi).toBeCloseTo(60, 5);
+    expect(m.firstCapitalDepositYmd).toBe('2024-08-13');
+    expect(m.investmentAgeDays).toBe(investmentAgeDaysFromYmd('2024-08-13'));
+    const presented = presentScopedInvestmentGrowth(m);
+    expect(presented.statusLabel).toBe('Growing');
+    expect(presented.growthSar).toBeCloseTo(30_000, 0);
+    expect(presented.ageLabel).toBe(formatInvestmentAgeLabel(m.investmentAgeDays));
+  });
+
+  it('each of two portfolios uses deposits − withdrawals (not qty × avg cost)', () => {
+    const p1 = basePortfolio({
+      id: 'pf-a',
+      name: 'A',
+      holdings: [holding(100, 100, 160)],
+    });
+    const p2: InvestmentPortfolio = {
+      ...basePortfolio({ id: 'pf-b', name: 'B' }),
+      holdings: [
+        {
+          id: 'h2',
+          symbol: '1120.SR',
+          quantity: 50,
+          avgCost: 200,
+          currentValue: 12_000,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          assetClass: 'Stock',
+        },
+      ],
+    };
+    const account = baseAccount();
+    const bundle = computePortfolioMetricsBundle({
+      siblingPortfolios: [p1, p2],
+      transactions: [
+        tx({ id: 'd-a', type: 'deposit', total: 20_000, date: '2024-01-01', portfolioId: 'pf-a' }),
+        tx({ id: 'w-a', type: 'withdrawal', total: 8_000, date: '2025-01-01', portfolioId: 'pf-a' }),
+        tx({ id: 'd-b', type: 'deposit', total: 10_000, date: '2024-06-01', portfolioId: 'pf-b' }),
+      ],
+      accounts: [account],
+      allInvestments: [p1, p2],
+      sarPerUsd: SAR_PER_USD,
+      simulatedPrices: { '2222.SR': { price: 160 }, '1120.SR': { price: 240 } },
+      accountAvailableCashByCurrency: { SAR: 0, USD: 0 },
+    });
+    const a = bundle.metricsByPortfolioId.get('pf-a')!;
+    const b = bundle.metricsByPortfolioId.get('pf-b')!;
+    expect(a.netCapitalSAR).toBeCloseTo(12_000, 5);
+    expect(a.totalValueInSAR).toBeCloseTo(16_000, 0);
+    expect(a.totalGainLossSAR).toBeCloseTo(4_000, 0);
+    expect(a.roi).toBeCloseTo((4_000 / 12_000) * 100, 5);
+    expect(a.firstCapitalDepositYmd).toBe('2024-01-01');
+    expect(b.netCapitalSAR).toBeCloseTo(10_000, 5);
+    expect(b.totalValueInSAR).toBeCloseTo(12_000, 0);
+    expect(b.totalGainLossSAR).toBeCloseTo(2_000, 0);
+    expect(b.roi).toBeCloseTo(20, 5);
+    expect(presentScopedInvestmentGrowth(a).statusLabel).toBe('Growing');
+    expect(presentScopedInvestmentGrowth(b).statusLabel).toBe('Growing');
+  });
+
+  it('idle cash share is not counted as a loss on a multi-portfolio platform', () => {
+    const p1 = basePortfolio({
+      id: 'pf-a',
+      holdings: [{ ...holding(10, 40, 10), id: 'ha', symbol: 'AAA.SR', currentValue: 400 }],
+    });
+    const p2 = basePortfolio({
+      id: 'pf-b',
+      holdings: [{ ...holding(10, 40, 10), id: 'hb', symbol: 'BBB.SR', currentValue: 400 }],
+    });
+    const bundle = computePortfolioMetricsBundle({
+      siblingPortfolios: [p1, p2],
+      transactions: [tx({ id: 'd1', type: 'deposit', total: 1_000, date: '2025-01-01' })],
+      accounts: [baseAccount()],
+      allInvestments: [p1, p2],
+      sarPerUsd: SAR_PER_USD,
+      simulatedPrices: {},
+      accountAvailableCashByCurrency: { SAR: 200, USD: 0 },
+    });
+    const a = bundle.metricsByPortfolioId.get('pf-a')!;
+    const b = bundle.metricsByPortfolioId.get('pf-b')!;
+    expect(a.netCapitalSAR).toBeCloseTo(500, 5);
+    expect(b.netCapitalSAR).toBeCloseTo(500, 5);
+    expect(a.totalValueInSAR).toBeCloseTo(500, 5);
+    expect(b.totalValueInSAR).toBeCloseTo(500, 5);
+    expect(a.totalGainLossSAR).toBeCloseTo(0, 5);
+    expect(b.totalGainLossSAR).toBeCloseTo(0, 5);
+  });
+});
+
 describe('ROI-after-withdrawals surface wiring', () => {
   it('Investments hub shows net invested, present value, growth, and time invested', () => {
     const page = read('pages/Investments.tsx');
@@ -297,6 +412,11 @@ describe('ROI-after-withdrawals surface wiring', () => {
     expect(page).toContain('Time invested');
     expect(page).toContain('depositsRecordedSar');
     expect(page).toContain('netInvestedSar');
+    expect(page).toContain('presentScopedInvestmentGrowth');
+    expect(page).toContain('platformGrowth.ageLabel');
+    expect(page).toContain('portfolioGrowth');
+    expect(page).not.toContain('Unrealized P/L divided by total cost basis');
+    expect(page).not.toContain('use position vs average cost like the holdings table');
     expect(page).not.toContain('larger of (deposits − withdrawals)');
   });
 

@@ -18,6 +18,12 @@ import { isInvestmentTransactionType } from '../utils/investmentTransactionType'
 import { getInvestmentTransactionCashAmount } from '../utils/investmentTransactionCash';
 import { isCapitalInvestmentDeposit, isCapitalInvestmentWithdrawal } from './reconciliation/cashDelta';
 import {
+  earliestCapitalDepositYmd,
+  formatInvestmentAgeLabel,
+  HEADLINE_NEAR_ZERO_NET_INVESTED_SAR,
+  investmentAgeDaysFromYmd,
+} from './investmentCapitalAge';
+import {
   getPersonalAccounts,
   getPersonalCommodityHoldings,
   getPersonalInvestments,
@@ -59,10 +65,15 @@ export interface PlatformCardMetrics {
   totalInvestedSAR: number;
   totalWithdrawnSAR: number;
   netCapitalSAR: number;
-  /** Sum of qty×avg cost (SAR) for lots with both set — used when `unrealizedPnLBasis` is `holdings_cost`. */
+  /** Sum of qty×avg cost (SAR) for lots with both set — diagnostic only; ROI uses net invested. */
   holdingsCostBasisSAR?: number;
-  /** When set on output, unrealized P/L and ROI use holdings vs cost (portfolio rows), not value − net deposits. */
+  /** When set on output, unrealized P/L and ROI use holdings vs cost (legacy). Default is net invested. */
   unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
+  /** Earliest economic deposit (YYYY-MM-DD) in the scoped ledger. */
+  firstCapitalDepositYmd?: string | null;
+  investmentAgeDays?: number | null;
+  /** Deposits exist, leftover net invested ≤ 1 SAR, present value remains. */
+  principalFullyRecovered?: boolean;
 }
 
 export interface PlatformMetricValidationResult {
@@ -81,8 +92,8 @@ export interface ComputePlatformCardMetricsArgs {
   /** Single portfolio currency, or undefined when mixed / unknown (same fallbacks as PlatformCard). */
   platformCurrency: TradeCurrency | undefined;
   /**
-   * `net_capital` (default): total value − (deposits − withdrawals) — whole-platform economics.
-   * `holdings_cost`: unrealized P/L = holdings value − sum(qty×avg cost); ROI vs that cost — matches holdings table & portfolio rows.
+   * `net_capital` (default): present value − (deposits − withdrawals) — money you still have in vs what you put in.
+   * `holdings_cost`: leftover diagnostic vs qty×avg cost (not the investor ROI question).
    */
   unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
   /** Session clock for daily P/L (defaults to now). */
@@ -222,6 +233,11 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
         : Math.max(0, holdingsCostBasisSAR + cashInSar + (wdrSAR + wdrUSD * rate));
   const netCapitalSAR = Math.max(0, totalInvestedSAR - (wdrSAR + wdrUSD * rate));
   const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
+  const depositsRecordedSAR = totalInvestedSARRaw;
+  const principalFullyRecovered =
+    depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    netCapitalSAR <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
   const netCapital =
     platformCurrency === 'SAR'
       ? netCapitalSAR
@@ -240,7 +256,9 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
       : platformCurrency === 'USD'
         ? totalInvestedSAR / rate
         : totalInvestedSAR;
-  const roi = netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+  const roi = principalFullyRecovered ? 0 : netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+  const firstCapitalDepositYmd = earliestCapitalDepositYmd(transactions);
+  const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
 
   const totalWithdrawnSAR = wdrSAR + wdrUSD * rate;
 
@@ -304,8 +322,42 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     netCapitalSAR,
     holdingsCostBasisSAR,
     unrealizedPnLBasis,
+    firstCapitalDepositYmd,
+    investmentAgeDays,
+    principalFullyRecovered,
   };
   return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, { unrealizedPnLBasis });
+}
+
+/** Display labels for platform / portfolio ROI vs net invested (deposits − withdrawals). */
+export function presentScopedInvestmentGrowth(m: PlatformCardMetrics): {
+  roiDisplay: string;
+  growthSar: number;
+  netInvestedSar: number;
+  isGrowing: boolean;
+  statusLabel: string;
+  ageLabel: string | null;
+  firstCapitalDepositYmd: string | null;
+  principalFullyRecovered: boolean;
+} {
+  const principalFullyRecovered = m.principalFullyRecovered === true;
+  const growthSar = Number.isFinite(m.totalGainLossSAR) ? m.totalGainLossSAR : 0;
+  return {
+    roiDisplay: principalFullyRecovered ? 'Principal recovered' : `${(Number.isFinite(m.roi) ? m.roi : 0).toFixed(1)}%`,
+    growthSar,
+    netInvestedSar: Number.isFinite(m.netCapitalSAR) ? m.netCapitalSAR : 0,
+    isGrowing: principalFullyRecovered || growthSar >= 0,
+    statusLabel: principalFullyRecovered
+      ? 'Principal recovered'
+      : growthSar > 0.5
+        ? 'Growing'
+        : growthSar < -0.5
+          ? 'Shrinking'
+          : 'Flat',
+    ageLabel: formatInvestmentAgeLabel(m.investmentAgeDays ?? null),
+    firstCapitalDepositYmd: m.firstCapitalDepositYmd ?? null,
+    principalFullyRecovered,
+  };
 }
 
 export type PortfolioMetricsBundle = {
@@ -343,12 +395,11 @@ export function getPortfolioAttributedTransactions(args: {
   });
 }
 
-/** Account-level rows without `portfolioId` — allocate across siblings (deposits, trades, dividends, fees). */
+/** Account-level rows without `portfolioId` — allocate across siblings (capital deposits/withdrawals, trades, dividends, fees). */
 function isOrphanPortfolioAttributedTx(t: InvestmentTransaction): boolean {
   if (transactionPortfolioIdTrimmed(t)) return false;
+  if (isCapitalInvestmentDeposit(t) || isCapitalInvestmentWithdrawal(t)) return true;
   return (
-    isInvestmentTransactionType(t.type, 'deposit') ||
-    isInvestmentTransactionType(t.type, 'withdrawal') ||
     isInvestmentTransactionType(t.type, 'buy') ||
     isInvestmentTransactionType(t.type, 'sell') ||
     isInvestmentTransactionType(t.type, 'dividend') ||
@@ -357,12 +408,9 @@ function isOrphanPortfolioAttributedTx(t: InvestmentTransaction): boolean {
   );
 }
 
-/** @deprecated use isOrphanPortfolioAttributedTx */
 function isOrphanPortfolioCashFlowTx(t: InvestmentTransaction): boolean {
   if (transactionPortfolioIdTrimmed(t)) return false;
-  return (
-    isInvestmentTransactionType(t.type, 'deposit') || isInvestmentTransactionType(t.type, 'withdrawal')
-  );
+  return isCapitalInvestmentDeposit(t) || isCapitalInvestmentWithdrawal(t);
 }
 
 function orphanShareWeightForPortfolio(args: {
@@ -464,12 +512,9 @@ function transactionsAttributedToPortfolioForKpis(args: {
 /**
  * Per-portfolio KPIs for one platform row: same ledger rules as {@link computePlatformCardMetrics}.
  *
- * - **Single portfolio** on the account: use the **full** platform transaction list + **pooled** tradable cash and
- *   **`holdings_cost`** for unrealized P/L and ROI (matches each holdings row). **Invested** / **Withdrawn** still
- *   come from the ledger; when deposits are sparse vs qty×avg cost, that is intentional.
- * - **Multiple portfolios**: rows use **positions-only cash** (`0` in metrics) but **split** account-level deposits &
- *   withdrawals without `portfolioId` across siblings by **holdings market value** weights; ROI/P&amp;L stay
- *   `holdings_cost` (per holdings table).
+ * Present value = holdings + this portfolio’s share of idle broker cash.
+ * Net invested = deposits − withdrawals tagged to the portfolio, plus a value-weighted share of
+ * untagged capital transfers. ROI is always vs that net invested (never qty × avg cost).
  */
 export function computePortfolioMetricsBundle(args: {
   /** Portfolios listed on this account row (siblings on the same broker). */
@@ -537,6 +582,8 @@ export function computePortfolioMetricsBundle(args: {
       siblingPortfolios,
     });
     const pc = resolveInvestmentPortfolioCurrency(p);
+    const w = weights[i] ?? 0;
+    const cashShare = { SAR: sarBucket * w, USD: usdBucket * w };
     metricsByPortfolioId.set(
       p.id,
       computePlatformCardMetrics({
@@ -545,7 +592,7 @@ export function computePortfolioMetricsBundle(args: {
         accounts: accList,
         allInvestments: invList,
         sarPerUsd: rate,
-        availableCashByCurrency: { SAR: 0, USD: 0 },
+        availableCashByCurrency: cashShare,
         simulatedPrices,
         dailyPnLPrices,
         platformCurrency: pc,
@@ -635,6 +682,12 @@ function sanitizeAndValidatePlatformMetrics(
     netCapitalSAR: Math.max(0, sanitizeFinite(metrics.netCapitalSAR)),
     holdingsCostBasisSAR: basisSAR,
     unrealizedPnLBasis: basisMode === 'holdings_cost' ? 'holdings_cost' : undefined,
+    firstCapitalDepositYmd: metrics.firstCapitalDepositYmd ?? null,
+    investmentAgeDays:
+      metrics.investmentAgeDays != null && Number.isFinite(metrics.investmentAgeDays)
+        ? Math.floor(metrics.investmentAgeDays)
+        : null,
+    principalFullyRecovered: metrics.principalFullyRecovered === true,
   };
 
   // Canonical derivations (single source of truth).
@@ -644,8 +697,12 @@ function sanitizeAndValidatePlatformMetrics(
     safe.roi = basisSAR > 1e-9 ? (safe.totalGainLossSAR / basisSAR) * 100 : 0;
   } else {
     safe.totalGainLossSAR = safe.totalValueInSAR - safe.netCapitalSAR;
-    safe.roi =
-      safe.netCapitalSAR > 1e-9 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
+    if (safe.principalFullyRecovered) {
+      safe.roi = 0;
+    } else {
+      safe.roi =
+        safe.netCapitalSAR > 1e-9 ? (safe.totalGainLossSAR / safe.netCapitalSAR) * 100 : 0;
+    }
   }
   safe.totalGainLoss =
     platformCurrency === 'USD' ? safe.totalGainLossSAR / rate
