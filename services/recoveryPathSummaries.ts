@@ -161,20 +161,21 @@ export function buildRecoveryLadderPathBrief(args: {
     };
   }
 
-  const levels = ladder.ladder.length;
+  const activeLevels = (ladder.ladder ?? []).filter((l) => (Number(l.qty) || 0) > 0);
+  const levels = activeLevels.length;
   const cost = ladder.totalPlannedCost;
   return {
     mode: 'recovery_ladder',
     readiness: 'ready',
     headline: 'Staged buys with your cash',
-    oneLiner: `Place ${levels} limit buy${levels !== 1 ? 's' : ''} at lower prices using deployable cash — average cost can move from ${formatMoney(ladder.currentPrice)} toward ${formatMoney(ladder.newAvgCost)}.`,
+    oneLiner: `Place ${levels} limit buy${levels !== 1 ? 's' : ''} below today’s price using deployable cash — average cost can move from ${formatMoney(ladder.avgCost)} toward ${formatMoney(ladder.newAvgCost)}.`,
     indicator: 'green',
     bullets: [
-      `Planned spend: about ${formatMoney(cost)} ${bookCurrency} (within your recovery budget)`,
+      `Planned spend: about ${formatMoney(cost)} ${bookCurrency} (within this ticker’s recovery budget)`,
       `After all fills: ~${ladder.newShares} shares at ~${formatMoney(ladder.newAvgCost)} avg (estimate)`,
       ladder.state === 'PARTIAL_FILL'
         ? 'Some levels already filled — remaining steps were recalculated.'
-        : `Loss now: ${formatPct(plPct)} · trigger was ${formatPct(-lossTriggerPct)}`,
+        : `Loss now: ${formatPct(plPct)} · ladder trigger ${formatPct(-lossTriggerPct)}`,
     ],
   };
 }

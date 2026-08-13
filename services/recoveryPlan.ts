@@ -15,6 +15,7 @@ import type {
   WealthUltraSleeve,
 } from '../types';
 import type { Holding } from '../types';
+import { roundMoney, roundQuantity } from '../utils/money';
 
 // --- Position metrics ---
 
@@ -65,7 +66,7 @@ export function violatesCaps(
     return { ok: false, reason: `Planned cost exceeds ticker cash cap (${position.cashCap})` };
   }
   const maxFromDeployable = config.deployableCash * config.recoveryBudgetPct;
-  if (planCost > maxFromDeployable) {
+  if (planCost > maxFromDeployable + 0.05) {
     return { ok: false, reason: `Exceeds recovery budget (${(config.recoveryBudgetPct * 100).toFixed(0)}% of deployable)` };
   }
   if (config.deployableCash < config.minDeployableThreshold) {
@@ -102,7 +103,16 @@ export function qualifyRecovery(
     return { qualified: false, reason: 'Recovery disabled for this position' };
   }
   if (plPct > -position.lossTriggerPct) {
-    return { qualified: false, reason: `Loss ${(-plPct).toFixed(1)}% below trigger ${position.lossTriggerPct}%` };
+    return {
+      qualified: false,
+      reason: `Loss ${(-plPct).toFixed(1)}% is shallower than the ${position.lossTriggerPct}% trigger`,
+    };
+  }
+  if (!(estimatedPlanCost > 0)) {
+    return {
+      qualified: false,
+      reason: 'Recovery budget is too small to place even one buy at ladder prices',
+    };
   }
   const guard = riskGuardrailsValidator(position, config, estimatedPlanCost);
   if (!guard.allowed) {
@@ -122,24 +132,63 @@ export function buildLadderPrices(
   return steps.map(s => currentPrice * (1 - s));
 }
 
+const MIN_FRACTIONAL_QTY = 0.01;
+
+/** Whole shares when the slice can buy ≥1; otherwise a fractional slice so expensive names are not planned as qty 0. */
+export function allocateQtyForLadderPrice(budget: number, price: number): number {
+  if (!(price > 0) || !(budget > 0)) return 0;
+  const raw = budget / price;
+  if (raw >= 1) return Math.floor(raw + 1e-9);
+  const frac = roundQuantity(raw);
+  return frac >= MIN_FRACTIONAL_QTY ? frac : 0;
+}
+
 export function allocateLadderQty(
   totalBudget: number,
   prices: number[],
   weights: [number, number, number]
 ): RecoveryLadderLevel[] {
+  const budget = Math.max(0, Number(totalBudget) || 0);
   const levels: RecoveryLadderLevel[] = [];
-  for (let i = 0; i < Math.min(3, prices.length); i++) {
+  let remaining = budget;
+  const n = Math.min(3, prices.length);
+  for (let i = 0; i < n; i++) {
     const weight = weights[i] ?? 0;
-    const cost = totalBudget * weight;
+    const isLast = i === n - 1;
+    const targetCost = isLast ? remaining : Math.min(remaining, budget * weight);
     const price = prices[i];
-    const qty = price > 0 ? Math.floor(cost / price) : 0;
+    let qty = allocateQtyForLadderPrice(targetCost, price);
+    let cost = roundMoney(qty * price);
+    if (cost > remaining && price > 0) {
+      qty = allocateQtyForLadderPrice(remaining, price);
+      cost = roundMoney(qty * price);
+      if (cost > remaining) {
+        qty = 0;
+        cost = 0;
+      }
+    }
+    remaining = Math.max(0, roundMoney(remaining - cost));
     levels.push({
       level: (i + 1) as 1 | 2 | 3,
       qty,
       price,
-      cost: qty * price,
+      cost,
       weightPct: weight * 100,
     });
+  }
+  if (remaining > 0) {
+    for (let i = levels.length - 1; i >= 0; i--) {
+      const extra = allocateQtyForLadderPrice(remaining, levels[i].price);
+      if (extra > 0) {
+        const qty = roundQuantity(levels[i].qty + extra);
+        const cost = roundMoney(qty * levels[i].price);
+        const extraCost = roundMoney(cost - levels[i].cost);
+        if (extraCost > remaining + 1e-9) continue;
+        remaining = Math.max(0, roundMoney(remaining - extraCost));
+        levels[i] = { ...levels[i], qty, cost };
+        break;
+      }
+    }
   }
   return levels;
 }
@@ -152,15 +201,18 @@ function capLadderByMaxShares(
   ladder: RecoveryLadderLevel[],
   maxAddShares?: number
 ): RecoveryLadderLevel[] {
-  if (!Number.isFinite(maxAddShares) || (maxAddShares ?? 0) <= 0) return ladder;
-  let remaining = Math.floor(maxAddShares as number);
+  if (maxAddShares == null || !Number.isFinite(maxAddShares)) return ladder;
+  if (maxAddShares <= 0) {
+    return ladder.map((level) => ({ ...level, qty: 0, cost: 0 }));
+  }
+  let remaining = maxAddShares;
   return ladder.map((level) => {
     if (remaining <= 0 || level.qty <= 0) {
       return { ...level, qty: 0, cost: 0 };
     }
-    const qty = Math.min(level.qty, remaining);
-    remaining -= qty;
-    return { ...level, qty, cost: qty * level.price };
+    const qty = roundQuantity(Math.min(level.qty, remaining));
+    remaining = Math.max(0, remaining - qty);
+    return { ...level, qty, cost: roundMoney(qty * level.price) };
   });
 }
 
@@ -176,7 +228,7 @@ export function computeNewAverage(
     totalShares += l.qty;
   });
   const newAvgCost = totalShares > 0 ? totalCost / totalShares : avgCost;
-  return { newShares: totalShares, newAvgCost };
+  return { newShares: roundQuantity(totalShares), newAvgCost };
 }
 
 export function buildRecoveryLadder(
@@ -194,7 +246,7 @@ export function buildRecoveryLadder(
   );
   if (!skipLevels || skipLevels.size === 0) {
     const ladder = allocateLadderQty(cappedBudget, prices, config.ladderWeights);
-    return capLadderByMaxShares(ladder, maxAddShares);
+    return capLadderByMaxShares(ladder, maxAddShares).filter((l) => l.qty > 0);
   }
   const weights = config.ladderWeights;
   const activeLevels = ([1, 2, 3] as const).filter((l) => !skipLevels.has(l));
@@ -207,7 +259,7 @@ export function buildRecoveryLadder(
     skipLevels.has(3) ? 0 : (weights[2] ?? 0) / weightSum,
   ];
   const ladder = allocateLadderQty(cappedBudget, prices, normWeights).filter((l) => !skipLevels.has(l.level));
-  return capLadderByMaxShares(ladder, maxAddShares);
+  return capLadderByMaxShares(ladder, maxAddShares).filter((l) => l.qty > 0);
 }
 
 // --- ExitPlanGenerator ---

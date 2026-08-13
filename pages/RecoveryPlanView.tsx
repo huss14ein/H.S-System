@@ -12,7 +12,6 @@ import {
   buildRecoveryPlan,
   computeNewAverage,
   orderDraftGenerator,
-  DEFAULT_RECOVERY_GLOBAL_CONFIG,
 } from '../services/recoveryPlan';
 import { tickerToSleeve, tickerToRiskTier } from '../wealth-ultra/position';
 import { getHoldingFundamentals, type HoldingFundamentals } from '../services/finnhubService';
@@ -67,6 +66,11 @@ import { computeCanonicalPlanningSnapshot } from '../services/canonicalPlanningE
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import {
+  buildRecoveryGlobalConfig,
+  deriveRecoveryPositionConfig,
+  withRecoveryAddBounds,
+} from '../services/recoveryPositionSetup';
+import {
   buildHoldingSymbolOptions,
   navigateToRecordTradeFromHolding,
   resolveHoldingOptionKeyFromSymbol,
@@ -84,22 +88,17 @@ const deriveDynamicPositionConfig = (
   sleeveType: 'Core' | 'Upside' | 'Spec',
   riskTier: 'Low' | 'Med' | 'High' | 'Spec',
   deployableCash: number,
-  plPct: number
-): RecoveryPositionConfig => {
-  const lossSeverity = Math.min(1, Math.max(0, Math.abs(plPct) / 45));
-  const riskCapFactor = riskTier === 'Low' ? 0.14 : riskTier === 'Med' ? 0.11 : riskTier === 'High' ? 0.085 : 0.06;
-  const cashCap = Math.max(1200, Math.min(deployableCash * 0.35, deployableCash * (riskCapFactor + lossSeverity * 0.06)));
-  const triggerBase = riskTier === 'Low' ? 12 : riskTier === 'Med' ? 15 : riskTier === 'High' ? 18 : 22;
-  const dynamicTrigger = Math.max(8, Math.min(30, triggerBase - lossSeverity * 3));
-  return {
+  plPct: number,
+  recoveryBudgetPct: number,
+): RecoveryPositionConfig =>
+  deriveRecoveryPositionConfig({
     symbol,
     sleeveType,
     riskTier,
-    recoveryEnabled: sleeveType !== 'Spec',
-    lossTriggerPct: Number(dynamicTrigger.toFixed(1)),
-    cashCap: Number(cashCap.toFixed(2)),
-  };
-};
+    deployableCash,
+    plPct,
+    recoveryBudgetPct,
+  });
 function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActivePage, triggerPageAction }: RecoveryPlanViewProps) {
   const ctx = useContext(DataContext)!;
   const { data, getAvailableCashForAccount, addPlannedTrade } = ctx;
@@ -129,12 +128,10 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
 
   const deployableCashSAR = canonical?.recoveryPlan?.deployableCashSar ?? 0;
 
-  const globalConfig: RecoveryGlobalConfig = useMemo(() => ({
-    ...DEFAULT_RECOVERY_GLOBAL_CONFIG,
-    deployableCash: deployableCashSAR,
-    minDeployableThreshold: Math.max(300, Math.min(1200, deployableCashSAR * 0.01)),
-    recoveryBudgetPct: Math.max(0.12, Math.min(0.35, 0.18 + (deployableCashSAR > 50000 ? 0.04 : 0))),
-  }), [deployableCashSAR]);
+  const globalConfig: RecoveryGlobalConfig = useMemo(
+    () => buildRecoveryGlobalConfig(deployableCashSAR),
+    [deployableCashSAR],
+  );
 
   const universe = data?.portfolioUniverse ?? [];
   const planCurrency = useMemo(
@@ -209,33 +206,67 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       const currentVal = holding.currentValue != null ? Number(holding.currentValue) : NaN;
       const avgCost = (holding.avgCost != null ? Number(holding.avgCost) : 0) || 0;
       const currentPrice = row.currentUnitPriceBook;
-      const sleeveType = tickerToSleeve(sym, sleeveRef.coreTickers.length || sleeveRef.upsideTickers.length ? sleeveRef : undefined);
-      const riskTier = tickerToRiskTier(sym, sleeveRef.coreTickers.length || sleeveRef.upsideTickers.length ? sleeveRef : undefined);
+      const sleeveType =
+        row.positionConfig?.sleeveType ??
+        tickerToSleeve(sym, sleeveRef.coreTickers.length || sleeveRef.upsideTickers.length ? sleeveRef : undefined);
+      const riskTier =
+        row.positionConfig?.riskTier ??
+        tickerToRiskTier(sym, sleeveRef.coreTickers.length || sleeveRef.upsideTickers.length ? sleeveRef : undefined);
       const roughPlPct = avgCost > 0 && currentPrice > 0 ? ((currentPrice - avgCost) / avgCost) * 100 : 0;
       const deployableCashInBookCurrency = bookCurrency === 'SAR' ? deployableCashSAR : deployableCashSAR / sarPerUsd;
-      const dynamicConfig = deriveDynamicPositionConfig(sym, sleeveType, riskTier, deployableCashInBookCurrency, roughPlPct);
       const ai = aiRecoveryBySymbol[sym];
-      const mergedConfig: RecoveryPositionConfig = ai
-        ? { ...dynamicConfig, lossTriggerPct: ai.lossTriggerPct, cashCap: ai.cashCap, recoveryEnabled: ai.recoveryEnabled }
-        : dynamicConfig;
-
       const marketValue = Number.isFinite(currentVal) && currentVal > 0 ? currentVal : qty * currentPrice;
-      const shareCapMultiplier = riskTier === 'Low' ? 1.0 : riskTier === 'Med' ? 0.75 : riskTier === 'High' ? 0.5 : 0.3;
-      const costCapMultiplier = riskTier === 'Low' ? 0.6 : riskTier === 'Med' ? 0.45 : riskTier === 'High' ? 0.3 : 0.2;
-      const boundedMaxAddShares = Math.max(1, Math.floor(qty * shareCapMultiplier));
-      const boundedMaxAddCost = Math.max(
-        0,
-        Math.min(
-          mergedConfig.cashCap,
-          marketValue > 0 ? marketValue * costCapMultiplier : mergedConfig.cashCap,
-          deployableCashInBookCurrency * globalConfig.recoveryBudgetPct,
-        ),
-      );
       const positionGlobalConfig: RecoveryGlobalConfig = { ...globalConfig, deployableCash: deployableCashInBookCurrency };
-      const positionConfig: RecoveryPositionConfig = { ...mergedConfig, maxAddShares: boundedMaxAddShares, maxAddCost: Number(boundedMaxAddCost.toFixed(2)) };
-      const plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
+
+      let positionConfig: RecoveryPositionConfig;
+      let plan = row.plan;
+      if (ai) {
+        const dynamicConfig = deriveDynamicPositionConfig(
+          sym,
+          sleeveType,
+          riskTier,
+          deployableCashInBookCurrency,
+          roughPlPct,
+          globalConfig.recoveryBudgetPct,
+        );
+        positionConfig = withRecoveryAddBounds(
+          {
+            ...dynamicConfig,
+            lossTriggerPct: ai.lossTriggerPct,
+            cashCap: ai.cashCap,
+            recoveryEnabled: ai.recoveryEnabled,
+          },
+          {
+            quantity: qty,
+            marketValue,
+            deployableCash: deployableCashInBookCurrency,
+            recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+          },
+        );
+        plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
+      } else if (row.positionConfig) {
+        positionConfig = row.positionConfig;
+      } else {
+        positionConfig = withRecoveryAddBounds(
+          deriveDynamicPositionConfig(
+            sym,
+            sleeveType,
+            riskTier,
+            deployableCashInBookCurrency,
+            roughPlPct,
+            globalConfig.recoveryBudgetPct,
+          ),
+          {
+            quantity: qty,
+            marketValue,
+            deployableCash: deployableCashInBookCurrency,
+            recoveryBudgetPct: globalConfig.recoveryBudgetPct,
+          },
+        );
+        plan = buildRecoveryPlan(holding, currentPrice, positionConfig, positionGlobalConfig);
+      }
       const recyclingSummary: RecyclingPlanSummary | null =
-        plan.plPct < 0 ? recyclingSummaryCache[holding.id] ?? null : null;
+        plan.plPct < 0 ? recyclingSummaryCache[holding.id] ?? row.recyclingSummary ?? null : null;
       return {
         holding,
         portfolioName,
@@ -267,12 +298,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   );
 
   const estimatedRecoveryDeploymentSAR = useMemo(() => {
-    return qualifiedPositions.reduce((sum, p) => {
+    const uncapped = qualifiedPositions.reduce((sum, p) => {
       const cost = p.plan.totalPlannedCost ?? 0;
       if (!Number.isFinite(cost) || cost <= 0) return sum;
       return sum + (p.bookCurrency === 'SAR' ? cost : cost * sarPerUsd);
     }, 0);
-  }, [qualifiedPositions, sarPerUsd]);
+    const budgetCap = deployableCashSAR * globalConfig.recoveryBudgetPct;
+    return Math.min(uncapped, Number.isFinite(budgetCap) ? Math.max(0, budgetCap) : uncapped);
+  }, [qualifiedPositions, sarPerUsd, deployableCashSAR, globalConfig.recoveryBudgetPct]);
 
   // Load recovery statistics dynamically
   useEffect(() => {
@@ -443,9 +476,11 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [unifiedDraftOrders, unifiedRecoveryPlan?.pendingDrafts, recyclingDraftOrders, draftOrders]);
 
   useEffect(() => {
-    if (selectedHoldingId || qualifiedPositions.length === 0) return;
-    setSelectedHoldingId(qualifiedPositions[0].holding.id);
-  }, [qualifiedPositions, selectedHoldingId]);
+    if (selectedHoldingId || losingPositions.length === 0) return;
+    const prefer =
+      losingPositions.find((p) => p.plan.qualified || p.recyclingSummary?.planAvailable) ?? losingPositions[0];
+    setSelectedHoldingId(prefer.holding.id);
+  }, [losingPositions, selectedHoldingId]);
 
   // Auto-update recovery execution outcomes when positions change
   useEffect(() => {
@@ -1070,38 +1105,60 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           )}
         </div>
         <details className="mt-6 text-sm text-slate-600">
-          <summary className="cursor-pointer font-bold text-primary mb-3">Default parameters</summary>
+          <summary className="cursor-pointer font-bold text-primary mb-3">How this page decides</summary>
           <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 border border-slate-200">
             <ul className="space-y-3">
               <li className="flex items-start gap-3">
                 <div className="w-2 h-2 bg-blue-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
-                  <strong className="text-slate-800">Loss trigger</strong> <InfoHint text="Position must be in loss by at least this % to qualify (e.g. 20% = -20% or worse)." />: <span className="text-blue-600 font-bold">20%</span>
+                  <strong className="text-slate-800">Loss trigger</strong>{' '}
+                  <InfoHint text="Buy ladder only starts when this position’s loss is at least this deep. It is set from sleeve and risk (about 8–30%), not a fixed 20%." />
+                  :{' '}
+                  <span className="text-blue-600 font-bold">
+                    {selected?.positionConfig.lossTriggerPct != null
+                      ? `${selected.positionConfig.lossTriggerPct}% on the open holding`
+                      : 'Per holding from sleeve / risk (typically 12–22%)'}
+                  </span>
                 </div>
               </li>
               <li className="flex items-start gap-3">
                 <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
-                  <strong className="text-slate-800">Recovery budget</strong> <InfoHint text="Max share of deployable cash that can be used for recovery plans (e.g. 20%)." />: <span className="text-emerald-600 font-bold">20% of deployable cash</span>
+                  <strong className="text-slate-800">Recovery budget</strong>{' '}
+                  <InfoHint text="Maximum share of deployable platform cash that all recovery ladders may use." />
+                  :{' '}
+                  <span className="text-emerald-600 font-bold">
+                    {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% of deployable cash
+                  </span>
                 </div>
               </li>
               <li className="flex items-start gap-3">
                 <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
-                  <strong className="text-slate-800">Cash cap per ticker</strong> <InfoHint text="Max amount allowed for correction on a single ticker." />: <span className="text-amber-600 font-bold">5,000 (default)</span>
+                  <strong className="text-slate-800">Cash cap per ticker</strong>{' '}
+                  <InfoHint text="Max new cash this ticker may use. Scaled to your deployable cash and risk — not a flat 5,000." />
+                  :{' '}
+                  <span className="text-amber-600 font-bold">
+                    {selected
+                      ? formatCurrencyString(selected.positionConfig.cashCap, {
+                          inCurrency: selected.bookCurrency,
+                          digits: 0,
+                        })
+                      : 'Scaled to cash on hand (never above what you can deploy)'}
+                  </span>
                 </div>
               </li>
               <li className="flex items-start gap-3">
                 <div className="w-2 h-2 bg-rose-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
-                  <strong className="text-slate-800">Spec</strong>: Recovery is off for Speculative sleeve unless overridden; guardrails prevent over-spending.
+                  <strong className="text-slate-800">Spec</strong>: Recovery buys stay off for the Speculative sleeve unless you override with AI; guardrails still cap spend.
                 </div>
               </li>
               <li className="flex items-start gap-3">
                 <div className="w-2 h-2 bg-teal-500 rounded-full mt-1.5 flex-shrink-0"></div>
                 <div>
                   <strong className="text-slate-800">Position recycling</strong>{' '}
-                  <InfoHint text="Core vs recycle split by conviction (A/B/C). Sell 3 tranches on rebounds; rebuy ~10%+ lower with same cash only. No margin, no full exit, no new deposits." />{' '}
+                  <InfoHint text="Core vs recycle split by conviction (A/B/C). Sell on rebounds; rebuy lower with that sale cash only. No margin, no full exit, no new deposits." />{' '}
                   — pick this OR the buy ladder per position (not both at once).
                 </div>
               </li>
@@ -1250,7 +1307,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1">
               Est. recovery buys (SAR)
-              <InfoHint text="Sum of planned ladder costs for every recovery-eligible position, converted to SAR using your FX rate. Approximate; actual fills depend on prices." />
+              <InfoHint text="Planned ladder spend for eligible holdings, converted to SAR, then capped at this page’s recovery budget. You would not fire every ladder at once." />
             </p>
             <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center">
               <span className="text-indigo-700 font-bold text-lg">∑</span>
@@ -1259,7 +1316,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
           <p className="text-2xl font-bold text-dark tabular-nums">
             {formatCurrencyString(estimatedRecoveryDeploymentSAR, { inCurrency: 'SAR', digits: 0 })}
           </p>
-          <p className="text-sm text-slate-600 mt-1">If all suggested ladders were fully executed</p>
+          <p className="text-sm text-slate-600 mt-1">Capped at {(globalConfig.recoveryBudgetPct * 100).toFixed(0)}% of deployable cash</p>
         </div>
       </div>
 
@@ -1738,9 +1795,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                     })}
                   </span>
                 </div>
-                <div className="border-t border-slate-200 pt-3">
+                <div className="border-t border-slate-200 pt-3 space-y-3">
                   <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-600 font-medium">P/L:</span>
+                    <span className="text-sm text-slate-600 font-medium">P/L (book):</span>
                     <span className={`text-lg font-black tabular-nums ${
                       selectedPlan.plPct >= 0 ? 'text-emerald-700' : 'text-rose-700'
                     }`}>
@@ -1749,6 +1806,26 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                       })} ({selectedPlan.plPct.toFixed(1)}%)
                     </span>
                   </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600 font-medium">Ladder trigger:</span>
+                    <span className="text-sm font-bold text-slate-900">
+                      −{selected.positionConfig.lossTriggerPct}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600 font-medium">Ticker cash cap:</span>
+                    <span className="text-sm font-bold text-slate-900">
+                      {formatCurrencyString(selected.positionConfig.cashCap, {
+                        inCurrency: selected.bookCurrency ?? 'USD',
+                        digits: 0,
+                      })}
+                    </span>
+                  </div>
+                  {!selectedPlan.qualified && selectedPlan.reason && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                      Buy ladder: {selectedPlan.reason}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

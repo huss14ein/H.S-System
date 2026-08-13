@@ -348,6 +348,10 @@ const UnifiedRecoveryPanel: React.FC<UnifiedRecoveryPanelProps> = ({
               <p className="font-bold text-rose-700 tabular-nums">{plPct.toFixed(1)}%</p>
             </div>
             <div className="rounded-lg bg-violet-50 border border-violet-100 p-2.5">
+              <p className="text-slate-500 font-medium">Avg today</p>
+              <p className="font-bold text-slate-900 tabular-nums">{formatMoney(activeCashLadder.avgCost)}</p>
+            </div>
+            <div className="rounded-lg bg-violet-50 border border-violet-100 p-2.5">
               <p className="text-slate-500 font-medium">New avg (if all fill)</p>
               <p className="font-bold text-slate-900 tabular-nums">{formatMoney(activeCashLadder.newAvgCost)}</p>
             </div>
@@ -373,7 +377,7 @@ const UnifiedRecoveryPanel: React.FC<UnifiedRecoveryPanelProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {activeCashLadder.ladder.map((l) => (
+                {activeCashLadder.ladder.filter((l) => (Number(l.qty) || 0) > 0).map((l) => (
                   <tr key={l.level} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-semibold text-slate-800">Step {l.level}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{l.qty}</td>
