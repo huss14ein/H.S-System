@@ -1373,6 +1373,22 @@ const SystemHealth: React.FC<{
                         {ex.severity.toUpperCase()}
                       </span>
                       <span className="font-medium text-slate-800">{ex.message}</span>
+                      {ex.code === 'HOLDINGS_CRITICAL_MISSING' && (
+                        <button
+                          type="button"
+                          className="text-xs text-primary underline font-semibold"
+                          onClick={() => {
+                            if (triggerPageAction) {
+                              triggerPageAction('Investments', 'focus-holdings-integrity');
+                            } else {
+                              const el = document.getElementById('holdings-qty-integrity');
+                              el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                          }}
+                        >
+                          Open integrity
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}

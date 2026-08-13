@@ -447,10 +447,29 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [selectedHoldingId, losingPositions.length, qualifiedPositions.length]);
 
   // Track recovery plan when generated
-  const handleGenerateRecoveryPlan = useCallback((holding: Holding, plan: any, positionConfig: RecoveryPositionConfig) => {
+  const handleGenerateRecoveryPlan = useCallback((
+    holding: Holding,
+    plan: any,
+    positionConfig: RecoveryPositionConfig,
+    funding?: { fundedLadderLevels?: number | null; cashToDeploy?: number },
+  ) => {
     trackAction('save-recovery-execution', 'Recovery Plan');
     try {
       const executionId = `recovery-${holding.id}-${Date.now()}`;
+      let ladder = Array.isArray(plan?.ladder) ? [...plan.ladder] : [];
+      if (funding?.fundedLadderLevels === 1) {
+        ladder = ladder.filter((l: { level?: number }) => Number(l.level) === 1);
+      } else if (funding?.cashToDeploy != null && funding.cashToDeploy > 0) {
+        let spent = 0;
+        const maxCash = funding.cashToDeploy;
+        ladder = ladder.filter((l: { cost?: number }) => {
+          const cost = Number(l.cost) || 0;
+          if (spent + cost > maxCash + 1e-6) return false;
+          spent += cost;
+          return true;
+        });
+      }
+      const totalPlannedCost = ladder.reduce((s: number, l: { cost?: number }) => s + (Number(l.cost) || 0), 0);
       saveRecoveryExecution({
         id: executionId,
         symbol: holding.symbol ?? '',
@@ -462,8 +481,8 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         recoveryConfig: {
           lossTriggerPct: positionConfig.lossTriggerPct,
           cashCap: positionConfig.cashCap,
-          ladderLevels: plan.ladder.length,
-          totalPlannedCost: plan.totalPlannedCost,
+          ladderLevels: ladder.length,
+          totalPlannedCost,
         },
         executionStatus: 'planned',
       });
@@ -488,12 +507,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   const unifiedRecoveryPlan = useMemo(() => {
     if (!selected || !selectedPlan || selectedPlan.currentPrice <= 0) return null;
     const platformCashSar = Math.max(0, Number(selected.platformDeployableCashSar) || 0);
+    const bookCashStored = Math.max(0, Number(selected.platformDeployableCashBook) || 0);
     const deployableCashInBookCurrency =
-      selected.bookCurrency === 'SAR'
-        ? platformCashSar
-        : sarPerUsd > 0
-          ? platformCashSar / sarPerUsd
-          : platformCashSar;
+      bookCashStored > 0
+        ? bookCashStored
+        : selected.bookCurrency === 'SAR'
+          ? platformCashSar
+          : sarPerUsd > 0
+            ? platformCashSar / sarPerUsd
+            : platformCashSar;
     const platformGlobal = buildRecoveryGlobalConfig(deployableCashInBookCurrency);
     return buildUnifiedRecoveryPlan({
       holding: selected.holding,
@@ -692,16 +714,18 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     }
   }, []);
   const selectedCurrencyDeployableCash = selected
-    ? selected.bookCurrency === 'SAR'
-      ? Math.max(0, Number(selected.platformDeployableCashSar) || 0)
-      : sarPerUsd > 0
-        ? Math.max(0, Number(selected.platformDeployableCashSar) || 0) / sarPerUsd
-        : 0
+    ? (() => {
+        const bookCash = Math.max(0, Number(selected.platformDeployableCashBook) || 0);
+        if (bookCash > 0) return bookCash;
+        const sar = Math.max(0, Number(selected.platformDeployableCashSar) || 0);
+        if (selected.bookCurrency === 'SAR') return sar;
+        return sarPerUsd > 0 ? sar / sarPerUsd : 0;
+      })()
     : 0;
   const alternateCurrencyDeployableCash = selected
     ? selected.bookCurrency === 'SAR'
       ? sarPerUsd > 0
-        ? Math.max(0, Number(selected.platformDeployableCashSar) || 0) / sarPerUsd
+        ? selectedCurrencyDeployableCash / sarPerUsd
         : 0
       : Math.max(0, Number(selected.platformDeployableCashSar) || 0)
     : 0;
@@ -1187,11 +1211,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     if (!selected || !selectedPlan) return;
     if (unifiedRecoveryPlan) {
       handleGenerateUnifiedDrafts();
-      if (recoveryPathMode === 'recovery_ladder' && (activeCashLadderPlan?.qualified ?? selectedPlan.qualified)) {
+      if (recoveryPathMode === 'recovery_ladder' && selectedDecision?.action === 'add_ladder') {
         handleGenerateRecoveryPlan(
           selected.holding,
           activeCashLadderPlan ?? selectedPlan,
           selected.positionConfig,
+          {
+            fundedLadderLevels: selectedDecision.metrics.fundedLadderLevels,
+            cashToDeploy: selectedDecision.metrics.cashToDeploy,
+          },
         );
       }
       return;
@@ -1200,20 +1228,53 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
       toast('Open the recovery approach panel and use Generate recycling drafts.', 'info');
       return;
     }
+    const decision = selectedDecision;
+    if (decision?.metrics.budgetDeferred) {
+      toast(
+        decision.canRecycle
+          ? 'Recovery cash is assigned elsewhere — switch to recycling or wait.'
+          : 'Recovery cash is assigned to higher-priority names. Wait or free budget first.',
+        'info',
+      );
+      return;
+    }
+    if (decision && (decision.action === 'do_not_add' || decision.action === 'wait' || decision.action === 'review_exit')) {
+      toast(decision.nextStep || 'Decision says do not generate ladder drafts for this name now.', 'info');
+      return;
+    }
     const ladderPlan = activeCashLadderPlan ?? selectedPlan;
     if (!ladderPlan.qualified || !(ladderPlan.ladder ?? []).length) {
       toast('Buy ladder is not ready — loss may be above trigger or cash limits apply.', 'info');
       return;
     }
+    if (decision && decision.action !== 'add_ladder') {
+      toast(decision.nextStep || 'Decision does not fund a ladder for this name.', 'info');
+      return;
+    }
     trackAction('generate-draft-orders', 'Recovery Plan');
     try {
-      const drafts = orderDraftGenerator(ladderPlan, true);
+      let drafts = orderDraftGenerator(ladderPlan, true);
+      if (decision?.action === 'add_ladder' && decision.metrics.fundedLadderLevels === 1) {
+        drafts = drafts.filter((d) => d.trancheIndex === 1);
+      } else if (decision?.action === 'add_ladder' && decision.metrics.cashToDeploy > 0) {
+        let spent = 0;
+        const maxCash = decision.metrics.cashToDeploy;
+        drafts = drafts.filter((d) => {
+          const cost = (Number(d.qty) || 0) * (Number(d.limitPrice) || 0);
+          if (spent + cost > maxCash + 1e-6) return false;
+          spent += cost;
+          return true;
+        });
+      }
       if (!drafts?.length) {
-        toast('Could not generate ladder drafts.', 'error');
+        toast('Could not generate ladder drafts for the funded cash.', 'error');
         return;
       }
       setDraftOrders(drafts);
-      handleGenerateRecoveryPlan(selected.holding, ladderPlan, selected.positionConfig);
+      handleGenerateRecoveryPlan(selected.holding, ladderPlan, selected.positionConfig, {
+        fundedLadderLevels: decision?.metrics.fundedLadderLevels,
+        cashToDeploy: decision?.metrics.cashToDeploy,
+      });
       toast(`${drafts.length} ladder draft(s) ready.`, 'success');
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Failed to generate drafts.', 'error');
@@ -1221,11 +1282,13 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [
     selected,
     selectedPlan,
+    selectedDecision,
     unifiedRecoveryPlan,
     recoveryPathMode,
     activeCashLadderPlan,
     handleGenerateUnifiedDrafts,
     handleGenerateRecoveryPlan,
+    trackAction,
   ]);
 
   return (
@@ -1344,7 +1407,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                   :{' '}
                   <span className="text-emerald-600 font-bold">
                     {selected
-                      ? `${(buildRecoveryGlobalConfig(Number(selected.platformDeployableCashBook) || Number(selected.platformDeployableCashSar) || 0).recoveryBudgetPct * 100).toFixed(0)}% of this platform’s cash`
+                      ? `${(buildRecoveryGlobalConfig(Number(selected.platformDeployableCashBook) > 0 ? Number(selected.platformDeployableCashBook) : selected.bookCurrency === 'SAR' ? Number(selected.platformDeployableCashSar) || 0 : 0).recoveryBudgetPct * 100).toFixed(0)}% of this platform’s cash`
                       : 'Per platform (~12–22% of that broker’s cash)'}
                   </span>
                 </div>
@@ -1562,6 +1625,12 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
               {actFirstDecision.symbol} · {actFirstDecision.label}
             </p>
             <p className="text-sm text-indigo-800 mt-1 max-w-3xl">{actFirstDecision.nextStep}</p>
+            {actFirstDecision.action === 'add_ladder' && actFirstDecision.metrics.fundedLadderLevels != null ? (
+              <p className="text-xs text-indigo-700 mt-1 font-semibold">
+                {actFirstDecision.metrics.fundedLadderLevels} funded ladder level
+                {actFirstDecision.metrics.fundedLadderLevels === 1 ? '' : 's'}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -1619,6 +1688,22 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                 rankedLosingPositions.map(({ holding, portfolioName, platformName, platformDeployableCashSar, bookCurrency, plan, recyclingSummary, priceProvenance, positionConfig }) => {
                   const decision = decisionByHoldingId.get(holding.id);
                   const tone = decision ? decisionTone(decision.action) : decisionTone('wait');
+                  const ladderPathReady = decision?.action === 'add_ladder';
+                  const ladderPathLabel = ladderPathReady
+                    ? decision.metrics.fundedLadderLevels === 1
+                      ? 'First rung funded'
+                      : 'Ladder funded'
+                    : decision?.metrics.budgetDeferred
+                      ? 'Cash deferred'
+                      : decision?.action === 'recycle'
+                        ? 'Prefer recycle'
+                        : decision?.action === 'do_not_add' || decision?.action === 'review_exit'
+                          ? 'No add'
+                          : plan.qualified
+                            ? 'Eligible · wait'
+                            : plan.plPct <= -positionConfig.lossTriggerPct
+                              ? 'Blocked'
+                              : 'Need deeper loss';
                   return (
                   <tr key={holding.id} className={`${isSelected(holding.id) ? 'bg-primary/10 border-l-4 border-primary' : 'hover:bg-slate-50'} transition-colors duration-150`}>
                     <td className="px-6 py-4">
@@ -1704,18 +1789,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                         </span>
                         <span
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 border ${
-                            plan.qualified
+                            ladderPathReady
                               ? 'bg-violet-50 text-violet-900 border-violet-200'
                               : 'bg-slate-50 text-slate-500 border-slate-200'
                           }`}
-                          title="Recovery buy ladder"
+                          title="Recovery buy ladder (after platform cash ranking)"
                         >
                           <span aria-hidden>$</span>
-                          {plan.qualified
-                            ? 'Ladder ready'
-                            : plan.plPct <= -positionConfig.lossTriggerPct
-                              ? 'Blocked'
-                              : 'Need deeper loss'}
+                          {ladderPathLabel}
                         </span>
                       </div>
                     </td>
@@ -1729,7 +1810,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                             {decision.metrics.budgetDeferred
                               ? 'Cash assigned elsewhere'
                               : decision.action === 'add_ladder'
-                                ? `Rebound ${decision.metrics.reboundToNewBreakevenPct.toFixed(0)}% vs ${decision.metrics.reboundToOldBreakevenPct.toFixed(0)}% hold`
+                                ? `${decision.metrics.fundedLadderLevels != null && decision.metrics.fundedLadderLevels > 0 ? `${decision.metrics.fundedLadderLevels} level${decision.metrics.fundedLadderLevels === 1 ? '' : 's'} · ` : ''}Rebound ${decision.metrics.reboundToNewBreakevenPct.toFixed(0)}% vs ${decision.metrics.reboundToOldBreakevenPct.toFixed(0)}% hold`
                                 : decision.nextStep}
                           </span>
                         </div>
@@ -1744,18 +1825,14 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
                         className={`px-4 py-2 rounded-lg font-bold text-sm transition-colors duration-200 shadow-sm hover:shadow-md ${
                           isSelected(holding.id)
                             ? 'bg-slate-700 text-white hover:bg-slate-800'
-                            : plan.qualified
+                            : ladderPathReady
                               ? 'bg-primary text-white hover:bg-secondary'
                               : 'bg-teal-700 text-white hover:bg-teal-800'
                         }`}
                       >
-                        {isSelected(holding.id)
-                          ? 'Hide plan'
-                          : plan.qualified
-                            ? 'Open plan'
-                            : 'Open plan'}
+                        {isSelected(holding.id) ? 'Hide plan' : 'Open plan'}
                       </button>
-                      {!plan.qualified && plan.reason && (
+                      {!ladderPathReady && !plan.qualified && plan.reason && (
                         <p className="text-[11px] text-slate-500 mt-1 max-w-[140px] mx-auto" title={plan.reason}>
                           Buy ladder: {plan.reason}
                         </p>

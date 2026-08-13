@@ -785,6 +785,7 @@ export function computePortfolioPeriodPnLSummary(args: {
       sarPerUsd,
       simulatedPrices,
       accountAvailableCashByCurrency: cashBuckets,
+      datedFxData: data,
     });
 
     const siblingWeights =
@@ -829,6 +830,7 @@ export function computePortfolioPeriodPnLSummary(args: {
           simulatedPrices,
           platformCurrency: book,
           unrealizedPnLBasis: 'holdings_cost',
+          datedFxData: data,
         });
 
       const endValueSar = resolvePortfolioPeriodPnLEndValueSar({
@@ -1646,6 +1648,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
       sarPerUsd,
       simulatedPrices,
       accountAvailableCashByCurrency: cashBuckets,
+      datedFxData: data,
     });
 
     const siblingWeights =
@@ -1690,6 +1693,7 @@ export async function computePortfolioPeriodPnLSummaryAsync(
           simulatedPrices,
           platformCurrency: book,
           unrealizedPnLBasis: 'holdings_cost',
+          datedFxData: data,
         });
 
       const endValueSar = resolvePortfolioPeriodPnLEndValueSar({

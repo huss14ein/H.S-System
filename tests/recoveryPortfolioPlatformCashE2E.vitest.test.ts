@@ -94,6 +94,9 @@ describe('recovery portfolio platform cash — surface wiring', () => {
     expect(page).toContain('mapped portfolio');
     expect(page).toContain('Platform cash');
     expect(page).toContain('not linked to an Investment platform');
+    expect(page).toContain('First rung funded');
+    expect(page).toContain('Ladder funded');
+    expect(page).toContain('Cash deferred');
     expect(page).not.toContain('recoveryBudgetPct: globalConfig.recoveryBudgetPct');
     expect(page).not.toContain('This exceeds your total deployable cash shown above');
   });

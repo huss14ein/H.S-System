@@ -571,6 +571,8 @@ export function computePortfolioMetricsBundle(args: {
   simulatedPrices: SimulatedPriceMap;
   dailyPnLPrices?: SimulatedPriceMap;
   accountAvailableCashByCurrency: { SAR: number; USD: number };
+  /** Same dated FX path as platform cards / headline ROI capital. */
+  datedFxData?: FinancialData | null;
 }): PortfolioMetricsBundle {
   const {
     siblingPortfolios,
@@ -581,6 +583,7 @@ export function computePortfolioMetricsBundle(args: {
     simulatedPrices,
     dailyPnLPrices,
     accountAvailableCashByCurrency,
+    datedFxData = null,
   } = args;
 
   const metricsByPortfolioId = new Map<string, PlatformCardMetrics>();
@@ -607,6 +610,7 @@ export function computePortfolioMetricsBundle(args: {
         dailyPnLPrices,
         platformCurrency: pc,
         unrealizedPnLBasis: 'net_capital',
+        datedFxData,
       }),
     );
     return { metricsByPortfolioId, allocatedCashByPortfolioId };
@@ -641,6 +645,7 @@ export function computePortfolioMetricsBundle(args: {
         dailyPnLPrices,
         platformCurrency: pc,
         unrealizedPnLBasis: 'net_capital',
+        datedFxData,
       }),
     );
   }

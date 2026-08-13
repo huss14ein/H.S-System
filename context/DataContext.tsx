@@ -4236,6 +4236,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }));
         bumpHoldingsBookGeneration();
     };
+
+    /** Drop late holding writes after lot-sync timeout / generation bump. */
+    const guardedLotSyncWriters = (allowWrite: () => boolean) => ({
+        updateHolding: async (h: Parameters<typeof updateHolding>[0]) => {
+            if (!allowWrite()) return;
+            await updateHolding(h);
+        },
+        addHolding: async (h: Parameters<typeof addHolding>[0]) => {
+            if (!allowWrite()) return;
+            await addHolding(h);
+        },
+        deleteHolding: async (id: Parameters<typeof deleteHolding>[0]) => {
+            if (!allowWrite()) return;
+            await deleteHolding(id);
+        },
+        patchHoldingRealizedPnL: async (...pnlArgs: Parameters<typeof patchHoldingRealizedPnL>) => {
+            if (!allowWrite()) return;
+            await patchHoldingRealizedPnL(...pnlArgs);
+        },
+    });
+
     const restoreHoldingRowsAfterTradeRollback = async (args: {
         portfolioId: string;
         symbol: string;
@@ -4318,27 +4339,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (symbols.length === 0) {
             throw new Error('syncPortfolioAfterLedgerMutation requires at least one symbol.');
         }
-        await syncPortfolioLedgerAfterChange({
-            portfolio,
-            investmentTransactions: overrides.investmentTransactions ?? snapshot?.investmentTransactions ?? [],
-            corporateActionEvents: overrides.corporateActionEvents ?? snapshot?.corporateActionEvents ?? [],
-            updateHolding,
-            addHolding,
-            deleteHolding,
-            supabase,
-            userId,
-            holdingsBaselineMode: overrides.holdingsBaselineMode ?? 'replay_derived',
-            holdingsReplayEvents: overrides.holdingsReplayEvents,
-            symbols,
-            onLotsUpdated: (updatedLots) => {
-                applyFinancialDataPatch((prev) => ({
-                    ...prev,
-                    investmentCostLots: [
-                        ...updatedLots,
-                        ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
-                    ],
-                }));
-            },
+        await enqueueLotSyncWork(async ({ allowWrite }) => {
+            const writers = guardedLotSyncWriters(allowWrite);
+            const snap = dataRef.current;
+            const pf = (snap?.investments ?? []).find((p) => p.id === portfolioId) ?? portfolio;
+            await syncPortfolioLedgerAfterChange({
+                portfolio: pf,
+                investmentTransactions: overrides.investmentTransactions ?? snap?.investmentTransactions ?? [],
+                corporateActionEvents: overrides.corporateActionEvents ?? snap?.corporateActionEvents ?? [],
+                updateHolding: writers.updateHolding,
+                addHolding: writers.addHolding,
+                deleteHolding: writers.deleteHolding,
+                supabase,
+                userId,
+                holdingsBaselineMode: overrides.holdingsBaselineMode ?? 'replay_derived',
+                holdingsReplayEvents: overrides.holdingsReplayEvents,
+                symbols,
+                onLotsUpdated: (updatedLots) => {
+                    if (!allowWrite()) return;
+                    applyFinancialDataPatch((prev) => ({
+                        ...prev,
+                        investmentCostLots: [
+                            ...updatedLots,
+                            ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
+                        ],
+                    }));
+                },
+            });
         });
     };
 
@@ -4356,22 +4383,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!portfolio) throw new Error('Portfolio not found');
             const symbols = args.symbols.map((s) => String(s ?? '').trim().toUpperCase()).filter(Boolean);
             if (symbols.length === 0) throw new Error('Select at least one symbol to rebuild.');
-            const guardUpdateHolding = async (h: Parameters<typeof updateHolding>[0]) => {
-                if (!allowWrite()) return;
-                await updateHolding(h);
-            };
-            const guardAddHolding = async (h: Parameters<typeof addHolding>[0]) => {
-                if (!allowWrite()) return;
-                await addHolding(h);
-            };
-            const guardDeleteHolding = async (id: Parameters<typeof deleteHolding>[0]) => {
-                if (!allowWrite()) return;
-                await deleteHolding(id);
-            };
-            const guardPatchPnl = async (...pnlArgs: Parameters<typeof patchHoldingRealizedPnL>) => {
-                if (!allowWrite()) return;
-                await patchHoldingRealizedPnL(...pnlArgs);
-            };
+            const writers = guardedLotSyncWriters(allowWrite);
             await rebuildHoldingsFromLedger({
                 portfolio,
                 investmentTransactions: filterTransactionsForPortfolio(
@@ -4382,10 +4394,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 symbols,
                 existingLots: (snapshot?.investmentCostLots ?? []).filter((l) => l.portfolioId === args.portfolioId),
                 reconciliationAdjustments: snapshot?.reconciliationAdjustments ?? [],
-                updateHolding: guardUpdateHolding,
-                addHolding: guardAddHolding,
-                deleteHolding: guardDeleteHolding,
-                patchHoldingRealizedPnL: guardPatchPnl,
+                updateHolding: writers.updateHolding,
+                addHolding: writers.addHolding,
+                deleteHolding: writers.deleteHolding,
+                patchHoldingRealizedPnL: writers.patchHoldingRealizedPnL,
                 resolveHolding: (sym) => {
                     const pf = (dataRef.current?.investments ?? []).find((p) => p.id === args.portfolioId);
                     return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
@@ -4423,6 +4435,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const userId = auth.user.id;
         let patchedSymbols = 0;
         await enqueueLotSyncWork(async ({ allowWrite }) => {
+            const writers = guardedLotSyncWriters(allowWrite);
             const snap = dataRef.current;
             for (const portfolio of snap?.investments ?? []) {
                 try {
@@ -4430,9 +4443,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         portfolio,
                         investmentTransactions: snap?.investmentTransactions ?? [],
                         corporateActionEvents: snap?.corporateActionEvents ?? [],
-                        updateHolding,
-                        addHolding,
-                        patchHoldingRealizedPnL,
+                        updateHolding: writers.updateHolding,
+                        addHolding: writers.addHolding,
+                        patchHoldingRealizedPnL: writers.patchHoldingRealizedPnL,
                         resolveHolding: (sym) => {
                             const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolio.id);
                             return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
@@ -4934,6 +4947,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 symbols: string[];
             }) => {
                 await enqueueLotSyncWork(async ({ allowWrite }) => {
+                    const writers = guardedLotSyncWriters(allowWrite);
                     const snap = dataRef.current;
                     const portfolio = (snap?.investments ?? []).find((p) => p.id === portfolioId);
                     if (!portfolio || !auth?.user) return;
@@ -4947,8 +4961,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
                             return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
                         },
-                        updateHolding,
-                        patchHoldingRealizedPnL,
+                        updateHolding: writers.updateHolding,
+                        patchHoldingRealizedPnL: writers.patchHoldingRealizedPnL,
                         supabase,
                         userId: auth.user.id,
                         onLotsUpdated: (updatedLots) => {
@@ -5376,29 +5390,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 errorMessage = replayed.errorMessage ?? null;
                 const retryPortfolio = (snap.investments ?? []).find((p) => p.id === portfolioId);
                 if (status === 'completed' && retryPortfolio) {
-                    await syncLotsAfterTrade({
-                        portfolio: retryPortfolio,
-                        investmentTransactions: snap.investmentTransactions ?? [],
-                        corporateActionEvents: snap.corporateActionEvents ?? [],
-                        touchedSymbols: symbols,
-                        existingLots: (snap.investmentCostLots ?? []).filter((l) => l.portfolioId === portfolioId),
-                        resolveHolding: (sym) => {
-                            const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
-                            return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
-                        },
-                        updateHolding,
-                        patchHoldingRealizedPnL,
-                        supabase,
-                        userId: auth.user.id,
-                        onLotsUpdated: (updatedLots) => {
-                            applyFinancialDataPatch((prev) => ({
-                                ...prev,
-                                investmentCostLots: [
-                                    ...updatedLots,
-                                    ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
-                                ],
-                            }));
-                        },
+                    await enqueueLotSyncWork(async ({ allowWrite }) => {
+                        const writers = guardedLotSyncWriters(allowWrite);
+                        await syncLotsAfterTrade({
+                            portfolio: retryPortfolio,
+                            investmentTransactions: snap.investmentTransactions ?? [],
+                            corporateActionEvents: snap.corporateActionEvents ?? [],
+                            touchedSymbols: symbols,
+                            existingLots: (snap.investmentCostLots ?? []).filter((l) => l.portfolioId === portfolioId),
+                            resolveHolding: (sym) => {
+                                const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioId);
+                                return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
+                            },
+                            updateHolding: writers.updateHolding,
+                            patchHoldingRealizedPnL: writers.patchHoldingRealizedPnL,
+                            supabase,
+                            userId: auth.user.id,
+                            onLotsUpdated: (updatedLots) => {
+                                if (!allowWrite()) return;
+                                applyFinancialDataPatch((prev) => ({
+                                    ...prev,
+                                    investmentCostLots: [
+                                        ...updatedLots,
+                                        ...(prev.investmentCostLots ?? []).filter((l) => l.portfolioId !== portfolioId),
+                                    ],
+                                }));
+                            },
+                        });
                     });
                 }
             }
@@ -6307,6 +6325,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const userIdForLots = userId;
                 const runLotSync = async ({ allowWrite }: { allowWrite: () => boolean }) => {
                     try {
+                        const writers = guardedLotSyncWriters(allowWrite);
                         const snap = dataRef.current;
                         const portfolioAfter =
                             (snap?.investments ?? []).find((p) => p.id === portfolioIdForLots) ?? portfolio;
@@ -6322,8 +6341,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                 const pf = (dataRef.current?.investments ?? []).find((p) => p.id === portfolioIdForLots);
                                 return pf?.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym);
                             },
-                            updateHolding,
-                            patchHoldingRealizedPnL,
+                            updateHolding: writers.updateHolding,
+                            patchHoldingRealizedPnL: writers.patchHoldingRealizedPnL,
                             supabase: db,
                             userId: userIdForLots,
                             onLotsUpdated: (updatedLots) => {
@@ -6387,40 +6406,44 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         symbol: normalizedSymbol,
                         holdings: symbolHoldingsForTrade,
                     });
-                    const restoredPortfolio =
-                        (dataRef.current?.investments ?? []).find((candidate) => candidate.id === portfolio.id) ??
-                        portfolio;
-                    await syncLotsAfterTrade({
-                        portfolio: restoredPortfolio,
-                        investmentTransactions: dataRef.current?.investmentTransactions ?? [],
-                        corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
-                        touchedSymbols: [normalizedSymbol],
-                        existingLots: (dataRef.current?.investmentCostLots ?? []).filter(
-                            (lot) => lot.portfolioId === portfolio.id,
-                        ),
-                        resolveHolding: (sym) => {
-                            const currentPortfolio = (dataRef.current?.investments ?? []).find(
-                                (candidate) => candidate.id === portfolio.id,
-                            );
-                            return currentPortfolio?.holdings.find(
-                                (holding) => String(holding.symbol ?? '').toUpperCase() === sym,
-                            );
-                        },
-                        updateHolding,
-                        patchHoldingRealizedPnL,
-                        supabase: db,
-                        userId: userId,
-                        onLotsUpdated: (updatedLots) => {
-                            applyFinancialDataPatch((prev) => ({
-                                ...prev,
-                                investmentCostLots: [
-                                    ...updatedLots,
-                                    ...(prev.investmentCostLots ?? []).filter(
-                                        (lot) => lot.portfolioId !== portfolio.id,
-                                    ),
-                                ],
-                            }));
-                        },
+                    await enqueueLotSyncWork(async ({ allowWrite }) => {
+                        const writers = guardedLotSyncWriters(allowWrite);
+                        const restoredPortfolio =
+                            (dataRef.current?.investments ?? []).find((candidate) => candidate.id === portfolio.id) ??
+                            portfolio;
+                        await syncLotsAfterTrade({
+                            portfolio: restoredPortfolio,
+                            investmentTransactions: dataRef.current?.investmentTransactions ?? [],
+                            corporateActionEvents: dataRef.current?.corporateActionEvents ?? [],
+                            touchedSymbols: [normalizedSymbol],
+                            existingLots: (dataRef.current?.investmentCostLots ?? []).filter(
+                                (lot) => lot.portfolioId === portfolio.id,
+                            ),
+                            resolveHolding: (sym) => {
+                                const currentPortfolio = (dataRef.current?.investments ?? []).find(
+                                    (candidate) => candidate.id === portfolio.id,
+                                );
+                                return currentPortfolio?.holdings.find(
+                                    (holding) => String(holding.symbol ?? '').toUpperCase() === sym,
+                                );
+                            },
+                            updateHolding: writers.updateHolding,
+                            patchHoldingRealizedPnL: writers.patchHoldingRealizedPnL,
+                            supabase: db,
+                            userId: userId,
+                            onLotsUpdated: (updatedLots) => {
+                                if (!allowWrite()) return;
+                                applyFinancialDataPatch((prev) => ({
+                                    ...prev,
+                                    investmentCostLots: [
+                                        ...updatedLots,
+                                        ...(prev.investmentCostLots ?? []).filter(
+                                            (lot) => lot.portfolioId !== portfolio.id,
+                                        ),
+                                    ],
+                                }));
+                            },
+                        });
                     });
                     holdingsRollbackSucceeded = true;
                 } catch (holdingsRollbackError) {

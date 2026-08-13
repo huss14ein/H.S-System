@@ -3128,6 +3128,7 @@ const PlatformCardInner: React.FC<{
                 simulatedPrices: kpiQuotePrices,
                 dailyPnLPrices: throttledPrices,
                 accountAvailableCashByCurrency: availableCashByCurrency,
+                datedFxData: dataCtx ?? null,
             });
             if (aborted) return;
             startTransition(() => setPortfolioKpiBundle(bundle));
@@ -3141,7 +3142,7 @@ const PlatformCardInner: React.FC<{
         metricsSortedPortfolios,
         transactions,
         metricsTransactions,
-        dataCtx?.accounts,
+        dataCtx,
         investmentsForInfer,
         sarPerUsd,
         kpiQuotePrices,

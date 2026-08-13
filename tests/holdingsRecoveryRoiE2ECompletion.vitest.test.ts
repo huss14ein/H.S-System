@@ -88,21 +88,27 @@ describe('holdings + recovery + ROI end-to-end wiring', () => {
     expect(health).toContain('listMissingLedgerHoldingsAcrossPortfolios');
     expect(health).toContain('HOLDINGS_CRITICAL_MISSING');
     expect(health).toContain('Critical missing');
+    expect(health).toContain("focus-holdings-integrity");
+    expect(health).toContain('Open integrity');
   });
 
   it('platform cards pass dated FX data into capital math', () => {
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('datedFxData');
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('investmentTransactionCashAmountSarDated');
     expect(read('pages/Investments.tsx')).toContain('datedFxData: dataCtx');
+    expect(read('services/investmentPlatformCardMetrics.ts')).toMatch(
+      /computePortfolioMetricsBundle[\s\S]*datedFxData\?:/,
+    );
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('datedFxData: data');
     expect(read('components/RecoveryDecisionScorecard.tsx')).toContain('fundedLadderLevels');
   });
 
   it('Rebuild holding writes are generation-guarded (late timeout cannot mutate)', () => {
     const ctx = read('context/DataContext.tsx');
-    expect(ctx).toContain('guardUpdateHolding');
-    expect(ctx).toContain('guardAddHolding');
-    expect(ctx).toContain('guardDeleteHolding');
-    expect(ctx).toContain('updateHolding: guardUpdateHolding');
-    expect(ctx).toContain('addHolding: guardAddHolding');
+    expect(ctx).toContain('guardedLotSyncWriters');
+    expect(ctx).toContain('updateHolding: writers.updateHolding');
+    expect(ctx).toContain('addHolding: writers.addHolding');
+    expect(ctx).toContain('syncPortfolioAfterLedgerMutation');
+    expect(ctx).toContain('await enqueueLotSyncWork(async ({ allowWrite }) => {');
   });
 });
