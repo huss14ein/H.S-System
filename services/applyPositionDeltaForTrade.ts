@@ -3,10 +3,30 @@
  * Mutates only the traded symbol via DataContext mutators — never portfolio-wide replay.
  */
 import type { Holding } from '../types';
+import { roundAvgCostPerUnit } from '../utils/money';
 import {
   computePositionFieldsAfterTrade,
   type PositionDeltaSide,
 } from './holdingMath';
+
+function isManualFundHolding(holdingType?: Holding['holdingType'] | string | null): boolean {
+  return String(holdingType ?? '').trim().toLowerCase() === 'manual_fund';
+}
+
+/** Keep unit mark in sync with restated currentValue so qty × currentPrice cannot lag a statement. */
+function withManualUnitMark<T extends Pick<Holding, 'quantity' | 'currentValue'> & Partial<Holding>>(
+  holding: T,
+): T {
+  if (!isManualFundHolding(holding.holdingType)) return holding;
+  const qty = Number(holding.quantity) || 0;
+  const cv = Number(holding.currentValue) || 0;
+  if (!(qty > 0) || !Number.isFinite(cv) || cv < 0) return holding;
+  return {
+    ...holding,
+    currentPrice: roundAvgCostPerUnit(cv / qty),
+    priceUpdatedAt: new Date().toISOString(),
+  };
+}
 
 export type ApplyPositionDeltaForTradeArgs = {
   portfolioId: string;
@@ -48,36 +68,42 @@ export async function applyPositionDeltaForTrade(
     }
   }
 
+  const isManualFund =
+    isManualFundHolding(args.holdingType) || isManualFundHolding(args.existingHolding?.holdingType);
+  const statementRaw = Number(args.manualCurrentValue);
+  const statementValue =
+    args.manualCurrentValue != null && Number.isFinite(statementRaw) ? statementRaw : undefined;
+  // Statement / plan value is a restated TOTAL. Never pass it as currentValueAdd —
+  // that would add 500 onto 10k then overwrite currentValue with 500 on persist.
   const computed = computePositionFieldsAfterTrade({
     existing: args.existingHolding,
     side: args.side,
     quantity: qty,
     price: args.price,
     opts:
-      args.side === 'buy' && args.manualCurrentValue != null && Number.isFinite(args.manualCurrentValue)
-        ? { currentValueAdd: args.manualCurrentValue }
+      args.side === 'buy' && isManualFund && statementValue != null
+        ? { currentValueOverride: statementValue }
         : undefined,
   });
 
   const positionDelta = args.side === 'buy' ? qty : -qty;
 
   if (computed.action === 'create') {
-    await args.addHolding({
-      symbol,
-      name: args.name?.trim() || symbol,
-      quantity: computed.quantity,
-      avgCost: computed.avgCost,
-      currentValue:
-        args.manualCurrentValue != null && Number.isFinite(args.manualCurrentValue)
-          ? args.manualCurrentValue
-          : computed.currentValue,
-      zakahClass: 'Zakatable',
-      realizedPnL: 0,
-      assetClass: args.assetClass ?? 'Stock',
-      ...(args.holdingType ? { holdingType: args.holdingType } : {}),
-      ...(args.goalId ? { goalId: args.goalId } : {}),
-      portfolio_id: args.portfolioId,
-    } as Holding & { portfolio_id?: string });
+    await args.addHolding(
+      withManualUnitMark({
+        symbol,
+        name: args.name?.trim() || symbol,
+        quantity: computed.quantity,
+        avgCost: computed.avgCost,
+        currentValue: computed.currentValue,
+        zakahClass: 'Zakatable',
+        realizedPnL: 0,
+        assetClass: args.assetClass ?? 'Stock',
+        ...(args.holdingType ? { holdingType: args.holdingType } : {}),
+        ...(args.goalId ? { goalId: args.goalId } : {}),
+        portfolio_id: args.portfolioId,
+      } as Holding & { portfolio_id?: string }),
+    );
     return { action: 'create', positionDelta };
   }
 
@@ -94,19 +120,16 @@ export async function applyPositionDeltaForTrade(
   }
 
   if (!args.existingHolding?.id) throw new Error('Cannot update holding without an id.');
-  const next: Holding = {
+  const next: Holding = withManualUnitMark({
     ...args.existingHolding,
     quantity: computed.quantity,
     avgCost: computed.avgCost,
-    currentValue:
-      args.side === 'buy' && args.manualCurrentValue != null && Number.isFinite(args.manualCurrentValue)
-        ? args.manualCurrentValue
-        : computed.currentValue,
+    currentValue: computed.currentValue,
     ...(args.name?.trim() ? { name: args.name.trim() } : {}),
     ...(args.assetClass ? { assetClass: args.assetClass } : {}),
     ...(args.holdingType ? { holdingType: args.holdingType } : {}),
     ...(args.goalId ? { goalId: args.goalId } : {}),
-  };
+  });
   await args.updateHolding(next);
   return { action: 'update', positionDelta };
 }

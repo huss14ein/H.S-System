@@ -15,6 +15,25 @@ describe('investment buy into existing holding', () => {
     expect(r.avgCost).toBe(20);
     expect(r.currentValue).toBe(100);
   });
+
+  it('statement restates the plan total instead of adding the monthly contribution', () => {
+    const r = applyBuyToHolding(
+      { quantity: 1, avgCost: 10000, currentValue: 10000 },
+      1,
+      500,
+      { currentValueOverride: 10800 },
+    );
+    expect(r.quantity).toBe(2);
+    expect(r.avgCost).toBe(5250);
+    expect(r.currentValue).toBe(10800);
+  });
+
+  it('blank statement adds this contribution to the stored plan value', () => {
+    const r = applyBuyToHolding({ quantity: 1, avgCost: 10000, currentValue: 10000 }, 1, 500);
+    expect(r.quantity).toBe(2);
+    expect(r.avgCost).toBe(5250);
+    expect(r.currentValue).toBe(10500);
+  });
 });
 
 describe('duplicate symbol consolidation', () => {

@@ -304,9 +304,79 @@ describe('missing holdings vs trade log', () => {
     const panel = read('components/investments/HoldingsQtyIntegrityPanel.tsx');
     expect(panel).toContain('Restore holding');
     expect(panel).toContain('Restore all missing holdings');
+    expect(panel).toContain('Keep closed');
     expect(panel).toContain('listMissingLedgerHoldingsAcrossPortfolios');
     expect(panel).toContain('likelyOpen');
     expect(panel).toContain('Critical: trades on ledger, missing holding');
+    expect(panel).toContain('broker is flat');
+  });
+
+  it('rebuildHoldingsFromLedger restores missing ATYR from buy−sell residual', async () => {
+    const { rebuildHoldingsFromLedger } = await import('../services/portfolioLedgerSync');
+    const portfolio: InvestmentPortfolio = {
+      id: 'pf-awaed',
+      name: "Hussein's Awaed",
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [
+        {
+          id: 'h-msft',
+          symbol: 'MSFT',
+          quantity: 5,
+          avgCost: 100,
+          currentValue: 500,
+          zakahClass: 'Zakatable',
+        },
+      ],
+    };
+    const txs: InvestmentTransaction[] = [
+      {
+        id: 'b1',
+        portfolioId: 'pf-awaed',
+        accountId: 'acc1',
+        date: '2026-01-01',
+        type: 'buy',
+        symbol: 'ATYR',
+        quantity: 1000,
+        price: 1,
+        total: 1000,
+      },
+      {
+        id: 's1',
+        portfolioId: 'pf-awaed',
+        accountId: 'acc1',
+        date: '2026-06-01',
+        type: 'sell',
+        symbol: 'ATYR',
+        quantity: 593,
+        price: 1,
+        total: 593,
+      },
+    ];
+    const added: Array<{ symbol: string; quantity: number }> = [];
+    await rebuildHoldingsFromLedger({
+      portfolio,
+      investmentTransactions: txs,
+      corporateActionEvents: [],
+      symbols: ['ATYR'],
+      updateHolding: async () => {},
+      addHolding: async (h) => {
+        added.push({ symbol: String(h.symbol), quantity: Number(h.quantity) || 0 });
+        portfolio.holdings.push({
+          id: 'h-atyR',
+          symbol: 'ATYR',
+          quantity: Number(h.quantity) || 0,
+          avgCost: Number(h.avgCost) || 0,
+          currentValue: Number(h.currentValue) || 0,
+          zakahClass: 'Zakatable',
+        });
+      },
+      deleteHolding: async () => {},
+      resolveHolding: (sym) =>
+        portfolio.holdings.find((h) => String(h.symbol ?? '').toUpperCase() === sym),
+    });
+    expect(added).toEqual([{ symbol: 'ATYR', quantity: 407 }]);
+    expect(classifyMissingLedgerHoldings({ portfolio, transactions: txs })).toEqual([]);
   });
 
   it('transaction log shows portfolio column for scope clarity', () => {

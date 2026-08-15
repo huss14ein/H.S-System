@@ -2,7 +2,7 @@
  * Unacked Checking/Savings/Credit balance-vs-ledger warnings with Keep stored balance.
  * Dismissals sync via settings.ui_acks (same fingerprint family as Reconcile Balance Apply).
  */
-import React, { useContext, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { DataContext } from '../../context/DataContext';
 import { toast } from '../../context/ToastContext';
@@ -14,6 +14,7 @@ import {
   acknowledgeCashBalanceDriftDurable,
   filterUnackedCashDriftWarnings,
   resolveCashBalanceDriftAcks,
+  type CashBalanceDriftAckMap,
 } from '../../services/uiAcks';
 import { getPersonalAccounts, getPersonalTransactions } from '../../utils/wealthScope';
 import type { Account } from '../../types';
@@ -35,12 +36,18 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
   const userId = auth?.user?.id ?? null;
   const [busyId, setBusyId] = useState<string | null>(null);
   const busyLockRef = useRef(false);
+  const [acks, setAcks] = useState<CashBalanceDriftAckMap>(() =>
+    resolveCashBalanceDriftAcks(userId, data?.settings),
+  );
+
+  useEffect(() => {
+    setAcks(resolveCashBalanceDriftAcks(userId, data?.settings, { writeThrough: true }));
+  }, [userId, data?.settings?.uiAcks]);
 
   const rows = useMemo(() => {
     if (!data) return [];
     const accounts = getPersonalAccounts(data) as Account[];
     const txs = getPersonalTransactions(data);
-    const acks = resolveCashBalanceDriftAcks(userId, data.settings);
     const raw = accounts
       .filter((a) => a.type === 'Checking' || a.type === 'Savings' || a.type === 'Credit')
       .map((a) => {
@@ -57,7 +64,7 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
       })
       .filter((x): x is NonNullable<typeof x> => x != null);
     return filterUnackedCashDriftWarnings(raw, acks);
-  }, [userId, data?.settings?.uiAcks, data?.accounts, data?.transactions]);
+  }, [acks, data?.accounts, data?.transactions]);
 
   if (!data || rows.length === 0 || !ctx?.updateSettings) return null;
 
@@ -67,7 +74,7 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
     setBusyId(row.accountId);
     void (async () => {
       try {
-        await acknowledgeCashBalanceDriftDurable({
+        const next = await acknowledgeCashBalanceDriftDurable({
           userId,
           accountId: row.accountId,
           storedBalance: row.storedBalance,
@@ -78,6 +85,7 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
             await ctx.updateSettings({ uiAcks: partial });
           },
         });
+        setAcks(next);
         toast(`Kept stored balance for ${row.label} — warning dismissed until drift changes.`, 'success');
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Could not save dismissal.', 'error');
@@ -97,7 +105,7 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
       <p className="text-xs text-amber-900/90 mb-3 leading-relaxed">
         Stored balance does not match Σ(transactions). Use <span className="font-semibold">Reconcile</span> to post an
         audited delta, or <span className="font-semibold">Keep stored balance</span> if the bank book is correct and
-        history is incomplete — dismissals sync across devices.
+        history is incomplete — dismissals sync across devices and stay until the stored balance or ledger net changes.
       </p>
       <ul className="space-y-2">
         {rows.slice(0, 8).map((r) => (
