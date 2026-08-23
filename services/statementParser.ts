@@ -416,7 +416,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
         
         if (amount > 0 && description && !/(balance|رصيد)/i.test(description)) {
           const canonicalDescription = canonicalizeTransactionDescription(description);
-          let date = parseDate(dateStr || formatLocalYmd(new Date()));
+          let date = parseSmsDate(dateStr || formatLocalYmd(new Date()));
           if (Number.isNaN(date.getTime())) date = new Date();
           const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
           const category = inferCategoryForSignedAmount(canonicalDescription, signed);
@@ -450,10 +450,10 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
     if (!Number.isFinite(amount) || amount <= 0) return;
 
     const dateMatch = block.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/);
-    let parsedDate = parseDate(String(dateMatch?.[1] ?? '').replace(/\./g, '/'));
+    let parsedDate = parseSmsDate(String(dateMatch?.[1] ?? '').replace(/\./g, '/'));
     if (Number.isNaN(parsedDate.getTime())) {
       const fb = extractFirstSmsDateInBlock(block).replace(/\./g, '/');
-      parsedDate = fb ? parseDate(fb) : parsedDate;
+      parsedDate = fb ? parseSmsDate(fb) : parsedDate;
     }
     const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
 
@@ -493,8 +493,8 @@ function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string)
     const window = [lines[i], lines[i - 1], lines[i - 2], lines[i + 1]].filter(Boolean).join('\n');
     const amount = extractSmsAmount(window);
     if (!Number.isFinite(amount) || amount <= 0) continue;
-    let parsedDate = parseDate(lines[i].replace(/\./g, '/'));
-    if (Number.isNaN(parsedDate.getTime())) parsedDate = parseDate(extractFirstSmsDateInBlock(window).replace(/\./g, '/'));
+    let parsedDate = parseSmsDate(lines[i].replace(/\./g, '/'));
+    if (Number.isNaN(parsedDate.getTime())) parsedDate = parseSmsDate(extractFirstSmsDateInBlock(window).replace(/\./g, '/'));
     const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
     const descLine =
       [lines[i - 1], lines[i - 2], lines[i + 1]]
@@ -693,7 +693,7 @@ function extractTransactionsFromSmsDateAnchors(smsText: string, accountId: strin
     if (!Number.isFinite(amount) || amount <= 0) continue;
 
     const rawDate = String(current[2] || '').replace(/\./g, '/');
-    const parsedDate = parseDate(rawDate);
+    const parsedDate = parseSmsDate(rawDate);
     const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
     const description = canonicalizeTransactionDescription(extractSmsDescription(segment, i));
     const isDebit = /(debited|withdrawn|purchase|payment|paid|spent|شراء|سحب|خصم|دفع|نقاط البيع|شراء عبر)/i.test(segment);
@@ -763,7 +763,7 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
 
     let dateRaw = extractSmsNearestDateBefore(smsText, at);
     if (!dateRaw) dateRaw = extractFirstSmsDateInBlock(segment);
-    const parsedDate = parseDate(dateRaw);
+    const parsedDate = parseSmsDate(dateRaw);
     const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
 
     const description = canonicalizeTransactionDescription(extractSmsDescription(segment, idx));
@@ -908,7 +908,8 @@ Only return valid JSON, no other text.`;
     const parsed = JSON.parse(jsonMatch[0]);
     
     return parsed.map((tx: any) => {
-      const parsedDate = parseDate(String(tx.date || ''));
+      const parseFn = source === 'sms' ? parseSmsDate : parseDate;
+      const parsedDate = parseFn(String(tx.date || ''));
       const date = Number.isNaN(parsedDate.getTime()) ? formatLocalYmd(new Date()) : formatLocalYmd(parsedDate);
       return ({
       id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -1672,6 +1673,79 @@ function parseDate(dateStr: string): Date {
   return new Date(NaN);
 }
 
+/** Pull the date token out of SMS lines that include time or Arabic trailing في. */
+function extractSmsDateToken(raw: string): string {
+  const trimmed = String(raw || '').trim();
+  const iso = trimmed.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (iso) return iso[1];
+  const dmy = trimmed.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\b/);
+  return dmy ? dmy[1].replace(/\./g, '/') : trimmed;
+}
+
+/**
+ * Parse dates from bank SMS. Hyphen-separated tokens like `26-08-10` are often YY-MM-DD
+ * (2026-08-10) in Arabic/RTL Alinma-style messages — not DD-MM-YY (2010-08-26).
+ * Slash/dot formats stay DD/MM/YY (KSA convention).
+ */
+function parseSmsDate(dateStr: string, refDate = new Date()): Date {
+  const token = extractSmsDateToken(dateStr);
+  const trimmed = token.trim();
+  if (!trimmed) return new Date(NaN);
+
+  const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const d = new Date(parseInt(iso[1], 10), parseInt(iso[2], 10) - 1, parseInt(iso[3], 10));
+    return Number.isNaN(d.getTime()) ? new Date(NaN) : d;
+  }
+
+  const parts = trimmed.match(/^(\d{1,2})([\/\.-])(\d{1,2})\2(\d{2,4})$/);
+  if (!parts) return new Date(NaN);
+
+  const sep = parts[2];
+  const a = parseInt(parts[1], 10);
+  const b = parseInt(parts[3], 10);
+  const yRaw = parts[4];
+  const refYear = refDate.getFullYear();
+  const candidates: Date[] = [];
+
+  const addCandidate = (year: number, month: number, day: number) => {
+    const d = new Date(year, month - 1, day);
+    if (
+      !Number.isNaN(d.getTime()) &&
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    ) {
+      candidates.push(d);
+    }
+  };
+
+  const yearFromThird = parseInt(yRaw.length === 2 ? `20${yRaw}` : yRaw, 10);
+  addCandidate(yearFromThird, b, a);
+
+  if (sep === '-' && yRaw.length === 2 && a >= 20 && a <= 99 && b >= 1 && b <= 12) {
+    addCandidate(2000 + a, b, parseInt(yRaw, 10));
+  }
+
+  const minYear = refYear - 15;
+  const maxYear = refYear + 1;
+  const plausible = candidates.filter((d) => {
+    const y = d.getFullYear();
+    return y >= minYear && y <= maxYear;
+  });
+  const pool = plausible.length > 0 ? plausible : candidates;
+  if (pool.length === 0) return new Date(NaN);
+  if (pool.length === 1) return pool[0];
+
+  pool.sort((x, y) => {
+    const dx = Math.abs(x.getTime() - refDate.getTime());
+    const dy = Math.abs(y.getTime() - refDate.getTime());
+    if (dx !== dy) return dx - dy;
+    return y.getTime() - x.getTime();
+  });
+  return pool[0];
+}
+
 function inferCategory(
   description: string,
   opts?: { amount?: number; type?: Transaction['type'] },
@@ -2003,7 +2077,7 @@ function dedupeTxByDateAmount(rows: Transaction[]): Transaction[] {
 
 function normalizeTransactionsDateConvention(transactions: Transaction[]): Transaction[] {
   return transactions.map((tx) => {
-    const parsed = parseDate(String(tx.date || ''));
+    const parsed = parseSmsDate(String(tx.date || ''));
     const date = Number.isNaN(parsed.getTime()) ? formatLocalYmd(new Date()) : formatLocalYmd(parsed);
     return { ...tx, date };
   });

@@ -204,4 +204,27 @@ SAR مبلغ:50.00
     expect(descs.some((d) => d.includes('CAFE'))).toBe(true);
     expect(descs.some((d) => d.includes('JARIR'))).toBe(true);
   });
+
+  it('parses Alinma-style hyphen dates as YY-MM-DD when DD-MM-YY would land in 2010', async () => {
+    const sms = `144.25 SAR - Apple Pay شراء إنترنت
+بطاقة ائتمانية *3282
+من : Tamara - SA
+في 13:25 26-08-10
+1,183.48 الرصيد`;
+    const res = await parseSMSTransactions(sms, 'acc-alinma');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    expect(res.transactions[0].date).toBe('2026-08-10');
+    expect(res.transactions[0].amount).toBeCloseTo(-144.25, 2);
+    expect(res.warnings?.some((w) => w.includes('Very old date'))).not.toBe(true);
+  });
+
+  it('still parses visual DD-MM-YY hyphen dates (10-08-26)', async () => {
+    const sms = `144.25 SAR - Apple Pay شراء إنترنت
+من : Tamara - SA
+10-08-26 13:25 في
+1,183.48 الرصيد`;
+    const res = await parseSMSTransactions(sms, 'acc-alinma-visual');
+    expect(res.transactions.length).toBeGreaterThan(0);
+    expect(res.transactions[0].date).toBe('2026-08-10');
+  });
 });
