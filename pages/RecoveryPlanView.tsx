@@ -643,9 +643,15 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
   }, [unifiedDraftOrders, unifiedRecoveryPlan?.pendingDrafts, recyclingDraftOrders, draftOrders]);
 
   useEffect(() => {
-    if (selectedHoldingId || rankedDecisions.length === 0) return;
-    setSelectedHoldingId(rankedDecisions[0].holdingId);
-  }, [rankedDecisions, selectedHoldingId]);
+    if (selectedHoldingId || losingPositions.length === 0) return;
+    if (rankedDecisions.length > 0) {
+      setSelectedHoldingId(rankedDecisions[0].holdingId);
+      return;
+    }
+    const prefer =
+      losingPositions.find((p) => p.plan.qualified || p.recyclingSummary?.planAvailable) ?? losingPositions[0];
+    setSelectedHoldingId(prefer.holding.id);
+  }, [rankedDecisions, losingPositions, selectedHoldingId]);
 
   useEffect(() => {
     if (pageAction !== 'focus-recovery-decision') return;

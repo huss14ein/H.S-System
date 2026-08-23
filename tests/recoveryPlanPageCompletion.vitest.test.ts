@@ -58,5 +58,6 @@ describe('recovery plan page accuracy wiring', () => {
     expect(page).toContain('platformDeployableCashBook');
     expect(page).toContain('recoveryBudgetByAccountId');
     expect(page).toContain('buildRecoveryBudgetByAccountId');
+    expect(page).toContain('losingPositions.find((p) => p.plan.qualified || p.recyclingSummary?.planAvailable)');
   });
 });
