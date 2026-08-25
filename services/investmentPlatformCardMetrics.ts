@@ -212,12 +212,6 @@ function computePlatformCardMetricsFromPortfolioBundle(
       : platformCurrency === 'USD'
         ? totalValueInSAR / rate
         : totalValueInSAR;
-  const netCapital =
-    platformCurrency === 'SAR'
-      ? netCapitalSAR
-      : platformCurrency === 'USD'
-        ? netCapitalSAR / rate
-        : netCapitalSAR;
   const totalGainLoss =
     platformCurrency === 'SAR'
       ? totalGainLossSAR
