@@ -112,8 +112,9 @@ describe('security / lag hardening completion', () => {
     expect(proxy).toContain('isAuthError');
     expect(proxy).toContain('MAX_GEMINI_MODELS_TO_TRY');
     expect(proxy).toContain('Same API key will fail every model');
-    expect(proxy).toMatch(/healthMode[\s\S]*anyProviderConfigured[\s\S]*\}\);/);
-    expect(proxy).not.toMatch(/healthMode[\s\S]*providers:\s*\{/);
+    expect(proxy).toContain('Unauthenticated health must not enumerate which providers are wired');
+    expect(proxy).toContain('anyProviderConfigured');
+    expect(proxy).not.toMatch(/if \(healthMode\) \{[\s\S]*providers:\s*\{/);
   });
 
   it('Supabase gemini-proxy health omits provider enumeration', () => {
