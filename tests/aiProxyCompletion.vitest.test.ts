@@ -31,6 +31,8 @@ describe('AI proxy completion — CORS + health + UI', () => {
     expect(src).toContain('corsHeaders(event, { health: true })');
     expect(src).toContain('GEMINI_MODEL_FALLBACKS');
     expect(src).toContain('gemini-3-flash-preview');
+    expect(src).toContain('MAX_GEMINI_MODELS_TO_TRY');
+    expect(src).toContain('isAuthError');
   });
 
   it('corsAllowlist allows same Host as Origin without ALLOWED_ORIGINS env', () => {

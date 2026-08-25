@@ -25,8 +25,13 @@ function corsHeaders(event: HandlerEvent, opts?: { health?: boolean }): Record<s
 
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
 const FALLBACK_MODEL = 'gemini-3-flash-preview';
-/** Extra Gemini models to try after the request + primary fallback (API keys often lose access to older flash ids). */
-const GEMINI_MODEL_FALLBACKS = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash'] as const;
+/**
+ * Extra Gemini models to try after the request + primary fallback.
+ * Kept short so a dead cascade cannot hang near the client proxy timeout (~28s).
+ */
+const GEMINI_MODEL_FALLBACKS = ['gemini-3-flash-preview'] as const;
+/** Hard cap: requested model + at most one fallback. */
+const MAX_GEMINI_MODELS_TO_TRY = 2;
 
 type NormalizedResponse = {
   text: string | null;
@@ -44,6 +49,14 @@ function isModelError(err: unknown): boolean {
   return (
     /model|404|not found|invalid model|unsupported/i.test(msg) ||
     (msg.includes('400') && /model|name/i.test(msg))
+  );
+}
+
+/** Auth/key failures will not succeed on another model with the same key — fail fast. */
+function isAuthError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /api.?key|invalid.?key|API_KEY_INVALID|401|permission.?denied|unauthenticated|unauthorized|PERMISSION_DENIED/i.test(
+    msg,
   );
 }
 
@@ -105,7 +118,10 @@ async function callGemini(
   const modelsToTry = [
     requestedModel,
     ...GEMINI_MODEL_FALLBACKS.filter((m) => m !== requestedModel),
-  ];
+    ...(requestedModel !== FALLBACK_MODEL ? [FALLBACK_MODEL] : []),
+  ]
+    .filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i)
+    .slice(0, MAX_GEMINI_MODELS_TO_TRY);
   let lastError: unknown = null;
   for (const model of modelsToTry) {
     try {
@@ -118,18 +134,15 @@ async function callGemini(
       };
     } catch (err) {
       lastError = err;
-      // Try next model on model/404 errors; on quota/auth still try other models once then throw.
-      if (!isModelError(err) && !isQuotaError(err) && modelsToTry.indexOf(model as typeof modelsToTry[number]) === 0) {
-        // Non-model error on primary — still attempt fallbacks (some keys reject specific model ids as 400).
+      // Same API key will fail every model — do not burn the client timeout.
+      if (isAuthError(err)) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
+      // Model/quota: try next (capped). Other errors: still allow one fallback then stop.
+      if (isModelError(err) || isQuotaError(err)) {
         continue;
       }
-      if (!isModelError(err) && !isQuotaError(err) && model !== FALLBACK_MODEL) {
-        continue;
-      }
-      if (isQuotaError(err)) {
-        // Exhaust model list on quota too — different models sometimes share quota; then throw.
-        continue;
-      }
+      continue;
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Gemini invocation failed'));
@@ -355,18 +368,13 @@ const handler: Handler = async (event: HandlerEvent) => {
       const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
       const anyProviderConfigured =
         geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
+      // Unauthenticated health must not enumerate which providers are wired (info disclosure).
       return {
         statusCode: 200,
         headers: { ...corsHeaders(event, { health: true }), "Content-Type": "application/json" },
         body: JSON.stringify({
           ok: true,
           anyProviderConfigured,
-          providers: {
-            gemini: { configured: geminiConfigured, primaryConfigured: Boolean(primaryApiKey), backupConfigured: Boolean(backupApiKey) },
-            anthropic: { configured: anthropicConfigured },
-            grok: { configured: grokConfigured, keyPresent: grokKeyPresent, skippedByEnv: grokKeyPresent && isGrokDisabled() },
-            openai: { configured: openaiConfigured },
-          },
         }),
       };
     }

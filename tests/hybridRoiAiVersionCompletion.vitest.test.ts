@@ -168,6 +168,8 @@ describe('hybrid ROI E2E completion across system surfaces', () => {
     expect(proxy).toContain('GEMINI_MODEL_FALLBACKS');
     expect(proxy).toContain('gemini-3-flash-preview');
     expect(proxy).toContain("FALLBACK_MODEL = 'gemini-3-flash-preview'");
+    expect(proxy).toContain('MAX_GEMINI_MODELS_TO_TRY');
+    expect(proxy).toContain('isAuthError');
   });
 
   it('AI surfaces gate on aiActionsEnabled (LiveAdvisor, Watchlist, Commodities, Assets)', () => {

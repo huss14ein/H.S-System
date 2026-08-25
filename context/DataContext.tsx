@@ -5193,7 +5193,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                   const fresh = dataRef.current ?? data;
                   if (fresh) {
                     const rate = resolveSarPerUsd(fresh);
-                    const b = computePersonalInvestmentKpiBreakdown(fresh, rate, getAvailableCashForAccount);
+                    const b = computePersonalInvestmentKpiBreakdown(fresh, rate, getAvailableCashForAccount, {}, {
+                      includePlatformHybridNets: false,
+                    });
                     let brokerageCashRawSar = 0;
                     for (const account of fresh.accounts ?? []) {
                       if (account.type !== 'Investment') continue;

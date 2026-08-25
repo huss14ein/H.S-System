@@ -160,11 +160,24 @@ function extractErrorMessageParts(error: any): string[] {
     return [...new Set(parts)];
 }
 
+/** Strip secrets / huge provider dumps before showing AI errors in the UI. */
+function sanitizeAiErrorLeak(raw: string): string {
+    let s = String(raw ?? '');
+    s = s.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+    s = s.replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted-key]');
+    s = s.replace(/sk-[a-zA-Z0-9_-]{20,}/g, '[redacted-key]');
+    s = s.replace(/xai-[a-zA-Z0-9_-]{20,}/g, '[redacted-key]');
+    s = s.replace(/("?(?:api[_-]?key|authorization)"?\s*[:=]\s*)"[^"]+"/gi, '$1"[redacted]"');
+    s = s.replace(/request_id["']?\s*[:=]\s*["'][^"']+["']/gi, 'request_id=[redacted]');
+    if (s.length > 280) s = `${s.slice(0, 280)}…`;
+    return s;
+}
+
 export function formatAiError(error: any): string {
     console.error("Error from AI Service:", error);
     const messageParts = extractErrorMessageParts(error);
     let message = messageParts[0] || String(error ?? '');
-    const mergedMessage = messageParts.join(' | ') || message;
+    const mergedMessage = sanitizeAiErrorLeak(messageParts.join(' | ') || message);
     // Anthropic / Claude "no credits" (show friendly copy; hide request_id / raw JSON)
     if (/credit balance is too low|insufficient credits|Please go to Plans & Billing/i.test(mergedMessage)) {
         return [
@@ -186,7 +199,7 @@ export function formatAiError(error: any): string {
                         "Add credits/billing for the current provider, or configure another provider key (Gemini/OpenAI/Anthropic) on the backend.",
                     ].join(' ');
                 }
-                return `AI Service Error: ${innerMsg.trim()}`;
+                return `AI Service Error: ${sanitizeAiErrorLeak(innerMsg.trim())}`;
             }
         } catch {
             // fall through to existing formatter
@@ -218,7 +231,7 @@ export function formatAiError(error: any): string {
     if (/GROK_ACCOUNT_NOT_USABLE|Grok \(xAI\)|xAI Grok returned|console\.x\.ai|no credits or licenses|does not have permission to execute/i.test(mergedMessage)) {
         return `Grok (xAI) isn’t usable for this team yet (credits or license). Add billing at https://console.x.ai or set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in Netlify so AI runs on another provider. You can also set GROK_DISABLED=1 to skip Grok without removing the key.`;
     }
-    if (/API key not valid/i.test(mergedMessage)) {
+    if (/API key not valid|API_KEY_INVALID|invalid.?api.?key/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
     }
     if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(mergedMessage)) {
@@ -228,9 +241,9 @@ export function formatAiError(error: any): string {
         return "Could not reach the AI service (network). Check your connection, stay on the Finova site, and try again. If this persists after a refresh, the AI proxy may be warming up — wait a few seconds and retry.";
     }
     if (/model|404|not found|invalid model|unsupported/i.test(mergedMessage)) {
-        return `There was an issue with the specified AI model. ${mergedMessage}`;
+        return "There was an issue with the specified AI model. Please try again — the proxy will attempt a supported fallback.";
     }
-    if (mergedMessage) return `AI Service Error: ${mergedMessage}`;
+    if (mergedMessage) return `AI Service Error: ${sanitizeAiErrorLeak(mergedMessage)}`;
     return "An unknown error occurred while communicating with the AI service.";
 }
 

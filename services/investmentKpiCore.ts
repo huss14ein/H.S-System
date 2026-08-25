@@ -21,7 +21,6 @@ import {
 } from './investmentCapitalAge';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
-  computePersonalPlatformsRollupSAR,
   computePersonalCommoditiesContributionSAR,
   computePersonalPlatformCardRow,
 } from './investmentPlatformCardMetrics';
@@ -111,6 +110,20 @@ export type PersonalInvestmentKpiBreakdown = PersonalInvestmentKpisSar & {
   expectedCashFromLedgerDatedSar: number;
   /** True when incomplete-books cost+cash raised net invested (or mixed sleeves floored). */
   economicFloorApplied: boolean;
+  /**
+   * Platforms holdings+cash rollup from the same hybrid card pass (avoid a second full platform scan).
+   * Zero when `includePlatformHybridNets` is false.
+   */
+  platformsRollupSar: number;
+  platformsDailyPnLSar: number;
+};
+
+export type PersonalInvestmentKpiBreakdownOptions = {
+  /**
+   * Default true. When false, skip per-platform card hybrid nets (use scoped legacy capital only).
+   * Use for cash-drift / ledger-flow callers that do not need ROI denominators.
+   */
+  includePlatformHybridNets?: boolean;
 };
 
 /**
@@ -148,6 +161,7 @@ export function computePersonalInvestmentKpiBreakdown(
   sarPerUsd: number,
   getAvailableCashForAccount: GetAvailableCashFn,
   simulatedPrices: SimulatedPriceMap = {},
+  options?: PersonalInvestmentKpiBreakdownOptions,
 ): PersonalInvestmentKpiBreakdown {
   const d = data as FinancialData & {
     personalAccounts?: Account[];
@@ -267,22 +281,30 @@ export function computePersonalInvestmentKpiBreakdown(
    * Hybrid net invested: sum of per-platform card nets (each multi-portfolio platform floors
    * incomplete sibling sleeves at cost + cash). Avoids counting only Awaed deposits while PV
    * includes every portfolio’s market value.
+   * Same pass also captures platforms rollup + daily P/L so headline ROI does not scan twice.
    */
+  const includeHybrid = options?.includePlatformHybridNets !== false;
   const getCashForRow = (accountId: string) => {
     const c = getAvailableCashForAccount(accountId);
     return { SAR: c?.SAR ?? 0, USD: c?.USD ?? 0 };
   };
   let hybridNetCapitalSar = 0;
   let hybridTotalInvestedSar = 0;
-  for (const account of accounts) {
-    if (account.type !== 'Investment' || !personalAccountIds.has(account.id)) continue;
-    const m = computePersonalPlatformCardRow(account, data, {
-      sarPerUsd,
-      simulatedPrices: simulatedPrices ?? {},
-      getAvailableCashForAccount: getCashForRow,
-    });
-    hybridNetCapitalSar += m.netCapitalSAR;
-    hybridTotalInvestedSar += m.totalInvestedSAR;
+  let platformsRollupSar = 0;
+  let platformsDailyPnLSar = 0;
+  if (includeHybrid) {
+    for (const account of accounts) {
+      if (account.type !== 'Investment' || !personalAccountIds.has(account.id)) continue;
+      const m = computePersonalPlatformCardRow(account, data, {
+        sarPerUsd,
+        simulatedPrices: simulatedPrices ?? {},
+        getAvailableCashForAccount: getCashForRow,
+      });
+      hybridNetCapitalSar += m.netCapitalSAR;
+      hybridTotalInvestedSar += m.totalInvestedSAR;
+      platformsRollupSar += m.totalValueInSAR;
+      platformsDailyPnLSar += m.dailyPnLSAR;
+    }
   }
 
   const depositsOnlyNetSar = Math.max(0, depositsRecordedSar - totalWithdrawnSar);
@@ -297,16 +319,23 @@ export function computePersonalInvestmentKpiBreakdown(
   });
 
   let capitalSource: InvestmentCapitalSource = scopedLegacy.capitalSource;
-  if (depositsRecordedSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
+  if (includeHybrid && depositsRecordedSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
     capitalSource =
       hybridNetCapitalSar > depositsOnlyNetSar + 1 ? 'mixed' : 'deposits';
+  } else if (!includeHybrid) {
+    capitalSource = scopedLegacy.capitalSource;
   }
 
-  const totalInvestedSar = hybridTotalInvestedSar > 0 ? hybridTotalInvestedSar : scopedLegacy.totalInvestedSar;
-  const netCapitalSar =
-    hybridNetCapitalSar > 0 || depositsRecordedSar > 0 || holdingsCostBasisSar > 0
+  const totalInvestedSar = includeHybrid
+    ? hybridTotalInvestedSar > 0
+      ? hybridTotalInvestedSar
+      : scopedLegacy.totalInvestedSar
+    : scopedLegacy.totalInvestedSar;
+  const netCapitalSar = includeHybrid
+    ? hybridNetCapitalSar > 0 || depositsRecordedSar > 0 || holdingsCostBasisSar > 0
       ? Math.max(0, hybridNetCapitalSar)
-      : scopedLegacy.netCapitalSar;
+      : scopedLegacy.netCapitalSar
+    : scopedLegacy.netCapitalSar;
   const economicDeployedSar = Math.max(0, holdingsCostBasisSar + brokerageCashSar);
   const economicFloorApplied =
     capitalSource === 'mixed' ||
@@ -341,6 +370,8 @@ export function computePersonalInvestmentKpiBreakdown(
     expectedCashFromLedgerSpotSar,
     expectedCashFromLedgerDatedSar,
     economicFloorApplied,
+    platformsRollupSar,
+    platformsDailyPnLSar,
   };
 }
 
@@ -487,7 +518,7 @@ export type HeadlinePersonalInvestmentRoi = {
 
 /**
  * Single headline ROI path for Dashboard, Investments hub, and monthly KPI reconciliation.
- * Uses `computePersonalPlatformsRollupSAR` (same as Investments cards), not raw `getAllInvestmentsValueInSAR`.
+ * Reuses platform rollup from the hybrid breakdown pass (same as Investments cards) — no second platform scan.
  */
 export function computeHeadlinePersonalInvestmentRoiDecimal(
   data: FinancialData,
@@ -501,14 +532,8 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     getAvailableCashForAccount,
     simulatedPrices,
   );
-  const getCash = getAvailableCashForAccount as (id: string) => { SAR: number; USD: number };
-
-  const { subtotalSAR: platformsRollupSar, dailyPnLSAR: platformsDailyPnLSar } = computePersonalPlatformsRollupSAR(
-    data,
-    sarPerUsd,
-    simulatedPrices,
-    getCash,
-  );
+  const platformsRollupSar = breakdown.platformsRollupSar;
+  const platformsDailyPnLSar = breakdown.platformsDailyPnLSar;
   const {
     valueSAR: commoditiesValueSar,
     dailyDeltaSAR: commoditiesDailyPnLSar,
