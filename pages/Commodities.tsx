@@ -15,6 +15,7 @@ import { SparklesIcon } from '../components/icons/SparklesIcon';
 import InfoHint from '../components/InfoHint';
 import OwnerBadge from '../components/OwnerBadge';
 import { getAICommodityPrices, formatAiError } from '../services/geminiService';
+import { useAI } from '../context/AiContext';
 import { applyManualCommodityQuotes } from '../services/applyManualCommodityQuotes';
 import { supabase } from '../services/supabaseClient';
 import { useSelfLearning } from '../context/SelfLearningContext';
@@ -327,6 +328,7 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage, pageAction, cl
     const { data, addCommodityHolding, updateCommodityHolding, deleteCommodityHolding, batchUpdateCommodityHoldingValues, applyReconciliationAdjustment } = useContext(DataContext)!;
     const market = useContext(MarketDataContext);
     const auth = useContext(AuthContext);
+    const { aiActionsEnabled } = useAI();
     const canRevalue = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { trackAction } = useSelfLearning();
     const { formatCurrencyString } = useFormatCurrency();
@@ -398,6 +400,10 @@ const Commodities: React.FC<CommoditiesProps> = ({ setActivePage, pageAction, cl
         trackAction('update-commodity-prices', 'Commodities');
         const holdingsForPrices = commodityRows;
         if (!holdingsForPrices.length) return;
+        if (!aiActionsEnabled) {
+            console.warn('AI unavailable — skip commodity price update.');
+            return;
+        }
         setIsUpdatingPrices(true);
         try {
             const { prices } = await getAICommodityPrices(

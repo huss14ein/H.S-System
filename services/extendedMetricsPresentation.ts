@@ -5,6 +5,7 @@ import {
   HEADLINE_NEAR_ZERO_NET_INVESTED_SAR,
   safeCapitalDepositYmd,
 } from './investmentKpiCore';
+import { describeInvestmentNetInvested } from './investmentCapitalResolve';
 
 export type ExtendedMetricsPickSource = Pick<
   UseCanonicalFinancialMetricsResult,
@@ -191,7 +192,11 @@ export function presentHeadlineInvestmentGrowth(
     investmentAgeLabel: formatInvestmentAgeLabel(h.investmentAgeDays),
     firstCapitalDepositYmd: safeCapitalDepositYmd(h.firstCapitalDepositYmd),
     definition:
-      'Present value minus net invested (deposits − withdrawals + commodity/Sukuk cost). Cost basis is a floor only when deposits were never recorded.',
+      h.capitalSource === 'mixed'
+        ? describeInvestmentNetInvested('mixed')
+        : h.capitalSource === 'cost_basis_fallback' || h.capitalSource === 'ledger_inferred'
+          ? describeInvestmentNetInvested(h.capitalSource)
+          : 'Present value minus net invested (deposits − withdrawals + commodity/Sukuk cost). Incomplete portfolios without deposit history floor at cost + cash so sibling market value is not free profit.',
   };
 }
 

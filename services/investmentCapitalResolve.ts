@@ -21,6 +21,36 @@ export const LEDGER_INFERRED_FALLBACK_MAX_RATIO = 4.5;
 /** Skip ratio cross-check when fallback gross is tiny (noise vs rounding). */
 export const LEDGER_INFERRED_FALLBACK_MIN_SAR = 400;
 
+/** Investor-facing definition for ROI / net invested (headline + platform cards + AI). */
+export function describeInvestmentNetInvested(capitalSource: InvestmentCapitalSource): string {
+  switch (capitalSource) {
+    case 'mixed':
+      return 'Net invested is hybrid: funded portfolios use deposits − withdrawals; portfolios without deposit/withdrawal history floor at holdings cost + idle cash so their market value is not treated as free profit.';
+    case 'ledger_inferred':
+      return 'Net invested is inferred from buys/sells/dividends and cash when deposit history is missing, floored at holdings cost + idle cash when books look incomplete.';
+    case 'cost_basis_fallback':
+      return 'Net invested uses holdings cost basis + idle broker cash because deposit/withdrawal history was never recorded.';
+    case 'deposits':
+    default:
+      return 'Net invested is deposits − withdrawals (reconcile cash stamps excluded), plus commodity/Sukuk purchase costs on the headline. Cost basis is used only when deposit history is missing.';
+  }
+}
+
+/** Short footer / subtitle for net invested when capital source is known. */
+export function netInvestedSubtitle(capitalSource: InvestmentCapitalSource): string {
+  switch (capitalSource) {
+    case 'mixed':
+      return 'Hybrid: deposits on funded sleeves + cost floor on incomplete books';
+    case 'ledger_inferred':
+      return 'Ledger-inferred (incomplete deposit history)';
+    case 'cost_basis_fallback':
+      return 'Cost basis + cash (no deposit history)';
+    case 'deposits':
+    default:
+      return 'Deposits − withdrawals';
+  }
+}
+
 export type ScopedInvestmentCapitalResult = {
   capitalSource: Exclude<InvestmentCapitalSource, 'mixed'>;
   totalInvestedSar: number;

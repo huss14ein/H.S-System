@@ -34,7 +34,7 @@ const FALLBACK_DEFINITIONS: Record<MetricPassportModel['key'], string> = {
   portfolioPeriodPnL:
     'Financial-month portfolio mark-to-market P/L — same engine as Wealth Analytics and Investments platform rows (cost start + live end; seeded start-cash reconstruct).',
   investmentRoi:
-    'Platform rollup + commodities + direct Sukuk vs net invested after withdrawals (computeHeadlinePersonalInvestmentRoiDecimal).',
+    'Platform rollup + commodities + direct Sukuk vs hybrid net invested (deposits − withdrawals on funded sleeves; cost + cash floor on incomplete books — computeHeadlinePersonalInvestmentRoiDecimal).',
   emergencyFund:
     'Liquid cash (bank + idle broker cash) divided by essential monthly expenses. Target: 6 months.',
   budgetVariance:

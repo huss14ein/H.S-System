@@ -45,6 +45,7 @@ import { computeTaskCounts, compareActionableTodos, isTaskSnoozed, todayIsoDate 
 import type { TodoItem } from '../types';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import type { InvestmentCapitalSource } from '../services/investmentKpiCore';
+import { describeInvestmentNetInvested } from '../services/investmentCapitalResolve';
 import { accountBookCurrency, transactionBookCurrency } from '../utils/cashAccountDisplay';
 import { getTransactionBudgetAllocations } from '../services/transactionBudgetAllocations';
 import { useSpendingCommandCenterModel } from '../hooks/useSpendingCommandCenterModel';
@@ -622,9 +623,13 @@ const DashboardContent: React.FC<{
                 icon={<BanknotesIcon className="h-5 w-5 text-slate-400" />}
             />,
             budgetVariance: <Card {...cardProps} title="Budget Variance" value={formatCurrency(kpiSummary.budgetVariance || 0, { colorize: true })} trend={(kpiSummary.budgetVariance || 0) >= 0 ? 'Under budget' : 'Over budget'} indicatorColor={(kpiSummary.budgetVariance || 0) >= 0 ? 'green' : 'red'} tooltip="Money saved from budget this month (positive = under budget). Over budget is shown in red." onClick={() => setActivePage('Budgets')} icon={<PiggyBankIcon className="h-5 w-5 text-slate-400" />} />,
-            investmentRoi: <Card {...cardProps} title="Investment ROI" value={presentedRoi?.valueDisplay ?? `${roiPct.toFixed(1)}%`} valueColor={presentedRoi?.isGrowing ?? (kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={principalRecovered ? 'Remaining value is profit' : Number.isFinite(growthSar) ? `${(growthSar ?? 0) >= 0 ? '+' : ''}${formatCurrencyString(growthSar ?? 0, { digits: 0 })} vs net invested` : `${roiPct >= 0 ? '+' : ''}${roiPct.toFixed(1)}%`} indicatorColor={presentedRoi?.isGrowing ?? (kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip="Same formula as Investments: present value (platform live rollup + commodities + Sukuk) minus net invested after withdrawals (deposits − withdrawals, plus commodity/Sukuk cost). Cost basis is used only when deposit history is missing. Uses your live quote feed when available." onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' ? (
+            investmentRoi: <Card {...cardProps} title="Investment ROI" value={presentedRoi?.valueDisplay ?? `${roiPct.toFixed(1)}%`} valueColor={presentedRoi?.isGrowing ?? (kpiSummary.roi || 0) >= 0 ? 'text-success' : 'text-danger'} trend={principalRecovered ? 'Remaining value is profit' : Number.isFinite(growthSar) ? `${(growthSar ?? 0) >= 0 ? '+' : ''}${formatCurrencyString(growthSar ?? 0, { digits: 0 })} vs net invested` : `${roiPct >= 0 ? '+' : ''}${roiPct.toFixed(1)}%`} indicatorColor={presentedRoi?.isGrowing ?? (kpiSummary.roi || 0) >= 0 ? 'green' : 'red'} tooltip={`Same formula as Investments: present value (platform live rollup + commodities + Sukuk) minus net invested. ${describeInvestmentNetInvested(invCapitalSrc ?? 'deposits')} Uses your live quote feed when available.`} onClick={() => setActivePage('Investments')} icon={<ArrowTrendingUpIcon className="h-5 w-5 text-slate-400" />} footer={invCapitalSrc === 'ledger_inferred' || invCapitalSrc === 'mixed' || invCapitalSrc === 'cost_basis_fallback' ? (
                 <button type="button" className="text-left w-full font-medium text-primary hover:underline" onClick={(e) => { e.stopPropagation(); goToInvestmentKpiReconciliation(); }}>
-                    Ledger-inferred capital — open Investment KPI reconciliation →
+                    {invCapitalSrc === 'mixed'
+                      ? 'Hybrid net invested (incomplete portfolio books) — open Investment KPI reconciliation →'
+                      : invCapitalSrc === 'cost_basis_fallback'
+                        ? 'Cost-basis capital — open Investment KPI reconciliation →'
+                        : 'Ledger-inferred capital — open Investment KPI reconciliation →'}
                 </button>
             ) : (
                 <div className="space-y-1">

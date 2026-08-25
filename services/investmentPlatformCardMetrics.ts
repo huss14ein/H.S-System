@@ -24,7 +24,11 @@ import {
   HEADLINE_NEAR_ZERO_NET_INVESTED_SAR,
   investmentAgeDaysFromYmd,
 } from './investmentCapitalAge';
-import { resolveScopedInvestmentCapitalSar } from './investmentCapitalResolve';
+import {
+  describeInvestmentNetInvested,
+  resolveScopedInvestmentCapitalSar,
+  type InvestmentCapitalSource,
+} from './investmentCapitalResolve';
 import {
   getPersonalAccounts,
   getPersonalCommodityHoldings,
@@ -78,6 +82,8 @@ export interface PlatformCardMetrics {
   principalFullyRecovered?: boolean;
   /** Raw deposit amounts in SAR (before incomplete-books inference). */
   depositsRecordedSAR?: number;
+  /** How net invested was resolved for this scope (deposits / inferred / cost floor / mixed siblings). */
+  capitalSource?: InvestmentCapitalSource;
 }
 
 export interface PlatformMetricValidationResult {
@@ -96,7 +102,8 @@ export interface ComputePlatformCardMetricsArgs {
   /** Single portfolio currency, or undefined when mixed / unknown (same fallbacks as PlatformCard). */
   platformCurrency: TradeCurrency | undefined;
   /**
-   * `net_capital` (default): present value − (deposits − withdrawals) — money you still have in vs what you put in.
+   * `net_capital` (default): present value − hybrid net invested (deposits − withdrawals on funded
+   * sleeves; cost + cash floor on incomplete books).
    * `holdings_cost`: leftover diagnostic vs qty×avg cost (not the investor ROI question).
    */
   unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
@@ -169,6 +176,8 @@ function computePlatformCardMetricsFromPortfolioBundle(
   let firstCapitalDepositYmd: string | null = null;
   let principalFullyRecoveredAll = true;
   let anyPrincipalRecovered = false;
+  let fundedSleeves = 0;
+  let incompleteSleeves = 0;
 
   for (const p of portfolios) {
     const m = bundle.metricsByPortfolioId.get(p.id);
@@ -186,10 +195,25 @@ function computePlatformCardMetricsFromPortfolioBundle(
     if (ymd && (!firstCapitalDepositYmd || ymd < firstCapitalDepositYmd)) firstCapitalDepositYmd = ymd;
     if (m.principalFullyRecovered) anyPrincipalRecovered = true;
     else principalFullyRecoveredAll = false;
+    if ((m.depositsRecordedSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) fundedSleeves += 1;
+    else if ((m.holdingsCostBasisSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR || m.netCapitalSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
+      incompleteSleeves += 1;
+    }
   }
 
   // Per-portfolio totals already partition idle cash by weight — sum is holdings + full broker cash.
   totalGainLossSAR = totalValueInSAR - netCapitalSAR;
+
+  const capitalSource: InvestmentCapitalSource =
+    fundedSleeves > 0 && incompleteSleeves > 0
+      ? 'mixed'
+      : fundedSleeves > 0
+        ? 'deposits'
+        : incompleteSleeves > 0
+          ? 'cost_basis_fallback'
+          : depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR
+            ? 'deposits'
+            : 'cost_basis_fallback';
 
   const principalFullyRecovered =
     depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
@@ -267,6 +291,7 @@ function computePlatformCardMetricsFromPortfolioBundle(
     investmentAgeDays,
     principalFullyRecovered,
     depositsRecordedSAR,
+    capitalSource,
   };
   return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, {
     unrealizedPnLBasis,
@@ -435,6 +460,7 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
   void inferredInvestedFromLedgerSAR;
   const totalInvestedSAR = scoped.totalInvestedSar;
   const netCapitalSAR = scoped.netCapitalSar;
+  const capitalSource = scoped.capitalSource;
   const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
   const depositsRecordedSAR = totalInvestedSARRaw;
   const principalFullyRecovered =
@@ -529,11 +555,12 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
     investmentAgeDays,
     principalFullyRecovered,
     depositsRecordedSAR,
+    capitalSource,
   };
   return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, { unrealizedPnLBasis });
 }
 
-/** Display labels for platform / portfolio ROI vs net invested (deposits − withdrawals). */
+/** Display labels for platform / portfolio ROI vs net invested (hybrid when books are incomplete). */
 export function presentScopedInvestmentGrowth(m: PlatformCardMetrics): {
   roiDisplay: string;
   growthSar: number;
@@ -543,9 +570,12 @@ export function presentScopedInvestmentGrowth(m: PlatformCardMetrics): {
   ageLabel: string | null;
   firstCapitalDepositYmd: string | null;
   principalFullyRecovered: boolean;
+  capitalSource: InvestmentCapitalSource;
+  netInvestedDefinition: string;
 } {
   const principalFullyRecovered = m.principalFullyRecovered === true;
   const growthSar = Number.isFinite(m.totalGainLossSAR) ? m.totalGainLossSAR : 0;
+  const capitalSource: InvestmentCapitalSource = m.capitalSource ?? 'deposits';
   return {
     roiDisplay: principalFullyRecovered ? 'Principal recovered' : `${(Number.isFinite(m.roi) ? m.roi : 0).toFixed(1)}%`,
     growthSar,
@@ -561,6 +591,8 @@ export function presentScopedInvestmentGrowth(m: PlatformCardMetrics): {
     ageLabel: formatInvestmentAgeLabel(m.investmentAgeDays ?? null),
     firstCapitalDepositYmd: m.firstCapitalDepositYmd ?? null,
     principalFullyRecovered,
+    capitalSource,
+    netInvestedDefinition: describeInvestmentNetInvested(capitalSource),
   };
 }
 
@@ -918,6 +950,7 @@ function sanitizeAndValidatePlatformMetrics(
         : null,
     principalFullyRecovered: metrics.principalFullyRecovered === true,
     depositsRecordedSAR: Math.max(0, sanitizeFinite(metrics.depositsRecordedSAR ?? 0)),
+    capitalSource: metrics.capitalSource,
   };
 
   // Canonical derivations (single source of truth).

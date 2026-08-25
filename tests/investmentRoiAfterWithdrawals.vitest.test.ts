@@ -598,8 +598,8 @@ describe('ROI-after-withdrawals surface wiring', () => {
     );
   });
 
-  it('Dashboard ROI card explains withdrawals', () => {
-    expect(read('pages/Dashboard.tsx')).toContain('net invested after withdrawals');
+  it('Dashboard ROI card explains net invested', () => {
+    expect(read('pages/Dashboard.tsx')).toContain('describeInvestmentNetInvested');
     expect(read('pages/Dashboard.tsx')).toContain('commodities + Sukuk');
     expect(read('pages/Dashboard.tsx')).toContain('presentHeadlineInvestmentGrowth');
     expect(read('pages/Dashboard.tsx')).toContain('investmentAgeLabel');
@@ -613,8 +613,8 @@ describe('ROI-after-withdrawals surface wiring', () => {
       ['components/analytics/ExecutiveKpiGrid.tsx', ['presentHeadlineInvestmentGrowth']],
       ['services/wealthAnalyticsReportModel.ts', ['presentHeadlineInvestmentGrowth']],
       ['services/aiPersonalWealthGrounding.ts', ['presentHeadlineInvestmentGrowth', 'net invested']],
-      ['services/geminiService.ts', ['Net invested after withdrawals', 'Principal fully recovered']],
-      ['services/metricPassportModel.ts', ['Net invested after withdrawals']],
+      ['services/geminiService.ts', ['Net invested (SAR)', 'Principal fully recovered']],
+      ['services/metricPassportModel.ts', ['hybrid net invested']],
       ['services/reportingEngine.ts', ['Net invested after withdrawals']],
       ['pages/Investments.tsx', ['presentHeadlineInvestmentGrowth', 'principalFullyRecovered']],
       ['services/reviewPack.ts', ['presentHeadlineInvestmentGrowth', 'Net invested after withdrawals']],

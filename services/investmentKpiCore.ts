@@ -30,9 +30,11 @@ import { getPersonalCommodityHoldings } from '../utils/wealthScope';
 import { brokerCashBucketsFromInvestmentAccount } from './investmentCashLedger';
 import {
   aggregateInvestmentCapitalSources,
+  describeInvestmentNetInvested,
   LEDGER_INFERRED_FALLBACK_MAX_RATIO,
   LEDGER_INFERRED_FALLBACK_MIN_RATIO,
   LEDGER_INFERRED_FALLBACK_MIN_SAR,
+  netInvestedSubtitle,
   resolveHeadlinePlatformNetCapitalSar,
   resolveScopedInvestmentCapitalSar,
   type InvestmentCapitalSource,
@@ -42,9 +44,11 @@ import {
 export type { InvestmentCapitalSource, ScopedInvestmentCapitalResult };
 export {
   aggregateInvestmentCapitalSources,
+  describeInvestmentNetInvested,
   LEDGER_INFERRED_FALLBACK_MAX_RATIO,
   LEDGER_INFERRED_FALLBACK_MIN_RATIO,
   LEDGER_INFERRED_FALLBACK_MIN_SAR,
+  netInvestedSubtitle,
   resolveHeadlinePlatformNetCapitalSar,
   resolveScopedInvestmentCapitalSar,
 };
@@ -430,8 +434,9 @@ export function computePersonalInvestmentKpisSar(
   data: FinancialData,
   sarPerUsd: number,
   getAvailableCashForAccount: GetAvailableCashFn,
+  simulatedPrices: SimulatedPriceMap = {},
 ): PersonalInvestmentKpisSar {
-  const b = computePersonalInvestmentKpiBreakdown(data, sarPerUsd, getAvailableCashForAccount);
+  const b = computePersonalInvestmentKpiBreakdown(data, sarPerUsd, getAvailableCashForAccount, simulatedPrices);
   return {
     holdingsValueSar: b.holdingsValueSar,
     brokerageCashSar: b.brokerageCashSar,
@@ -465,14 +470,14 @@ export type HeadlinePersonalInvestmentRoi = {
   /** Same inputs as headline net capital decomposition (single source for reconciliation UI). */
   commodityCostSar: number;
   sukukPositionsCostSar: number;
-  /** Platform net capital used in headline (deposits − withdrawals when funding exists). */
+  /** Platform net capital used in headline (hybrid: deposits path and/or incomplete-books floors). */
   platformNetForHeadlineSar: number;
   economicDeployedPlatformSar: number;
-  /** True only when deposit history is missing and cost-basis + cash raised the denominator. */
+  /** True when incomplete-books cost+cash raised net invested (or mixed sleeves floored). */
   economicFloorApplied: boolean;
   depositsRecordedSar: number;
   totalWithdrawnSar: number;
-  /** Platform net capital before any incomplete-books floor (deposits − withdrawals, or inferred/fallback net). */
+  /** Platform net capital from hybrid card sum (already includes incomplete-books floors when mixed). */
   ledgerPlatformNetCapitalSar: number;
   /** Deposits exist, net invested is 0, but present value remains — remaining MV is profit after recovering principal. */
   principalFullyRecovered: boolean;
@@ -520,10 +525,8 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
 
   const totalExposureSar = platformsRollupSar + commoditiesValueSar + sukukPositionsValueSar;
   /**
-   * When deposit history exists, net invested is deposits − withdrawals. Do not floor at cost basis + idle
-   * cash — that treats remaining book cost as still-invested capital after withdrawals and understates growth.
-   * Floor only when deposits are missing (ledger_inferred / cost_basis_fallback) so incomplete books do not
-   * produce triple-digit ROI.
+   * Hybrid net invested: funded sleeves use deposits − withdrawals; incomplete sleeves (no deposit
+   * history) floor at cost + cash. Do not re-floor a pure deposits book at cost basis after withdrawals.
    */
   const economicDeployedSar = Math.max(0, breakdown.holdingsCostBasisSar + breakdown.brokerageCashSar);
   const { platformNetSar: platformNetForHeadline, economicFloorApplied: floorFromResolve } =
