@@ -224,6 +224,9 @@ export function formatAiError(error: any): string {
     if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(mergedMessage)) {
         return "The AI request took too long and timed out at the server. Please try again, or continue with the auto-filled default analyst settings.";
     }
+    if (/Load failed|Failed to fetch|NetworkError|network request failed|Could not connect to the AI proxy/i.test(mergedMessage)) {
+        return "Could not reach the AI service (network). Check your connection, stay on the Finova site, and try again. If this persists after a refresh, the AI proxy may be warming up — wait a few seconds and retry.";
+    }
     if (/model|404|not found|invalid model|unsupported/i.test(mergedMessage)) {
         return `There was an issue with the specified AI model. ${mergedMessage}`;
     }
@@ -589,6 +592,11 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
     clearAiProxySessionBlock();
     const endpoints = getGeminiProxyEndpoints();
     let lastError: Error | null = null;
+    const isNetworkTypeError = (error: unknown): boolean => {
+        if (!(error instanceof TypeError)) return false;
+        const msg = error.message || '';
+        return /load failed|failed to fetch|networkerror|network request failed|fetch/i.test(msg);
+    };
 
     for (const endpoint of endpoints) {
         const controller = new AbortController();
@@ -600,7 +608,8 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
             }
             externalSignal.addEventListener('abort', onExternalAbort, { once: true });
         }
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        // Netlify function max ~26s; allow cold start + model cascade with a small client buffer.
+        const timeoutId = setTimeout(() => controller.abort(), 28000);
         try {
             const { signal: _unusedSignal, ...safePayload } = payload;
             const authHeaders = await getAiProxyAuthorizationHeader();
@@ -640,7 +649,7 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
                 lastError = new Error('AI request timed out while waiting for proxy response.');
                 continue;
             }
-            if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
+            if (isNetworkTypeError(error)) {
                 lastError = new Error('Could not connect to the AI proxy function. Please ensure the Netlify function is deployed correctly.');
                 continue;
             }

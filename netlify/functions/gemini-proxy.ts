@@ -24,7 +24,9 @@ function corsHeaders(event: HandlerEvent, opts?: { health?: boolean }): Record<s
 }
 
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
-const FALLBACK_MODEL = 'gemini-2.0-flash';
+const FALLBACK_MODEL = 'gemini-3-flash-preview';
+/** Extra Gemini models to try after the request + primary fallback (API keys often lose access to older flash ids). */
+const GEMINI_MODEL_FALLBACKS = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash'] as const;
 
 type NormalizedResponse = {
   text: string | null;
@@ -100,27 +102,37 @@ async function callGemini(
   config: unknown
 ): Promise<NormalizedResponse> {
   const ai = new GoogleGenAI({ apiKey });
-  const payload = { model: requestedModel, contents, config };
-  try {
-    const response = await ai.models.generateContent(payload);
-    const text = extractText(response);
-    return {
-      text: text ?? null,
-      candidates: response.candidates ?? [],
-      functionCalls: (response as any).functionCalls ?? undefined,
-    };
-  } catch (firstError) {
-    if (isModelError(firstError) && requestedModel !== FALLBACK_MODEL) {
-      const response = await ai.models.generateContent({ ...payload, model: FALLBACK_MODEL });
+  const modelsToTry = [
+    requestedModel,
+    ...GEMINI_MODEL_FALLBACKS.filter((m) => m !== requestedModel),
+  ];
+  let lastError: unknown = null;
+  for (const model of modelsToTry) {
+    try {
+      const response = await ai.models.generateContent({ model, contents, config });
       const text = extractText(response);
       return {
         text: text ?? null,
         candidates: response.candidates ?? [],
         functionCalls: (response as any).functionCalls ?? undefined,
       };
+    } catch (err) {
+      lastError = err;
+      // Try next model on model/404 errors; on quota/auth still try other models once then throw.
+      if (!isModelError(err) && !isQuotaError(err) && modelsToTry.indexOf(model as typeof modelsToTry[number]) === 0) {
+        // Non-model error on primary — still attempt fallbacks (some keys reject specific model ids as 400).
+        continue;
+      }
+      if (!isModelError(err) && !isQuotaError(err) && model !== FALLBACK_MODEL) {
+        continue;
+      }
+      if (isQuotaError(err)) {
+        // Exhaust model list on quota too — different models sometimes share quota; then throw.
+        continue;
+      }
     }
-    throw firstError;
   }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Gemini invocation failed'));
 }
 
 async function callClaude(

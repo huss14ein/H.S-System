@@ -24,6 +24,7 @@ import {
   HEADLINE_NEAR_ZERO_NET_INVESTED_SAR,
   investmentAgeDaysFromYmd,
 } from './investmentCapitalAge';
+import { resolveScopedInvestmentCapitalSar } from './investmentCapitalResolve';
 import {
   getPersonalAccounts,
   getPersonalCommodityHoldings,
@@ -113,8 +114,174 @@ export interface ComputePlatformCardMetricsArgs {
 /**
  * Mirrors `PlatformCard` useMemo (Investments.tsx): deposits/withdrawals → invested & withdrawn;
  * holdings (sim or stored) + tradable cash → value; P&L = value − (invested − withdrawn).
+ *
+ * When multiple sibling portfolios are passed, capital is resolved **per portfolio** (funded sleeves use
+ * deposits − withdrawals; incomplete sleeves floor at cost + cash share) then summed — so one portfolio
+ * with deposit history (e.g. Awaed) does not leave sibling market value with $0 net invested.
  */
 export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs): PlatformCardMetrics {
+  const portfolios = args.portfolios ?? [];
+  if (portfolios.length > 1 && (args.unrealizedPnLBasis ?? 'net_capital') === 'net_capital') {
+    return computePlatformCardMetricsFromPortfolioBundle(args);
+  }
+  return computePlatformCardMetricsForSingleScope(args);
+}
+
+/** Aggregate platform KPIs from per-portfolio nets (hybrid incomplete-books floors). */
+function computePlatformCardMetricsFromPortfolioBundle(
+  args: ComputePlatformCardMetricsArgs,
+): PlatformCardMetrics {
+  const {
+    portfolios,
+    transactions,
+    accounts: accList,
+    allInvestments: invList,
+    sarPerUsd: rate,
+    availableCashByCurrency,
+    simulatedPrices,
+    platformCurrency,
+    unrealizedPnLBasis = 'net_capital',
+    dailyPnLPrices,
+    datedFxData = null,
+  } = args;
+
+  const bundle = computePortfolioMetricsBundle({
+    siblingPortfolios: portfolios,
+    transactions,
+    accounts: accList,
+    allInvestments: invList,
+    sarPerUsd: rate,
+    simulatedPrices,
+    dailyPnLPrices,
+    accountAvailableCashByCurrency: availableCashByCurrency,
+    datedFxData,
+  });
+
+  let totalValueInSAR = 0;
+  let holdingsValueInSAR = 0;
+  let totalGainLossSAR = 0;
+  let dailyPnLSAR = 0;
+  let totalInvestedSAR = 0;
+  let totalWithdrawnSAR = 0;
+  let netCapitalSAR = 0;
+  let holdingsCostBasisSAR = 0;
+  let depositsRecordedSAR = 0;
+  let firstCapitalDepositYmd: string | null = null;
+  let principalFullyRecoveredAll = true;
+  let anyPrincipalRecovered = false;
+
+  for (const p of portfolios) {
+    const m = bundle.metricsByPortfolioId.get(p.id);
+    if (!m) continue;
+    totalValueInSAR += m.totalValueInSAR;
+    holdingsValueInSAR += m.holdingsValueInSAR;
+    totalGainLossSAR += m.totalGainLossSAR;
+    dailyPnLSAR += m.dailyPnLSAR;
+    totalInvestedSAR += m.totalInvestedSAR;
+    totalWithdrawnSAR += m.totalWithdrawnSAR;
+    netCapitalSAR += m.netCapitalSAR;
+    holdingsCostBasisSAR += m.holdingsCostBasisSAR ?? 0;
+    depositsRecordedSAR += m.depositsRecordedSAR ?? 0;
+    const ymd = m.firstCapitalDepositYmd ?? null;
+    if (ymd && (!firstCapitalDepositYmd || ymd < firstCapitalDepositYmd)) firstCapitalDepositYmd = ymd;
+    if (m.principalFullyRecovered) anyPrincipalRecovered = true;
+    else principalFullyRecoveredAll = false;
+  }
+
+  // Per-portfolio totals already partition idle cash by weight — sum is holdings + full broker cash.
+  totalGainLossSAR = totalValueInSAR - netCapitalSAR;
+
+  const principalFullyRecovered =
+    depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    netCapitalSAR <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    (principalFullyRecoveredAll || anyPrincipalRecovered);
+
+  const roi = principalFullyRecovered ? 0 : netCapitalSAR > 0 ? (totalGainLossSAR / netCapitalSAR) * 100 : 0;
+  const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
+
+  const holdingsValue =
+    platformCurrency === 'SAR'
+      ? holdingsValueInSAR
+      : platformCurrency === 'USD'
+        ? holdingsValueInSAR / rate
+        : holdingsValueInSAR;
+  const totalValue =
+    platformCurrency === 'SAR'
+      ? totalValueInSAR
+      : platformCurrency === 'USD'
+        ? totalValueInSAR / rate
+        : totalValueInSAR;
+  const netCapital =
+    platformCurrency === 'SAR'
+      ? netCapitalSAR
+      : platformCurrency === 'USD'
+        ? netCapitalSAR / rate
+        : netCapitalSAR;
+  const totalGainLoss =
+    platformCurrency === 'SAR'
+      ? totalGainLossSAR
+      : platformCurrency === 'USD'
+        ? totalGainLossSAR / rate
+        : totalGainLossSAR;
+  const totalInvested =
+    platformCurrency === 'SAR'
+      ? totalInvestedSAR
+      : platformCurrency === 'USD'
+        ? totalInvestedSAR / rate
+        : totalInvestedSAR;
+  const totalWithdrawn =
+    platformCurrency === 'USD'
+      ? rate > 0
+        ? totalWithdrawnSAR / rate
+        : totalWithdrawnSAR
+      : totalWithdrawnSAR;
+  const cashSAR = availableCashByCurrency.SAR ?? 0;
+  const cashUSD = availableCashByCurrency.USD ?? 0;
+  const totalAvailable =
+    platformCurrency === 'SAR'
+      ? cashSAR + cashUSD * rate
+      : platformCurrency === 'USD'
+        ? cashUSD + cashSAR / rate
+        : cashSAR + cashUSD * rate;
+  const dailyPnL =
+    platformCurrency === 'SAR'
+      ? dailyPnLSAR
+      : platformCurrency === 'USD'
+        ? dailyPnLSAR / rate
+        : dailyPnLSAR;
+
+  const out: PlatformCardMetrics = {
+    totalValue,
+    totalValueInSAR,
+    holdingsValue,
+    holdingsValueInSAR,
+    totalGainLoss,
+    dailyPnL,
+    totalInvested,
+    totalWithdrawn,
+    roi,
+    totalAvailable,
+    totalGainLossSAR,
+    dailyPnLSAR,
+    totalInvestedSAR,
+    totalWithdrawnSAR,
+    netCapitalSAR,
+    holdingsCostBasisSAR,
+    unrealizedPnLBasis,
+    firstCapitalDepositYmd,
+    investmentAgeDays,
+    principalFullyRecovered,
+    depositsRecordedSAR,
+  };
+  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, {
+    unrealizedPnLBasis,
+    preserveHybridNetCapital: true,
+  });
+}
+
+/** One capital scope (single portfolio or legacy single-book platform). */
+function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetricsArgs): PlatformCardMetrics {
   const {
     portfolios,
     transactions,
@@ -262,19 +429,18 @@ export function computePlatformCardMetrics(args: ComputePlatformCardMetricsArgs)
     0,
     (buySAR + buyUSD * rate) - (sellSAR + sellUSD * rate) - (divSAR + divUSD * rate) + cashInSar + spotWithdrawnSAR,
   );
-  const totalInvestedSAR =
-    totalInvestedSARRaw > 0
-      ? totalInvestedSARRaw
-      : inferredInvestedFromLedgerSAR > 0
-        ? inferredInvestedFromLedgerSAR
-        : Math.max(0, holdingsCostBasisSAR + cashInSar + withdrawnSAR);
-  const ledgerNetCapitalSAR = Math.max(0, totalInvestedSAR - withdrawnSAR);
-  /** Match headline: when deposits exist, use ledger net; when missing, floor at cost + idle cash. */
-  const economicDeployedSAR = Math.max(0, holdingsCostBasisSAR + cashInSar);
-  const netCapitalSAR =
-    totalInvestedSARRaw > 0
-      ? ledgerNetCapitalSAR
-      : Math.max(ledgerNetCapitalSAR, economicDeployedSAR);
+  const scoped = resolveScopedInvestmentCapitalSar({
+    depositsRecordedSar: totalInvestedSARRaw,
+    withdrawnSar: withdrawnSAR,
+    holdingsCostBasisSar: holdingsCostBasisSAR,
+    cashSar: cashInSar,
+    buysSar: buySAR + buyUSD * rate,
+    sellsSar: sellSAR + sellUSD * rate,
+    dividendsSar: divSAR + divUSD * rate,
+  });
+  void inferredInvestedFromLedgerSAR;
+  const totalInvestedSAR = scoped.totalInvestedSar;
+  const netCapitalSAR = scoped.netCapitalSar;
   const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
   const depositsRecordedSAR = totalInvestedSARRaw;
   const principalFullyRecovered =
@@ -693,9 +859,22 @@ export function validatePlatformMetrics(
   const hasDeposits =
     (m.depositsRecordedSAR != null && m.depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) ||
     (m.depositsRecordedSAR == null && m.firstCapitalDepositYmd != null);
-  const expectedNet = hasDeposits ? derivedNetCapital : Math.max(derivedNetCapital, economicFloor);
-  if (Math.abs(expectedNet - m.netCapitalSAR) > RECONCILIATION_EPSILON) {
-    issues.push('netCapitalSAR mismatch with deposits−withdrawals (or incomplete-books floor)');
+  /**
+   * Hybrid platform aggregates may raise net above deposits−withdrawals when incomplete sibling
+   * sleeves floor at cost + cash. Never allow net below the ledger identity.
+   */
+  if (m.netCapitalSAR + RECONCILIATION_EPSILON < derivedNetCapital) {
+    issues.push('netCapitalSAR below deposits−withdrawals ledger identity');
+  } else if (!hasDeposits) {
+    const expectedNet = Math.max(derivedNetCapital, economicFloor);
+    if (Math.abs(expectedNet - m.netCapitalSAR) > RECONCILIATION_EPSILON) {
+      issues.push('netCapitalSAR mismatch with deposits−withdrawals (or incomplete-books floor)');
+    }
+  } else if (
+    m.netCapitalSAR > derivedNetCapital + RECONCILIATION_EPSILON &&
+    m.netCapitalSAR + RECONCILIATION_EPSILON < economicFloor
+  ) {
+    // Funded book with hybrid sibling floors can exceed ledger; still valid.
   }
 
   const expectedTotalValue =
@@ -713,11 +892,12 @@ function sanitizeAndValidatePlatformMetrics(
   metrics: PlatformCardMetrics,
   platformCurrency: TradeCurrency | undefined,
   sarPerUsd: number,
-  opts?: { unrealizedPnLBasis?: 'net_capital' | 'holdings_cost' },
+  opts?: { unrealizedPnLBasis?: 'net_capital' | 'holdings_cost'; preserveHybridNetCapital?: boolean },
 ): PlatformCardMetrics {
   const rate = sanitizeFinite(sarPerUsd) > 0 ? sarPerUsd : 1;
   const basisMode = opts?.unrealizedPnLBasis ?? metrics.unrealizedPnLBasis ?? 'net_capital';
   const basisSAR = sanitizeFinite(metrics.holdingsCostBasisSAR ?? 0);
+  const preserveHybrid = opts?.preserveHybridNetCapital === true;
 
   const safe: PlatformCardMetrics = {
     totalValue: sanitizeFinite(metrics.totalValue),
@@ -751,8 +931,16 @@ function sanitizeAndValidatePlatformMetrics(
   const cashSar = Math.max(0, safe.totalValueInSAR - safe.holdingsValueInSAR);
   const economicDeployed = Math.max(0, basisSAR + cashSar);
   const hasDeposits = (safe.depositsRecordedSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
-  /** Incomplete books (no deposit amounts): floor at cost + idle cash — same as headline. */
-  safe.netCapitalSAR = hasDeposits ? ledgerNet : Math.max(ledgerNet, economicDeployed);
+  /**
+   * Incomplete books (no deposit amounts): floor at cost + idle cash — same as headline.
+   * Hybrid multi-portfolio aggregates may already include sibling cost floors above ledger net —
+   * preserve that when `preserveHybridNetCapital` is set.
+   */
+  if (preserveHybrid && hasDeposits) {
+    safe.netCapitalSAR = Math.max(ledgerNet, safe.netCapitalSAR);
+  } else {
+    safe.netCapitalSAR = hasDeposits ? ledgerNet : Math.max(ledgerNet, economicDeployed);
+  }
   safe.principalFullyRecovered =
     hasDeposits &&
     safe.netCapitalSAR <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&

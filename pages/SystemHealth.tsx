@@ -605,6 +605,11 @@ const SystemHealth: React.FC<{
           'Using holdings average-cost basis + broker cash + withdrawals as gross invested — use when there are no deposits and inferred ledger capital is zero.',
         );
       }
+      if (b.capitalSource === 'mixed') {
+        notes.push(
+          'Mixed funding history — funded portfolios use deposits − withdrawals; portfolios without deposit/withdrawal history floor at cost basis + cash so sibling market value is not counted as free profit.',
+        );
+      }
       if (Math.abs(cashLedgerDriftSar) > 50) {
         notes.push(
           'Cash drift compares signed broker balances to ledger-implied cash using the **same spot** SAR/USD as the UI. If drift persists, check missing trades or wrong currency on rows — not historical FX.',
@@ -1490,6 +1495,7 @@ const SystemHealth: React.FC<{
                       {integritySummary.investmentKpiReconciliation.capitalSource === 'deposits' && 'sum(deposits)'}
                       {integritySummary.investmentKpiReconciliation.capitalSource === 'ledger_inferred' && 'ledger-inferred (see detail)'}
                       {integritySummary.investmentKpiReconciliation.capitalSource === 'cost_basis_fallback' && 'cost-basis fallback (see detail)'}
+                      {integritySummary.investmentKpiReconciliation.capitalSource === 'mixed' && 'hybrid (funded sleeves + incomplete-books floors)'}
                     </span>
                   </p>
                 </div>

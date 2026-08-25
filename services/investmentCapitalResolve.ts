@@ -1,0 +1,132 @@
+/**
+ * Single-scope and hybrid investment capital resolution (deposits − withdrawals vs incomplete-books floor).
+ * Shared by headline ROI (`investmentKpiCore`) and platform/portfolio cards (`investmentPlatformCardMetrics`).
+ */
+import { HEADLINE_NEAR_ZERO_NET_INVESTED_SAR } from './investmentCapitalAge';
+
+export type InvestmentCapitalSource =
+  | 'deposits'
+  | 'ledger_inferred'
+  | 'cost_basis_fallback'
+  /** Some sleeves use deposits − withdrawals; others floor at cost + cash (incomplete books). */
+  | 'mixed';
+
+/**
+ * When deposits are missing we infer capital from buys/sells/dividends/cash — fragile if buy history is incomplete.
+ * Cross-check against avg-cost fallback (holdings basis + broker cash + withdrawals): if inferred diverges wildly,
+ * prefer cost_basis_fallback instead of overstating or understating invested capital.
+ */
+export const LEDGER_INFERRED_FALLBACK_MIN_RATIO = 0.22;
+export const LEDGER_INFERRED_FALLBACK_MAX_RATIO = 4.5;
+/** Skip ratio cross-check when fallback gross is tiny (noise vs rounding). */
+export const LEDGER_INFERRED_FALLBACK_MIN_SAR = 400;
+
+export type ScopedInvestmentCapitalResult = {
+  capitalSource: Exclude<InvestmentCapitalSource, 'mixed'>;
+  totalInvestedSar: number;
+  netCapitalSar: number;
+  economicFloorApplied: boolean;
+  inferredInvestedFromLedgerSar: number;
+  fallbackInvestedSar: number;
+};
+
+/**
+ * Single-scope capital (one portfolio or one platform treated as one book):
+ * deposits − withdrawals when funding exists; otherwise ledger-inferred / cost+cash with incomplete-books floor.
+ */
+export function resolveScopedInvestmentCapitalSar(args: {
+  depositsRecordedSar: number;
+  withdrawnSar: number;
+  holdingsCostBasisSar: number;
+  cashSar: number;
+  buysSar?: number;
+  sellsSar?: number;
+  dividendsSar?: number;
+  /** When true (default), reject wild ledger-inferred vs cost-basis ratios. */
+  applyLedgerInferredRatioGuard?: boolean;
+}): ScopedInvestmentCapitalResult {
+  const deposits = Math.max(0, Number.isFinite(args.depositsRecordedSar) ? args.depositsRecordedSar : 0);
+  const withdrawn = Math.max(0, Number.isFinite(args.withdrawnSar) ? args.withdrawnSar : 0);
+  const cost = Math.max(0, Number.isFinite(args.holdingsCostBasisSar) ? args.holdingsCostBasisSar : 0);
+  const cash = Math.max(0, Number.isFinite(args.cashSar) ? args.cashSar : 0);
+  const buys = Math.max(0, Number.isFinite(args.buysSar) ? args.buysSar! : 0);
+  const sells = Math.max(0, Number.isFinite(args.sellsSar) ? args.sellsSar! : 0);
+  const dividends = Math.max(0, Number.isFinite(args.dividendsSar) ? args.dividendsSar! : 0);
+  const applyGuard = args.applyLedgerInferredRatioGuard !== false;
+
+  const inferredInvestedFromLedgerSar = Math.max(0, buys - sells - dividends + cash + withdrawn);
+  const fallbackInvestedSar = Math.max(0, cost + cash + withdrawn);
+  const economicDeployedSar = Math.max(0, cost + cash);
+
+  if (deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
+    const totalInvestedSar = deposits;
+    const ledgerNet = Math.max(0, totalInvestedSar - withdrawn);
+    return {
+      capitalSource: 'deposits',
+      totalInvestedSar,
+      netCapitalSar: ledgerNet,
+      economicFloorApplied: false,
+      inferredInvestedFromLedgerSar,
+      fallbackInvestedSar,
+    };
+  }
+
+  let capitalSource: Exclude<InvestmentCapitalSource, 'mixed'> = 'cost_basis_fallback';
+  let totalInvestedSar = fallbackInvestedSar;
+  if (inferredInvestedFromLedgerSar > 0) {
+    const fallbackMeaningful = fallbackInvestedSar >= LEDGER_INFERRED_FALLBACK_MIN_SAR;
+    const ratioOk =
+      !applyGuard ||
+      !fallbackMeaningful ||
+      (inferredInvestedFromLedgerSar >= fallbackInvestedSar * LEDGER_INFERRED_FALLBACK_MIN_RATIO &&
+        inferredInvestedFromLedgerSar <= fallbackInvestedSar * LEDGER_INFERRED_FALLBACK_MAX_RATIO);
+    if (ratioOk) {
+      capitalSource = 'ledger_inferred';
+      totalInvestedSar = inferredInvestedFromLedgerSar;
+    }
+  }
+
+  const ledgerNet = Math.max(0, totalInvestedSar - withdrawn);
+  const netCapitalSar = Math.max(ledgerNet, economicDeployedSar);
+  return {
+    capitalSource,
+    totalInvestedSar,
+    netCapitalSar,
+    economicFloorApplied: netCapitalSar > ledgerNet + 1e-9,
+    inferredInvestedFromLedgerSar,
+    fallbackInvestedSar,
+  };
+}
+
+/** Merge per-sleeve capital sources for headline / System Health. */
+export function aggregateInvestmentCapitalSources(
+  sources: InvestmentCapitalSource[],
+): InvestmentCapitalSource {
+  const uniq = [...new Set(sources.filter(Boolean))];
+  if (uniq.length === 0) return 'cost_basis_fallback';
+  if (uniq.length === 1) return uniq[0]!;
+  if (uniq.includes('mixed')) return 'mixed';
+  return 'mixed';
+}
+
+/**
+ * Headline platform capital: deposits − withdrawals when funding history exists.
+ * Cost-basis + idle cash is a floor only when deposits are missing (incomplete books).
+ * For `'mixed'`, `ledgerNetCapitalSar` is already the hybrid sum — pass through without re-flooring.
+ */
+export function resolveHeadlinePlatformNetCapitalSar(args: {
+  capitalSource: InvestmentCapitalSource;
+  ledgerNetCapitalSar: number;
+  economicDeployedSar: number;
+}): { platformNetSar: number; economicFloorApplied: boolean } {
+  const ledger = Math.max(0, Number.isFinite(args.ledgerNetCapitalSar) ? args.ledgerNetCapitalSar : 0);
+  const economic = Math.max(0, Number.isFinite(args.economicDeployedSar) ? args.economicDeployedSar : 0);
+  if (args.capitalSource === 'deposits' || args.capitalSource === 'mixed') {
+    return { platformNetSar: ledger, economicFloorApplied: args.capitalSource === 'mixed' };
+  }
+  const platformNetSar = Math.max(ledger, economic);
+  return {
+    platformNetSar,
+    economicFloorApplied: platformNetSar > ledger + 1e-9,
+  };
+}
