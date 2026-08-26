@@ -334,8 +334,11 @@ describe('uiAcks durable reconcile dismissals', () => {
 
   it('E2E: central apply + all prompt surfaces honor ui_acks', () => {
     const ctx = read('context/DataContext.tsx');
-    expect(ctx).toContain('acknowledgeCashBalanceDriftAfterReconcile');
-    expect(ctx).toContain('acknowledgeHoldingsIntegrityDurable');
+    expect(ctx).toContain('acknowledgeCashBalanceDriftDurable');
+    expect(ctx).toContain('observedBalance');
+    expect(ctx).toContain('observedNet');
+    expect(ctx).toContain('resolveCashBalanceDriftAcks');
+    expect(ctx).toContain('Prefer dataRef so concurrent optimistic uiAcks');
     expect(ctx).toContain('mergeUiAcks');
     expect(ctx).toContain('uiAcks: {}');
     expect(ctx).toContain("'uiAcks' in settingsUpdate");

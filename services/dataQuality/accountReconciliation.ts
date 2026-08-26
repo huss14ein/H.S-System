@@ -1,12 +1,16 @@
 import type { Account, Transaction } from '../../types';
+import { resolveTransactionAccountId } from '../../utils/wealthScope';
 
 /**
  * Net effect of all recorded transactions on this account (income +, expense −).
  * Transfers post as expense on source and income on destination, so nets are consistent.
+ * Matches both `accountId` and `account_id` so dismiss fingerprints stay stable after hydrate.
  */
 export function transactionNetForAccount(accountId: string, transactions: Transaction[]): number {
+  const id = String(accountId ?? '').trim();
+  if (!id) return 0;
   return (transactions || []).reduce((sum, t) => {
-    if (t.accountId !== accountId) return sum;
+    if (resolveTransactionAccountId(t) !== id) return sum;
     return sum + (Number(t.amount) || 0);
   }, 0);
 }
@@ -44,7 +48,7 @@ export function reconcileCashAccountBalance(
   if (account.type !== 'Checking' && account.type !== 'Savings') return null;
 
   const id = account.id;
-  const relevant = (transactions || []).filter((t) => t.accountId === id);
+  const relevant = (transactions || []).filter((t) => resolveTransactionAccountId(t) === id);
   const txCount = relevant.length;
   const transactionNet = transactionNetForAccount(id, transactions);
   const storedBalance = Number(account.balance) || 0;
@@ -77,7 +81,7 @@ export function reconcileCreditAccountBalance(
   if (account.type !== 'Credit') return null;
 
   const id = account.id;
-  const relevant = (transactions || []).filter((t) => t.accountId === id);
+  const relevant = (transactions || []).filter((t) => resolveTransactionAccountId(t) === id);
   const txCount = relevant.length;
   const transactionNet = transactionNetForAccount(id, transactions);
   const storedBalance = Number(account.balance) || 0;

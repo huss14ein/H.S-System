@@ -92,7 +92,10 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
 
 export function resolveTransactionAccountId(t: Transaction): string {
   const raw = t as Transaction & { account_id?: string };
-  return String(raw.accountId ?? raw.account_id ?? '').trim();
+  /** Prefer non-empty camelCase; fall back to snake_case (empty string must not block `account_id`). */
+  const camel = String(raw.accountId ?? '').trim();
+  if (camel) return camel;
+  return String(raw.account_id ?? '').trim();
 }
 
 /** Centralized accessors for personal data. Use instead of ad-hoc (data as any)?.personalX ?? data?.x. */
