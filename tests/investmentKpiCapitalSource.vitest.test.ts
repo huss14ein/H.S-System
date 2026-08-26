@@ -144,4 +144,36 @@ describe('investmentKpiCore capital source when deposits missing', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].driftSar).toBeCloseTo(0, 3);
   });
+
+  it('hybrid net of 0 falls back to scoped capital when deposits or cost exist', () => {
+    const holding: Holding = {
+      id: 'h1',
+      symbol: '2222.SR',
+      quantity: 100,
+      avgCost: 50,
+      currentValue: 6_000,
+      zakahClass: 'Zakatable',
+      realizedPnL: 0,
+    };
+    const checkingOnly = { ...baseAccount(), type: 'Checking' as const };
+    const data = {
+      accounts: [checkingOnly],
+      personalAccounts: [checkingOnly],
+      investments: [basePortfolio({ holdings: [holding] })],
+      personalInvestments: [basePortfolio({ holdings: [holding] })],
+      investmentTransactions: [tx({ id: 'd1', type: 'deposit', total: 5_000 })],
+      transactions: [],
+      budgets: [],
+    } as unknown as FinancialData;
+
+    const hybrid = computePersonalInvestmentKpiBreakdown(data, SAR_PER_USD, getCashZero);
+    const scoped = computePersonalInvestmentKpiBreakdown(data, SAR_PER_USD, getCashZero, {}, {
+      includePlatformHybridNets: false,
+    });
+    expect(hybrid.depositsRecordedSar).toBeCloseTo(5_000, 5);
+    expect(hybrid.holdingsCostBasisSar).toBeCloseTo(5_000, 5);
+    expect(hybrid.netCapitalSar).toBeCloseTo(scoped.netCapitalSar, 5);
+    expect(hybrid.netCapitalSar).toBeCloseTo(5_000, 5);
+    expect(hybrid.totalInvestedSar).toBeCloseTo(scoped.totalInvestedSar, 5);
+  });
 });

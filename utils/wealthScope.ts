@@ -73,8 +73,7 @@ export function getPersonalWealthData(data: FinancialData | null | undefined): P
 
   const personalAccountIds = new Set(personalAccounts.map((a) => a.id));
   const personalTransactions = (data.transactions ?? []).filter((t) => {
-    const raw = t as Transaction & { account_id?: string };
-    const accountId = raw.accountId ?? raw.account_id ?? '';
+    const accountId = resolveTransactionAccountId(t);
     return accountId.length > 0 && personalAccountIds.has(accountId);
   }) as Transaction[];
 

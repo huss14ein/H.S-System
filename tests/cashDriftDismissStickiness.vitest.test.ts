@@ -5,12 +5,13 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Account, Transaction } from '../types';
+import type { Account, FinancialData, Transaction } from '../types';
 import {
   reconcileCashAccountBalance,
   reconcileCreditAccountBalance,
   transactionNetForAccount,
 } from '../services/dataQuality/accountReconciliation';
+import { getPersonalTransactions } from '../utils/wealthScope';
 import {
   acknowledgeCashBalanceDriftDurable,
   filterUnackedCashDriftWarnings,
@@ -109,6 +110,30 @@ describe('cash drift dismiss stickiness', () => {
       transactionNet: rec!.transactionNet,
     });
     expect(filterUnackedCashDriftWarnings([{ ...rec!, showWarning: true }], map)).toEqual([]);
+  });
+
+  it('personal slice keeps snake_case rows when camelCase accountId is empty', () => {
+    const data = {
+      accounts: [{ id: 'chk-1', name: 'Checking', type: 'Checking', balance: 418.61 }],
+      transactions: [
+        { id: 'a', date: '2026-01-01', description: 'A', amount: -200, type: 'expense', category: 'Other', accountId: 'chk-1' },
+        {
+          id: 'b',
+          date: '2026-01-02',
+          description: 'B',
+          amount: -201.52,
+          type: 'expense',
+          category: 'Other',
+          accountId: '',
+          account_id: 'chk-1',
+        },
+      ],
+    } as unknown as FinancialData;
+    const txs = getPersonalTransactions(data);
+    expect(txs.map((t) => t.id).sort()).toEqual(['a', 'b']);
+    expect(transactionNetForAccount('chk-1', txs)).toBe(-401.52);
+    const rec = reconcileCashAccountBalance(data.accounts[0] as Account, txs);
+    expect(rec?.transactionNet).toBe(-401.52);
   });
 
   it('wires account_id-safe net + observed post-apply ack + hydrate merge', () => {
