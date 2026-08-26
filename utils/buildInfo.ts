@@ -3,7 +3,7 @@ declare const __APP_BUILD_SHA__: string;
 declare const __APP_BUILD_TIME__: string;
 declare const __WEALTH_ANALYTICS_V2__: boolean;
 
-export const APP_VERSION = '3.2.1.0';
+export const APP_VERSION = '3.2.2.0';
 
 /** Short git sha baked into the production bundle — use Settings → About build to verify deploy. */
 export function getBuildSha(): string {

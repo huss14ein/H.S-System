@@ -1,5 +1,5 @@
 /**
- * E2E wiring: hybrid incomplete-portfolio ROI + AI fallbacks + version 3.2.1.0
+ * E2E wiring: hybrid incomplete-portfolio ROI + AI fallbacks + version 3.2.2.0
  * across Dashboard, Investments, System Health, canonical metrics, and proxy.
  */
 import { describe, expect, it } from 'vitest';
@@ -180,9 +180,9 @@ describe('hybrid ROI E2E completion across system surfaces', () => {
     expect(read('pages/Assets.tsx')).toContain('aiActionsEnabled');
   });
 
-  it('version 3.2.1.0 and FEATURES release note', () => {
-    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '3.2.1.0'");
-    expect(read('package.json')).toContain('"version": "3.2.1.0"');
-    expect(read('FEATURES.md')).toContain('3.2.1.0');
+  it('version 3.2.2.0 and FEATURES release note', () => {
+    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '3.2.2.0'");
+    expect(read('package.json')).toContain('"version": "3.2.2.0"');
+    expect(read('FEATURES.md')).toContain('3.2.2.0');
   });
 });
