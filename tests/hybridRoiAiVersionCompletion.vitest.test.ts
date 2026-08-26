@@ -163,13 +163,66 @@ describe('hybrid ROI E2E completion across system surfaces', () => {
     expect(read('pages/Investments.tsx')).toContain('capitalSource: headlineCapitalSource');
   });
 
-  it('Netlify gemini-proxy falls back through gemini-3-flash-preview', () => {
+  it('Netlify gemini-proxy falls back through a distinct stable model after preview', () => {
     const proxy = read('netlify/functions/gemini-proxy.ts');
     expect(proxy).toContain('GEMINI_MODEL_FALLBACKS');
-    expect(proxy).toContain('gemini-3-flash-preview');
-    expect(proxy).toContain("FALLBACK_MODEL = 'gemini-3-flash-preview'");
+    expect(proxy).toContain("FALLBACK_MODEL = 'gemini-2.5-flash'");
+    expect(proxy).toContain("GEMINI_MODEL_FALLBACKS = ['gemini-2.5-flash']");
+    expect(proxy).not.toContain("FALLBACK_MODEL = 'gemini-3-flash-preview'");
+    expect(proxy).not.toContain("GEMINI_MODEL_FALLBACKS = ['gemini-3-flash-preview']");
     expect(proxy).toContain('MAX_GEMINI_MODELS_TO_TRY');
     expect(proxy).toContain('isAuthError');
+  });
+
+  it('hybrid net capital falls back to scoped when platform-card invested sum is empty', () => {
+    const account = {
+      id: 'bank-checking',
+      name: 'Checking',
+      type: 'Checking',
+      balance: 0,
+    } as Account;
+    const pf: InvestmentPortfolio = {
+      id: 'pf-orphan',
+      name: 'Manual',
+      accountId: 'bank-checking',
+      currency: 'SAR',
+      holdings: [holding(100, 50, 120, 'h1', '2222.SR')],
+    };
+    const financial = {
+      accounts: [account],
+      personalAccounts: [account],
+      investments: [pf],
+      personalInvestments: [pf],
+      investmentTransactions: [
+        {
+          id: 'd-orphan',
+          type: 'deposit',
+          total: 5_000,
+          date: '2024-01-01',
+          portfolioId: 'pf-orphan',
+          accountId: 'bank-checking',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+          currency: 'SAR',
+        },
+      ] as InvestmentTransaction[],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+      sukukPositions: [],
+    } as unknown as FinancialData;
+    const getCash = () => ({ SAR: 0, USD: 0 });
+    const breakdown = computePersonalInvestmentKpiBreakdown(financial, SAR_PER_USD, getCash, {});
+    expect(breakdown.totalInvestedSar).toBeCloseTo(5_000, 5);
+    expect(breakdown.netCapitalSar).toBeCloseTo(5_000, 5);
+    expect(breakdown.netCapitalSar).toBeCloseTo(
+      breakdown.totalInvestedSar - breakdown.totalWithdrawnSar,
+      5,
+    );
   });
 
   it('AI surfaces gate on aiActionsEnabled (LiveAdvisor, Watchlist, Commodities, Assets)', () => {

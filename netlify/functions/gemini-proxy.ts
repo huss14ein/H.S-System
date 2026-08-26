@@ -24,12 +24,12 @@ function corsHeaders(event: HandlerEvent, opts?: { health?: boolean }): Record<s
 }
 
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
-const FALLBACK_MODEL = 'gemini-3-flash-preview';
+const FALLBACK_MODEL = 'gemini-2.5-flash';
 /**
  * Extra Gemini models to try after the request + primary fallback.
  * Kept short so a dead cascade cannot hang near the client proxy timeout (~28s).
  */
-const GEMINI_MODEL_FALLBACKS = ['gemini-3-flash-preview'] as const;
+const GEMINI_MODEL_FALLBACKS = ['gemini-2.5-flash'] as const;
 /** Hard cap: requested model + at most one fallback. */
 const MAX_GEMINI_MODELS_TO_TRY = 2;
 

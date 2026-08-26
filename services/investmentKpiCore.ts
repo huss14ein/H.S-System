@@ -326,15 +326,12 @@ export function computePersonalInvestmentKpiBreakdown(
     capitalSource = scopedLegacy.capitalSource;
   }
 
-  const totalInvestedSar = includeHybrid
-    ? hybridTotalInvestedSar > 0
-      ? hybridTotalInvestedSar
-      : scopedLegacy.totalInvestedSar
+  const useHybridCapital = includeHybrid && hybridTotalInvestedSar > 0;
+  const totalInvestedSar = useHybridCapital
+    ? hybridTotalInvestedSar
     : scopedLegacy.totalInvestedSar;
-  const netCapitalSar = includeHybrid
-    ? hybridNetCapitalSar > 0 || depositsRecordedSar > 0 || holdingsCostBasisSar > 0
-      ? Math.max(0, hybridNetCapitalSar)
-      : scopedLegacy.netCapitalSar
+  const netCapitalSar = useHybridCapital
+    ? Math.max(0, hybridNetCapitalSar)
     : scopedLegacy.netCapitalSar;
   const economicDeployedSar = Math.max(0, holdingsCostBasisSar + brokerageCashSar);
   const economicFloorApplied =

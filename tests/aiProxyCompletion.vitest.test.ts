@@ -30,7 +30,7 @@ describe('AI proxy completion — CORS + health + UI', () => {
     expect(src).not.toMatch(/!healthProbe && !assertBrowserOriginAllowed/);
     expect(src).toContain('corsHeaders(event, { health: true })');
     expect(src).toContain('GEMINI_MODEL_FALLBACKS');
-    expect(src).toContain('gemini-3-flash-preview');
+    expect(src).toContain('gemini-2.5-flash');
     expect(src).toContain('MAX_GEMINI_MODELS_TO_TRY');
     expect(src).toContain('isAuthError');
   });
