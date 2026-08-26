@@ -100,7 +100,10 @@ describe('market session daily P/L E2E', () => {
   });
 
   it('headline rollup uses same platform card path', () => {
-    expect(read('services/investmentKpiCore.ts')).toContain('computePersonalPlatformsRollupSAR');
+    const core = read('services/investmentKpiCore.ts');
+    expect(core).toContain('computePersonalPlatformCardRow');
+    expect(core).toContain('breakdown.platformsRollupSar');
+    expect(core).toContain('breakdown.platformsDailyPnLSar');
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('computePersonalPlatformCardRow');
   });
 });

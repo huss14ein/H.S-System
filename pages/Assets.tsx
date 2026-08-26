@@ -619,7 +619,7 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const market = useContext(MarketDataContext);
     const auth = useContext(AuthContext);
     const canRevalue = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
-    const { isAiAvailable, aiHealthChecked } = useAI();
+    const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrencyString } = useFormatCurrency();
     const metrics = useExtendedCanonicalMetrics();
     const { sarPerUsd, extendedReady } = metrics;
@@ -714,6 +714,10 @@ const Assets: React.FC<AssetsProps> = ({ pageAction, clearPageAction }) => {
     const handleUpdatePrices = async () => {
         const commodityHoldings = commodityList;
         if (commodityHoldings.length === 0) return;
+        if (!aiActionsEnabled) {
+            console.warn('AI unavailable — skip commodity price update.');
+            return;
+        }
         setIsUpdatingPrices(true);
         setGroundingChunks([]);
         try {

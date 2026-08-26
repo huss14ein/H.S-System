@@ -112,15 +112,11 @@ serve(async (req: Request) => {
       const grokConfigured = Boolean(grokApiKey);
       const anyProviderConfigured = geminiConfigured || anthropicConfigured || grokConfigured;
 
+      // Unauthenticated health must not enumerate which providers are wired.
       return new Response(
         JSON.stringify({
           ok: true,
           anyProviderConfigured,
-          providers: {
-            gemini: { configured: geminiConfigured },
-            anthropic: { configured: anthropicConfigured },
-            grok: { configured: grokConfigured },
-          },
         }),
         {
           headers: { ...cors, "Content-Type": "application/json" },

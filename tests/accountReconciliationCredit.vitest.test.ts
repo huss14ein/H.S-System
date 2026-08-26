@@ -31,8 +31,32 @@ describe('reconcileCreditAccountBalance', () => {
     expect(rec?.disputedLikeCount).toBe(1);
   });
 
-  it('returns null for non-credit accounts', () => {
-    const checking = { id: 'a1', type: 'Checking', balance: 1000 } as Account;
-    expect(reconcileCreditAccountBalance(checking, txs)).toBeNull();
+  it('includes snake_case account_id rows in net and warning', () => {
+    const mixed = [
+      { id: 't1', date: '2026-04-01', description: 'A', amount: -100, type: 'expense', category: 'Other', account_id: 'cc-1' },
+      { id: 't2', date: '2026-04-02', description: 'B', amount: -50, type: 'expense', category: 'Other', accountId: 'cc-1' },
+      { id: 't3', date: '2026-04-03', description: 'Other', amount: -999, type: 'expense', category: 'Other', accountId: 'chk-1' },
+    ] as Transaction[];
+    expect(transactionNetForAccount('cc-1', mixed)).toBe(-150);
+    const rec = reconcileCreditAccountBalance(credit, mixed);
+    expect(rec?.txCount).toBe(2);
+    expect(rec?.transactionNet).toBe(-150);
+    expect(rec?.showWarning).toBe(true);
+  });
+
+  it('empty camelCase accountId does not block account_id', () => {
+    const txs = [
+      {
+        id: 't1',
+        date: '2026-04-01',
+        description: 'Snake only',
+        amount: -40,
+        type: 'expense',
+        category: 'Other',
+        accountId: '',
+        account_id: 'cc-1',
+      },
+    ] as unknown as Transaction[];
+    expect(transactionNetForAccount('cc-1', txs)).toBe(-40);
   });
 });

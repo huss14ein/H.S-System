@@ -160,11 +160,24 @@ function extractErrorMessageParts(error: any): string[] {
     return [...new Set(parts)];
 }
 
+/** Strip secrets / huge provider dumps before showing AI errors in the UI. */
+function sanitizeAiErrorLeak(raw: string): string {
+    let s = String(raw ?? '');
+    s = s.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+    s = s.replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted-key]');
+    s = s.replace(/sk-[a-zA-Z0-9_-]{20,}/g, '[redacted-key]');
+    s = s.replace(/xai-[a-zA-Z0-9_-]{20,}/g, '[redacted-key]');
+    s = s.replace(/("?(?:api[_-]?key|authorization)"?\s*[:=]\s*)"[^"]+"/gi, '$1"[redacted]"');
+    s = s.replace(/request_id["']?\s*[:=]\s*["'][^"']+["']/gi, 'request_id=[redacted]');
+    if (s.length > 280) s = `${s.slice(0, 280)}…`;
+    return s;
+}
+
 export function formatAiError(error: any): string {
     console.error("Error from AI Service:", error);
     const messageParts = extractErrorMessageParts(error);
     let message = messageParts[0] || String(error ?? '');
-    const mergedMessage = messageParts.join(' | ') || message;
+    const mergedMessage = sanitizeAiErrorLeak(messageParts.join(' | ') || message);
     // Anthropic / Claude "no credits" (show friendly copy; hide request_id / raw JSON)
     if (/credit balance is too low|insufficient credits|Please go to Plans & Billing/i.test(mergedMessage)) {
         return [
@@ -186,7 +199,7 @@ export function formatAiError(error: any): string {
                         "Add credits/billing for the current provider, or configure another provider key (Gemini/OpenAI/Anthropic) on the backend.",
                     ].join(' ');
                 }
-                return `AI Service Error: ${innerMsg.trim()}`;
+                return `AI Service Error: ${sanitizeAiErrorLeak(innerMsg.trim())}`;
             }
         } catch {
             // fall through to existing formatter
@@ -218,16 +231,19 @@ export function formatAiError(error: any): string {
     if (/GROK_ACCOUNT_NOT_USABLE|Grok \(xAI\)|xAI Grok returned|console\.x\.ai|no credits or licenses|does not have permission to execute/i.test(mergedMessage)) {
         return `Grok (xAI) isn’t usable for this team yet (credits or license). Add billing at https://console.x.ai or set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in Netlify so AI runs on another provider. You can also set GROK_DISABLED=1 to skip Grok without removing the key.`;
     }
-    if (/API key not valid/i.test(mergedMessage)) {
+    if (/API key not valid|API_KEY_INVALID|invalid.?api.?key/i.test(mergedMessage)) {
         return "The AI service API key is not valid. Please check the backend configuration.";
     }
     if (/Inactivity Timeout|request timed out while waiting for proxy|AI request timed out at the proxy/i.test(mergedMessage)) {
         return "The AI request took too long and timed out at the server. Please try again, or continue with the auto-filled default analyst settings.";
     }
-    if (/model|404|not found|invalid model|unsupported/i.test(mergedMessage)) {
-        return `There was an issue with the specified AI model. ${mergedMessage}`;
+    if (/Load failed|Failed to fetch|NetworkError|network request failed|Could not connect to the AI proxy/i.test(mergedMessage)) {
+        return "Could not reach the AI service (network). Check your connection, stay on the Finova site, and try again. If this persists after a refresh, the AI proxy may be warming up — wait a few seconds and retry.";
     }
-    if (mergedMessage) return `AI Service Error: ${mergedMessage}`;
+    if (/model|404|not found|invalid model|unsupported/i.test(mergedMessage)) {
+        return "There was an issue with the specified AI model. Please try again — the proxy will attempt a supported fallback.";
+    }
+    if (mergedMessage) return `AI Service Error: ${sanitizeAiErrorLeak(mergedMessage)}`;
     return "An unknown error occurred while communicating with the AI service.";
 }
 
@@ -589,6 +605,11 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
     clearAiProxySessionBlock();
     const endpoints = getGeminiProxyEndpoints();
     let lastError: Error | null = null;
+    const isNetworkTypeError = (error: unknown): boolean => {
+        if (!(error instanceof TypeError)) return false;
+        const msg = error.message || '';
+        return /load failed|failed to fetch|networkerror|network request failed|fetch/i.test(msg);
+    };
 
     for (const endpoint of endpoints) {
         const controller = new AbortController();
@@ -600,7 +621,8 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
             }
             externalSignal.addEventListener('abort', onExternalAbort, { once: true });
         }
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        // Netlify function max ~26s; allow cold start + model cascade with a small client buffer.
+        const timeoutId = setTimeout(() => controller.abort(), 28000);
         try {
             const { signal: _unusedSignal, ...safePayload } = payload;
             const authHeaders = await getAiProxyAuthorizationHeader();
@@ -640,7 +662,7 @@ async function invokeGeminiProxy(payload: { model: string, contents: any, config
                 lastError = new Error('AI request timed out while waiting for proxy response.');
                 continue;
             }
-            if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
+            if (isNetworkTypeError(error)) {
                 lastError = new Error('Could not connect to the AI proxy function. Please ensure the Netlify function is deployed correctly.');
                 continue;
             }
@@ -1892,11 +1914,13 @@ export interface InvestmentHubAiMeta {
   totalValueSAR?: number;
   /** Paper P/L in SAR (from app engine — do not invent). */
   unrealizedGainLossSAR?: number;
-  /** ROI % on net invested after withdrawals. */
+  /** ROI % on hybrid net invested. */
   roiPct?: number;
   netInvestedSAR?: number;
   withdrawnSAR?: number;
   depositsSAR?: number;
+  /** deposits | mixed | ledger_inferred | cost_basis_fallback */
+  capitalSource?: string;
   principalFullyRecovered?: boolean;
   investmentAgeLabel?: string;
   /** Estimated one-day change SAR. */
@@ -1911,7 +1935,7 @@ export interface InvestmentHubAiMeta {
 export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: InvestmentHubAiMeta): Promise<string> => {
   const symKey = holdings.map((h) => (h.symbol ?? '') + h.quantity).join(',');
   const metaKey = meta
-    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.netInvestedSAR ?? ''}|${meta.principalFullyRecovered ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.sukukPositionsValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
+    ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.netInvestedSAR ?? ''}|${meta.capitalSource ?? ''}|${meta.principalFullyRecovered ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.sukukPositionsValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
     : '';
   const cacheKey = `getInvestmentAIAnalysis:${symKey}:${metaKey}`;
   const cached = getFromCache(cacheKey);
@@ -1922,12 +1946,22 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: Invest
       facts.push(`Tab: ${meta.activeTab ?? 'Investments'}.`);
       facts.push(`Portfolios (personal): ${meta.portfolioCount ?? 'n/a'}; holdings listed: ${meta.holdingCount ?? 'n/a'}; watchlist symbols: ${meta.watchlistCount ?? 'n/a'}.`);
       if (typeof meta.totalValueSAR === 'number') facts.push(`Present value (SAR, app-calculated): ${meta.totalValueSAR.toFixed(0)}.`);
-      if (typeof meta.netInvestedSAR === 'number') facts.push(`Net invested after withdrawals (SAR): ${meta.netInvestedSAR.toFixed(0)}.`);
+      if (typeof meta.netInvestedSAR === 'number') {
+        const srcNote =
+          meta.capitalSource === 'mixed'
+            ? ' (hybrid: incomplete portfolios floor at cost + cash)'
+            : meta.capitalSource === 'cost_basis_fallback'
+              ? ' (cost-basis fallback)'
+              : meta.capitalSource === 'ledger_inferred'
+                ? ' (ledger-inferred)'
+                : ' after withdrawals';
+        facts.push(`Net invested (SAR): ${meta.netInvestedSAR.toFixed(0)}${srcNote}.`);
+      }
       if (typeof meta.depositsSAR === 'number') facts.push(`Deposits recorded (SAR): ${meta.depositsSAR.toFixed(0)}.`);
       if (typeof meta.withdrawnSAR === 'number') facts.push(`Withdrawals recorded (SAR): ${meta.withdrawnSAR.toFixed(0)}.`);
       if (typeof meta.unrealizedGainLossSAR === 'number') facts.push(`Growth vs net invested (SAR): ${meta.unrealizedGainLossSAR.toFixed(0)}.`);
       if (meta.principalFullyRecovered) facts.push('Principal fully recovered — remaining value is profit.');
-      else if (typeof meta.roiPct === 'number' && Number.isFinite(meta.roiPct)) facts.push(`Portfolio ROI on net invested after withdrawals (%): ${meta.roiPct.toFixed(2)}.`);
+      else if (typeof meta.roiPct === 'number' && Number.isFinite(meta.roiPct)) facts.push(`Portfolio ROI on net invested (%): ${meta.roiPct.toFixed(2)}.`);
       if (meta.investmentAgeLabel) facts.push(`Time invested: ${meta.investmentAgeLabel}.`);
       if (typeof meta.dailyPnLSAR === 'number') facts.push(`Estimated daily P/L (SAR): ${meta.dailyPnLSAR.toFixed(0)}.`);
       if (typeof meta.commoditiesValueSAR === 'number') facts.push(`Commodities value (SAR): ${meta.commoditiesValueSAR.toFixed(0)}.`);

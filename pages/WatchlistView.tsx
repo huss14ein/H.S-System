@@ -1094,6 +1094,10 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
     }, [watchlistAiLang, aiWatchlistTips, watchlistTipsAr, aiActionsEnabled]);
 
     const handleAnalyzeTrades = useCallback(async () => {
+        if (!aiActionsEnabled) {
+            setAiTradeError('AI unavailable — configure provider keys on the Netlify proxy.');
+            return;
+        }
         setAiTradeError(null);
         setAiTradeLoading(true);
         setTradeAnalysisAr(null);
@@ -1106,9 +1110,13 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         } finally {
             setAiTradeLoading(false);
         }
-    }, [recentTransactionsForAnalysis, analysisContext]);
+    }, [recentTransactionsForAnalysis, analysisContext, aiActionsEnabled]);
 
     const handleGetWatchlistTips = useCallback(async () => {
+        if (!aiActionsEnabled) {
+            setAiWatchlistError('AI unavailable — configure provider keys on the Netlify proxy.');
+            return;
+        }
         if (!data?.watchlist?.length) {
             setAiWatchlistError('Add at least one symbol to your watchlist first.');
             return;
@@ -1139,7 +1147,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         } finally {
             setAiWatchlistLoading(false);
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, aiActionsEnabled]);
     const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => {
         void addPriceAlert({ symbol, targetPrice, currency }, { confirmed: true });
     };
@@ -1447,7 +1455,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                                 </ul>
                             </div>
                             <div className="flex flex-col gap-2">
-                                <button type="button" onClick={handleAnalyzeTrades} disabled={aiTradeLoading} className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-60 text-sm font-medium">
+                                <button type="button" onClick={handleAnalyzeTrades} disabled={aiTradeLoading || !aiActionsEnabled} title={!aiActionsEnabled ? 'AI unavailable — configure provider keys' : undefined} className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-60 text-sm font-medium">
                                     <SparklesIcon className="h-4 w-4" aria-hidden /> {aiTradeLoading ? 'Analyzing…' : 'Analyze trades'}
                                 </button>
                                 {onNavigateToTab && (
@@ -1490,7 +1498,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 mb-2"><SparklesIcon className="h-5 w-5 text-amber-500"/>Watchlist Tips</h4>
                     <p className="text-xs text-slate-600 mb-3">AI suggestions for your watchlist symbols (diversification, themes, concepts).</p>
-                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !data?.watchlist?.length} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
+                    <button onClick={handleGetWatchlistTips} disabled={aiWatchlistLoading || !aiActionsEnabled || !data?.watchlist?.length} title={!aiActionsEnabled ? 'AI unavailable — configure provider keys' : undefined} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-60 text-sm font-medium">
                         <SparklesIcon className="h-4 w-4" /> {aiWatchlistLoading ? 'Generating...' : 'Get Recommendations'}
                     </button>
                     {aiWatchlistError && <div className="mt-2"><p className="text-xs text-red-600">{aiWatchlistError}</p><button type="button" onClick={handleGetWatchlistTips} className="mt-1 text-xs font-medium text-primary hover:underline">Retry</button></div>}

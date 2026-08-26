@@ -9,6 +9,8 @@ import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrou
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
 import { getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
 import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../services/geminiService';
+import { useAI } from '../context/AiContext';
+import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
 import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
 import { HeadsetIcon } from './icons/HeadsetIcon';
@@ -20,6 +22,7 @@ const ADVISOR_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
     const { data, addWatchlistItem, getAvailableCashForAccount } = useContext(DataContext)!;
+    const { aiActionsEnabled, aiHealthChecked, isAiAvailable } = useAI();
     const simulatedPrices = useCanonicalSimulatedPrices();
     const { netWorth: headlineNetWorthSar, liquidCashSar: headlineLiquidCashSar, kpiSnapshot, sarPerUsd } =
         useCanonicalFinancialMetrics();
@@ -237,7 +240,7 @@ ${recentSnippet}${budgetSnippet}
                 });
             } catch (primaryError) {
                 response = await invokeAI({
-                    model: 'gemini-2.0-flash',
+                    model: 'gemini-2.5-flash',
                     contents: chatHistory,
                     config: {
                         tools: [{ functionDeclarations }],
@@ -302,7 +305,7 @@ ${recentSnippet}${budgetSnippet}
 
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!userInput.trim() || isLoading) return;
+        if (!userInput.trim() || isLoading || !aiActionsEnabled) return;
 
         const newUserContent: Content = { role: 'user', parts: [{ text: userInput }] };
         const newHistory = [...history, newUserContent];
@@ -328,7 +331,18 @@ ${recentSnippet}${budgetSnippet}
                     <p className="text-sm text-gray-600 mt-2 max-w-sm mx-auto">
                         Get real-time answers about your accounts, budgets, and investments. Ask me anything!
                     </p>
-                    <button onClick={() => setView('chat')} className="mt-6 px-6 py-3 bg-primary text-white font-semibold rounded-full hover:bg-secondary transition-colors">
+                    {aiHealthChecked && !isAiAvailable && (
+                        <div className="mt-4 text-left">
+                            <AiProxyUnavailableHint variant="banner" />
+                        </div>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => setView('chat')}
+                        disabled={!aiActionsEnabled}
+                        title={!aiActionsEnabled ? 'AI unavailable — configure provider keys' : undefined}
+                        className="mt-6 px-6 py-3 bg-primary text-white font-semibold rounded-full hover:bg-secondary transition-colors disabled:bg-gray-400"
+                    >
                         Start Chat
                     </button>
                 </div>
@@ -395,11 +409,11 @@ ${recentSnippet}${budgetSnippet}
                                 type="text"
                                 value={userInput}
                                 onChange={e => setUserInput(e.target.value)}
-                                placeholder="Ask about your finances..."
+                                placeholder={aiActionsEnabled ? 'Ask about your finances...' : 'AI unavailable — check proxy keys'}
                                 className="w-full p-3 pr-12 border border-gray-300 rounded-full focus:ring-primary focus:border-primary"
-                                disabled={isLoading}
+                                disabled={isLoading || !aiActionsEnabled}
                             />
-                            <button type="submit" disabled={isLoading || !userInput.trim()} className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-primary hover:text-secondary disabled:text-gray-300">
+                            <button type="submit" disabled={isLoading || !aiActionsEnabled || !userInput.trim()} className="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-primary hover:text-secondary disabled:text-gray-300">
                                 <SendIcon className="h-6 w-6" />
                             </button>
                         </div>

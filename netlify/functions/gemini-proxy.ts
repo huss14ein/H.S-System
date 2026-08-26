@@ -24,7 +24,14 @@ function corsHeaders(event: HandlerEvent, opts?: { health?: boolean }): Record<s
 }
 
 /** Fallback model if the requested one is unavailable (e.g. preview not enabled). */
-const FALLBACK_MODEL = 'gemini-2.0-flash';
+const FALLBACK_MODEL = 'gemini-3-flash-preview';
+/**
+ * Extra Gemini models to try after the request + primary fallback.
+ * Kept short so a dead cascade cannot hang near the client proxy timeout (~28s).
+ */
+const GEMINI_MODEL_FALLBACKS = ['gemini-3-flash-preview'] as const;
+/** Hard cap: requested model + at most one fallback. */
+const MAX_GEMINI_MODELS_TO_TRY = 2;
 
 type NormalizedResponse = {
   text: string | null;
@@ -42,6 +49,14 @@ function isModelError(err: unknown): boolean {
   return (
     /model|404|not found|invalid model|unsupported/i.test(msg) ||
     (msg.includes('400') && /model|name/i.test(msg))
+  );
+}
+
+/** Auth/key failures will not succeed on another model with the same key — fail fast. */
+function isAuthError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /api.?key|invalid.?key|API_KEY_INVALID|401|permission.?denied|unauthenticated|unauthorized|PERMISSION_DENIED/i.test(
+    msg,
   );
 }
 
@@ -100,27 +115,37 @@ async function callGemini(
   config: unknown
 ): Promise<NormalizedResponse> {
   const ai = new GoogleGenAI({ apiKey });
-  const payload = { model: requestedModel, contents, config };
-  try {
-    const response = await ai.models.generateContent(payload);
-    const text = extractText(response);
-    return {
-      text: text ?? null,
-      candidates: response.candidates ?? [],
-      functionCalls: (response as any).functionCalls ?? undefined,
-    };
-  } catch (firstError) {
-    if (isModelError(firstError) && requestedModel !== FALLBACK_MODEL) {
-      const response = await ai.models.generateContent({ ...payload, model: FALLBACK_MODEL });
+  const modelsToTry = [
+    requestedModel,
+    ...GEMINI_MODEL_FALLBACKS.filter((m) => m !== requestedModel),
+    ...(requestedModel !== FALLBACK_MODEL ? [FALLBACK_MODEL] : []),
+  ]
+    .filter((m, i, arr) => Boolean(m) && arr.indexOf(m) === i)
+    .slice(0, MAX_GEMINI_MODELS_TO_TRY);
+  let lastError: unknown = null;
+  for (const model of modelsToTry) {
+    try {
+      const response = await ai.models.generateContent({ model, contents, config });
       const text = extractText(response);
       return {
         text: text ?? null,
         candidates: response.candidates ?? [],
         functionCalls: (response as any).functionCalls ?? undefined,
       };
+    } catch (err) {
+      lastError = err;
+      // Same API key will fail every model — do not burn the client timeout.
+      if (isAuthError(err)) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
+      // Model/quota: try next (capped). Other errors: still allow one fallback then stop.
+      if (isModelError(err) || isQuotaError(err)) {
+        continue;
+      }
+      continue;
     }
-    throw firstError;
   }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Gemini invocation failed'));
 }
 
 async function callClaude(
@@ -343,18 +368,13 @@ const handler: Handler = async (event: HandlerEvent) => {
       const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
       const anyProviderConfigured =
         geminiConfigured || anthropicConfigured || grokConfigured || openaiConfigured;
+      // Unauthenticated health must not enumerate which providers are wired (info disclosure).
       return {
         statusCode: 200,
         headers: { ...corsHeaders(event, { health: true }), "Content-Type": "application/json" },
         body: JSON.stringify({
           ok: true,
           anyProviderConfigured,
-          providers: {
-            gemini: { configured: geminiConfigured, primaryConfigured: Boolean(primaryApiKey), backupConfigured: Boolean(backupApiKey) },
-            anthropic: { configured: anthropicConfigured },
-            grok: { configured: grokConfigured, keyPresent: grokKeyPresent, skippedByEnv: grokKeyPresent && isGrokDisabled() },
-            openai: { configured: openaiConfigured },
-          },
         }),
       };
     }

@@ -64,7 +64,7 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
       })
       .filter((x): x is NonNullable<typeof x> => x != null);
     return filterUnackedCashDriftWarnings(raw, acks);
-  }, [acks, data?.accounts, data?.transactions]);
+  }, [acks, data?.accounts, data?.transactions, data?.personalAccounts, data?.personalTransactions]);
 
   if (!data || rows.length === 0 || !ctx?.updateSettings) return null;
 

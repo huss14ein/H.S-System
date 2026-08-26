@@ -127,6 +127,7 @@ import {
   type PortfolioMetricsBundle,
 } from '../services/investmentPlatformCardMetrics';
 import { useCanonicalSpotFx, buildInvestmentsHeadlineKpiRow, presentHeadlineInvestmentGrowth, pickHeadlineInvestmentExposure } from '../hooks/useCanonicalFinancialMetrics';
+import { describeInvestmentNetInvested, netInvestedSubtitle } from '../services/investmentCapitalResolve';
 import { InvestmentsMetricsProvider, useInvestmentsCanonicalMetrics } from '../context/InvestmentsMetricsContext';
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { ResolvedSymbolLabel } from '../components/SymbolWithCompanyName';
@@ -3358,7 +3359,7 @@ const PlatformCardInner: React.FC<{
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt
                             className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
-                            title="Present value minus net invested. Net invested is deposits minus withdrawals on this platform (reconcile cash stamps excluded)."
+                            title={platformGrowth.netInvestedDefinition}
                         >
                             Growth
                         </dt>
@@ -3378,7 +3379,7 @@ const PlatformCardInner: React.FC<{
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt
                             className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
-                            title="Growth ÷ net invested after withdrawals (deposits − withdrawals). Cost basis is used only if deposits were never recorded."
+                            title={`${platformGrowth.netInvestedDefinition} ROI = growth ÷ that net invested.`}
                         >
                             ROI
                         </dt>
@@ -3392,14 +3393,17 @@ const PlatformCardInner: React.FC<{
                     <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/90 px-4 py-3.5 min-w-0 shadow-sm flex flex-col items-center justify-center text-center min-h-[118px]">
                         <dt
                             className="metric-label w-full text-[11px] font-semibold text-slate-500 uppercase tracking-[0.14em] leading-tight"
-                            title="Deposits minus withdrawals on this platform (reconcile cash stamps excluded). ROI uses this net invested amount."
+                            title={platformGrowth.netInvestedDefinition}
                         >
                             Net invested
                         </dt>
                         <dd className="metric-value w-full mt-1.5 flex flex-col items-center justify-center text-slate-800">
                             <CurrencyDualDisplay value={netCapitalSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
                             <span className="text-[10px] text-slate-500 mt-1 font-normal">
-                                Deposited {formatCurrencyString(totalInvestedSAR, { inCurrency: 'SAR', digits: 0 })} − withdrawn {formatCurrencyString(totalWithdrawnSAR, { inCurrency: 'SAR', digits: 0 })}
+                                {netInvestedSubtitle(platformGrowth.capitalSource)}
+                                {platformGrowth.capitalSource === 'deposits'
+                                  ? ` · Deposited ${formatCurrencyString(totalInvestedSAR, { inCurrency: 'SAR', digits: 0 })} − withdrawn ${formatCurrencyString(totalWithdrawnSAR, { inCurrency: 'SAR', digits: 0 })}`
+                                  : ''}
                             </span>
                         </dd>
                     </div>
@@ -3569,8 +3573,14 @@ const PlatformCardInner: React.FC<{
                                     <p className="px-4 sm:px-5 pt-3 pb-2 text-[11px] text-slate-600 leading-snug bg-gradient-to-r from-slate-50/90 to-teal-50/30 border-b border-slate-100/80">
                                         <span className="font-semibold text-slate-700">Portfolio KPIs</span>
                                         {' — '}
-                                        <strong>Growth</strong> and <strong>ROI</strong> are vs net invested (deposits − withdrawals
-                                        {sortedPortfolios.length > 1 ? ', including a share of untagged platform transfers' : ''}).
+                                        <strong>Growth</strong> and <strong>ROI</strong> are vs hybrid net invested
+                                        {portfolioGrowth?.capitalSource === 'mixed'
+                                          ? ' (funded sleeves: deposits − withdrawals; incomplete books: cost + cash floor'
+                                          : portfolioGrowth?.capitalSource === 'cost_basis_fallback'
+                                            ? ' (cost basis + cash — no deposit history'
+                                            : ' (deposits − withdrawals'}
+                                        {sortedPortfolios.length > 1 ? '; untagged platform transfers are shared' : ''}
+                                        ).
                                         Idle cash is one broker pool — <strong>Available cash</strong> matches the platform header; ROI present value includes this portfolio’s share of that cash so undeployed deposits are not counted as a loss.
                                         {' '}
                                         <strong>Week / Month P/L</strong> use mark-to-market from period start (end live value − start snapshot − net deposits/withdrawals), same as Wealth Analytics.
@@ -5930,6 +5940,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     principalFullyRecovered,
     investmentAgeLabel,
     firstCapitalDepositYmd,
+    capitalSource: headlineCapitalSource,
   } = headlineKpis ?? {
     totalValue: 0,
     totalGainLoss: 0,
@@ -5945,7 +5956,9 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
     principalFullyRecovered: false,
     investmentAgeLabel: null,
     firstCapitalDepositYmd: null,
+    capitalSource: 'deposits' as const,
   };
+  const headlineNetInvestedDefinition = describeInvestmentNetInvested(headlineCapitalSource ?? 'deposits');
 
   const investmentsHubAiContext = useMemo(() => {
     if (!data) return undefined;
@@ -5965,6 +5978,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       netInvestedSAR: netInvestedSar,
       depositsSAR: depositsRecordedSar,
       withdrawnSAR: totalWithdrawnSar,
+      capitalSource: headlineCapitalSource,
       principalFullyRecovered,
       investmentAgeLabel: investmentAgeLabel ?? undefined,
       dailyPnLSAR: totalDailyPnL,
@@ -5973,7 +5987,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
       appDisplayCurrency,
       executionLogCount,
     };
-  }, [data, activeTab, totalValue, totalGainLoss, roi, netInvestedSar, depositsRecordedSar, totalWithdrawnSar, principalFullyRecovered, investmentAgeLabel, totalDailyPnL, commoditiesValueSAR, sukukPositionsValueSAR, appDisplayCurrency]);
+  }, [data, activeTab, totalValue, totalGainLoss, roi, netInvestedSar, depositsRecordedSar, totalWithdrawnSar, headlineCapitalSource, principalFullyRecovered, investmentAgeLabel, totalDailyPnL, commoditiesValueSAR, sukukPositionsValueSAR, appDisplayCurrency]);
 
   const getTrendString = (trend: number) => {
     return `${trend >= 0 ? '+' : ''}${trend.toFixed(2)}%`;
@@ -6517,7 +6531,7 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 indicatorColor={totalGainLoss >= 0 ? 'green' : 'red'}
                 valueColor={totalGainLoss >= 0 ? 'text-emerald-700' : 'text-rose-700'}
                 icon={<ArrowsRightLeftIcon className={`h-5 w-5 ${totalGainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Present value minus net invested. Net invested is deposits minus withdrawals (broker-cash reconcile stamps excluded), plus commodity and direct Sukuk purchase costs."
+                tooltip={headlineNetInvestedDefinition}
                 trend={
                     headlineKpisReady
                       ? principalFullyRecovered
@@ -6541,12 +6555,12 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 density="compact"
                 indicatorColor={(presentedGrowth?.isGrowing ?? roi >= 0) ? 'green' : 'red'}
                 icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${(presentedGrowth?.isGrowing ?? roi >= 0) ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
-                tooltip="Growth ÷ net invested after withdrawals. When deposit history exists this is (present value − (deposits − withdrawals + commodity/Sukuk cost)) ÷ that net invested. Cost-basis is used only if deposits were never recorded."
+                tooltip={`Growth ÷ net invested. ${headlineNetInvestedDefinition}`}
                 footer={
                     headlineKpisReady
                       ? principalFullyRecovered
                         ? 'You withdrew all deposits; leftover value is profit.'
-                        : `On ${formatCurrencyString(netInvestedSar, { inCurrency: 'SAR', digits: 0 })} still invested`
+                        : `${netInvestedSubtitle(headlineCapitalSource ?? 'deposits')} · ${formatCurrencyString(netInvestedSar, { inCurrency: 'SAR', digits: 0 })} still invested`
                       : undefined
                 }
             />

@@ -222,7 +222,8 @@ describe('headline ROI after withdrawals', () => {
     });
     const breakdown = computePersonalInvestmentKpiBreakdown(financial, SAR_PER_USD, getCashZero);
     expect(breakdown.capitalSource).toBe('ledger_inferred');
-    expect(breakdown.netCapitalSar).toBeCloseTo(20_000, 5);
+    // Hybrid net already applies the incomplete-books cost floor (same as headline).
+    expect(breakdown.netCapitalSar).toBeCloseTo(70_000, 5);
 
     const headline = computeHeadlinePersonalInvestmentRoiDecimal(
       financial,
@@ -485,6 +486,89 @@ describe('platform and portfolio ROI after withdrawals', () => {
     expect(a.totalGainLossSAR).toBeCloseTo(0, 5);
     expect(b.totalGainLossSAR).toBeCloseTo(0, 5);
   });
+
+  it('mixed siblings: funded portfolio deposits + incomplete cost floor (not deposits-only net)', () => {
+    const awaed = basePortfolio({
+      id: 'pf-awaed',
+      name: 'Awaed',
+      holdings: [holding(100, 100, 160)],
+    });
+    const other = basePortfolio({
+      id: 'pf-other',
+      name: 'Other',
+      holdings: [
+        {
+          id: 'h2',
+          symbol: '1120.SR',
+          quantity: 200,
+          avgCost: 200,
+          currentValue: 50_000,
+          zakahClass: 'Zakatable',
+          realizedPnL: 0,
+          assetClass: 'Stock',
+        },
+      ],
+    });
+    const account = baseAccount();
+    const prices = { '2222.SR': { price: 160 }, '1120.SR': { price: 250 } };
+    const financial = {
+      accounts: [account],
+      personalAccounts: [account],
+      investments: [awaed, other],
+      personalInvestments: [awaed, other],
+      investmentTransactions: [
+        tx({ id: 'd-awaed', type: 'deposit', total: 20_000, date: '2024-01-01', portfolioId: 'pf-awaed' }),
+      ],
+      transactions: [],
+      budgets: [],
+      goals: [],
+      commodityHoldings: [],
+      assets: [],
+      liabilities: [],
+      sukukPositions: [],
+    } as unknown as FinancialData;
+
+    const bundle = computePortfolioMetricsBundle({
+      siblingPortfolios: [awaed, other],
+      transactions: financial.investmentTransactions as InvestmentTransaction[],
+      accounts: [account],
+      allInvestments: [awaed, other],
+      sarPerUsd: SAR_PER_USD,
+      simulatedPrices: prices,
+      accountAvailableCashByCurrency: { SAR: 0, USD: 0 },
+    });
+    const awaedM = bundle.metricsByPortfolioId.get('pf-awaed')!;
+    const otherM = bundle.metricsByPortfolioId.get('pf-other')!;
+    expect(awaedM.netCapitalSAR).toBeCloseTo(20_000, 5);
+    expect(otherM.depositsRecordedSAR ?? 0).toBe(0);
+    expect(otherM.netCapitalSAR).toBeCloseTo(40_000, 5); // 200 qty × 200 avg
+
+    const platform = computePlatformCardMetrics({
+      portfolios: [awaed, other],
+      transactions: financial.investmentTransactions as InvestmentTransaction[],
+      accounts: [account],
+      allInvestments: [awaed, other],
+      sarPerUsd: SAR_PER_USD,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices: prices,
+      platformCurrency: 'SAR',
+    });
+    // Must include incomplete sibling cost floor — not deposits-only 20k.
+    expect(platform.netCapitalSAR).toBeCloseTo(60_000, 5);
+    expect(platform.totalValueInSAR).toBeCloseTo(16_000 + 50_000, 0);
+
+    const headline = computeHeadlinePersonalInvestmentRoiDecimal(
+      financial,
+      SAR_PER_USD,
+      () => ({ SAR: 0, USD: 0 }),
+      prices,
+    );
+    expect(headline.capitalSource).toBe('mixed');
+    expect(headline.netCapitalSar).toBeCloseTo(60_000, 5);
+    expect(headline.totalExposureSar).toBeCloseTo(66_000, 0);
+    expect(headline.roi).toBeCloseTo(6_000 / 60_000, 8);
+    expect(headline.roi).toBeLessThan(1); // not the inflated ~156% deposits-only path
+  });
 });
 
 describe('ROI-after-withdrawals surface wiring', () => {
@@ -505,15 +589,17 @@ describe('ROI-after-withdrawals surface wiring', () => {
 
   it('headline helper does not max deposits-path capital with cost basis', () => {
     const core = read('services/investmentKpiCore.ts');
+    const resolve = read('services/investmentCapitalResolve.ts');
     expect(core).toContain('resolveHeadlinePlatformNetCapitalSar');
-    expect(core).toContain("args.capitalSource === 'deposits'");
+    expect(resolve).toContain("args.capitalSource === 'deposits'");
+    expect(resolve).toContain("'mixed'");
     expect(core).not.toMatch(
       /platformNetForHeadline = Math\.max\(breakdown\.netCapitalSar, economicDeployedSar\)/,
     );
   });
 
-  it('Dashboard ROI card explains withdrawals', () => {
-    expect(read('pages/Dashboard.tsx')).toContain('net invested after withdrawals');
+  it('Dashboard ROI card explains net invested', () => {
+    expect(read('pages/Dashboard.tsx')).toContain('describeInvestmentNetInvested');
     expect(read('pages/Dashboard.tsx')).toContain('commodities + Sukuk');
     expect(read('pages/Dashboard.tsx')).toContain('presentHeadlineInvestmentGrowth');
     expect(read('pages/Dashboard.tsx')).toContain('investmentAgeLabel');
@@ -527,8 +613,8 @@ describe('ROI-after-withdrawals surface wiring', () => {
       ['components/analytics/ExecutiveKpiGrid.tsx', ['presentHeadlineInvestmentGrowth']],
       ['services/wealthAnalyticsReportModel.ts', ['presentHeadlineInvestmentGrowth']],
       ['services/aiPersonalWealthGrounding.ts', ['presentHeadlineInvestmentGrowth', 'net invested']],
-      ['services/geminiService.ts', ['Net invested after withdrawals', 'Principal fully recovered']],
-      ['services/metricPassportModel.ts', ['Net invested after withdrawals']],
+      ['services/geminiService.ts', ['Net invested (SAR)', 'Principal fully recovered']],
+      ['services/metricPassportModel.ts', ['hybrid net invested']],
       ['services/reportingEngine.ts', ['Net invested after withdrawals']],
       ['pages/Investments.tsx', ['presentHeadlineInvestmentGrowth', 'principalFullyRecovered']],
       ['services/reviewPack.ts', ['presentHeadlineInvestmentGrowth', 'Net invested after withdrawals']],

@@ -128,12 +128,14 @@ import { withTimeout } from '../utils/withTimeout';
 import { isMonthLocked, mergeNetWorthSnapshotsFromServer, setServerPeriodLocks } from '../services/netWorthSnapshot';
 import { hydrateFoundationsTables } from '../services/foundationsHydrate';
 import {
-  acknowledgeCashBalanceDriftAfterReconcile,
+  acknowledgeCashBalanceDriftDurable,
   acknowledgeHoldingsIntegrityDurable,
   acknowledgeInvestmentCashLedgerDriftDurable,
   clearHoldingsIntegrityAckDurable,
   mergeUiAcks,
   normalizeUiAcks,
+  resolveCashBalanceDriftAcks,
+  resolveHoldingsIntegrityAcks,
 } from '../services/uiAcks';
 import { effectiveLedgerQtyForSymbol, integrityLedgerQuantityForSymbol } from '../services/holdingsIntegrityRepair';
 import {
@@ -1662,7 +1664,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 watchlist: filterOwnedRows(watchlist.data as any[])
                     .map((w: any) => normalizeWatchlistRow(w))
                     .sort((a, b) => String(b.symbol).localeCompare(String(a.symbol))),
-                settings: normalizeSettings((settings as any).data ?? initialData.settings),
+                settings: (() => {
+                  const normalized = normalizeSettings((settings as any).data ?? initialData.settings);
+                  const uid = auth.user?.id ?? null;
+                  /** Merge durable local dismissals so hydrate never re-nags Keep stored / qty acks. */
+                  const cashBalanceDrift = resolveCashBalanceDriftAcks(uid, normalized, { writeThrough: true });
+                  const holdingsQtyIntegrity = resolveHoldingsIntegrityAcks(uid, normalized, {
+                    writeThrough: true,
+                  });
+                  return {
+                    ...normalized,
+                    uiAcks: normalizeUiAcks({
+                      ...normalized.uiAcks,
+                      ...(Object.keys(cashBalanceDrift).length ? { cashBalanceDrift } : {}),
+                      ...(Object.keys(holdingsQtyIntegrity).length
+                        ? { holdingsQtyIntegrity }
+                        : {}),
+                      ...(normalized.uiAcks?.investmentCashLedgerDrift
+                        ? { investmentCashLedgerDrift: normalized.uiAcks.investmentCashLedgerDrift }
+                        : {}),
+                    }),
+                  };
+                })(),
                 notifications: [],
                 allTransactions: [],
                 allBudgets: [],
@@ -5143,14 +5166,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!deps) return { ok: false, error: 'Not logged in' };
         const snap = dataRef.current ?? data;
         const userId = auth?.user?.id ?? null;
-        let beforeBalance = 0;
-        let beforeNet = 0;
         let holdingMeta: { portfolioId: string; symbol: string; beforeQty: number } | null = null;
-        if (input.entityType === 'account') {
-          const acc = (snap?.accounts ?? []).find((a) => a.id === input.entityId);
-          beforeBalance = Number(acc?.balance ?? 0);
-          beforeNet = transactionNetForAccount(input.entityId, snap?.transactions ?? []);
-        } else if (input.entityType === 'holding') {
+        if (input.entityType === 'holding') {
           for (const p of snap?.investments ?? []) {
             const h = (p.holdings ?? []).find((x) => x.id === input.entityId);
             if (h) {
@@ -5179,23 +5196,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             try {
               if (input.entityType === 'account') {
                 const accType = (snap?.accounts ?? []).find((a) => a.id === input.entityId)?.type;
-                await acknowledgeCashBalanceDriftAfterReconcile({
+                /**
+                 * Fingerprint the **observed** post-apply (balance, Σ txs) pair — not a predicted
+                 * net. Predicted acks break when RPC balance moves but ledger refresh lags, or when
+                 * `account_id` rows normalize into camelCase after Apply.
+                 */
+                const fresh = dataRef.current ?? data;
+                const postAcc = (fresh?.accounts ?? []).find((a) => a.id === input.entityId);
+                const observedBalance = Number(postAcc?.balance ?? input.actualValue);
+                const observedNet = transactionNetForAccount(
+                  input.entityId,
+                  fresh?.transactions ?? snap?.transactions ?? [],
+                );
+                await acknowledgeCashBalanceDriftDurable({
                   userId,
                   accountId: input.entityId,
-                  beforeBalance,
-                  actualValue: Number(input.actualValue),
-                  beforeTransactionNet: beforeNet,
+                  storedBalance: observedBalance,
+                  transactionNet: observedNet,
                   currentUiAcks: (dataRef.current ?? data)?.settings?.uiAcks,
                   persistUiAcks,
                 });
                 /** Broker cash Apply: sticky KPI cash drift needs its own fingerprint ack. */
                 if (accType === 'Investment') {
-                  const fresh = dataRef.current ?? data;
-                  if (fresh) {
-                    const rate = resolveSarPerUsd(fresh);
-                    const b = computePersonalInvestmentKpiBreakdown(fresh, rate, getAvailableCashForAccount);
+                  const freshInv = dataRef.current ?? data;
+                  if (freshInv) {
+                    const rate = resolveSarPerUsd(freshInv);
+                    const b = computePersonalInvestmentKpiBreakdown(freshInv, rate, getAvailableCashForAccount, {}, {
+                      includePlatformHybridNets: false,
+                    });
                     let brokerageCashRawSar = 0;
-                    for (const account of fresh.accounts ?? []) {
+                    for (const account of freshInv.accounts ?? []) {
                       if (account.type !== 'Investment') continue;
                       const cash = getAvailableCashForAccount(account.id);
                       brokerageCashRawSar += tradableCashBucketToSARSigned(
@@ -7219,7 +7249,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     const updateSettings = async (settingsUpdate: Partial<Settings>) => {
         if (!supabase || !auth?.user) return;
-        let merged = { ...(data?.settings ?? {}), ...settingsUpdate };
+        /** Prefer dataRef so concurrent optimistic uiAcks are not clobbered by a stale React closure. */
+        let merged = { ...((dataRef.current ?? data)?.settings ?? {}), ...settingsUpdate };
         if ('salaryInvestmentTargets' in settingsUpdate) {
             merged = {
                 ...merged,
