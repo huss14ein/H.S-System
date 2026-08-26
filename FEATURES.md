@@ -2,6 +2,8 @@
 
 This document reflects features and functionalities implemented in the codebase. It serves as the single source of truth for what the platform delivers.
 
+**3.2.2.0 rollout:** Footer/Settings version **3.2.2.0**. Balance-vs-ledger Keep stored / Reconcile dismissals stay sticky (`account_id`-safe nets, observed post-apply ack, hydrate merge of `ui_acks`); personal transaction slice keeps snake_case rows; hybrid net capital falls back to scoped capital when the platform pass sums to zero.
+
 **3.2.1.0 rollout:** Hybrid investment ROI when only some portfolios have deposit/withdrawal history (incomplete sleeves floor at cost + cash); Netlify AI proxy falls back through `gemini-3-flash-preview`; Safari `Load failed` mapped to a clear network error; Live Advisor / Watchlist / Commodities / Assets gated on AI proxy health; footer/Settings version **3.2.1.0**.
 
 **2.1.1.0 rollout:** Grounded AI on Liabilities/Forecast/Zakat/Assets/Watchlist; financial-month on Liabilities/Summary/Accounts/Installments; holdings/dividend reconciliation (System Health); capital deployment + goal conflicts + budget drift + lifestyle guardrails on Dashboard, Plan, Budgets, Wealth Ultra, Notifications; buy-score gate on Investment Plan; watchlist research CRUD; liability APR/min payment/maturity; account cash roles; planned-trade tranche panel (Execution History); income taxonomy (Transactions/Analysis); thesis/journal Supabase sync (Financial Journal); strict KPI panel on Summary; Live Advisor liabilities/capital tools; migration `supabase/migrations/20260522120000_enhancement_rollout.sql` (apply on Supabase before using new columns).
