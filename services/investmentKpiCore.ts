@@ -332,8 +332,8 @@ export function computePersonalInvestmentKpiBreakdown(
       : scopedLegacy.totalInvestedSar
     : scopedLegacy.totalInvestedSar;
   const netCapitalSar = includeHybrid
-    ? hybridNetCapitalSar > 0 || depositsRecordedSar > 0 || holdingsCostBasisSar > 0
-      ? Math.max(0, hybridNetCapitalSar)
+    ? hybridNetCapitalSar > 0
+      ? hybridNetCapitalSar
       : scopedLegacy.netCapitalSar
     : scopedLegacy.netCapitalSar;
   const economicDeployedSar = Math.max(0, holdingsCostBasisSar + brokerageCashSar);
