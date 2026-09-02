@@ -103,7 +103,7 @@ describe('8-way release contract', () => {
 
   it('3 · investment KPI breakdown exposes capitalSource', () => {
     const b = computePersonalInvestmentKpiBreakdown(minData(), FX, getCash);
-    expect(['deposits', 'ledger_inferred', 'cost_basis_fallback', 'mixed']).toContain(b.capitalSource);
+    expect(['deposits', 'ledger_inferred', 'cost_basis_fallback', 'mixed', 'manual_marks']).toContain(b.capitalSource);
   });
 
   it('4 · dashboard KPI snapshot includes investmentCapitalSource', () => {

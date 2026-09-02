@@ -581,7 +581,7 @@ async function applySukukPrincipal(
     await deps.regenerateSukukFutureSchedule?.(position.id);
   } catch (e) {
     deps.toast?.(
-      `Principal restated, but the future payout schedule could not be regenerated: ${(e as Error)?.message ?? 'unknown error'}`,
+      `Outstanding balance corrected, but the future payout schedule could not be regenerated: ${(e as Error)?.message ?? 'unknown error'}`,
       'info',
     );
   }
@@ -623,7 +623,7 @@ async function applySukukPrincipal(
     currency: preview.currency,
     reason,
     adjustmentId: adj?.id ?? null,
-    summary: `Sukuk principal restated ${preview.beforeValue} → ${preview.actualValue} ${preview.currency} (${position.name})`,
+    summary: `Sukuk outstanding corrected ${preview.beforeValue} → ${preview.actualValue} ${preview.currency} (${position.name})`,
     metadata: { faceValue: position.faceValue },
   });
 
@@ -642,7 +642,7 @@ async function applySukukPrincipal(
     reason,
     mechanism: 'sukuk_face_yield',
   });
-  deps.toast?.('Sukuk principal restated.', 'success');
+  deps.toast?.('Sukuk outstanding balance corrected.', 'success');
   return { ok: true, adjustment: adj ?? undefined, audit: audit ?? undefined };
 }
 

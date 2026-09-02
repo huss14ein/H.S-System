@@ -9,7 +9,13 @@ export type InvestmentCapitalSource =
   | 'ledger_inferred'
   | 'cost_basis_fallback'
   /** Some sleeves use deposits − withdrawals; others floor at cost + cash (incomplete books). */
-  | 'mixed';
+  | 'mixed'
+  /**
+   * Manual-price (`manual_fund`) sleeve: net invested floors at holdings cost + cash even when
+   * some deposits exist, so self-reported marks cannot invent deposit-based ROI.
+   * Live quote portfolios never use this path.
+   */
+  | 'manual_marks';
 
 /**
  * When deposits are missing we infer capital from buys/sells/dividends/cash — fragile if buy history is incomplete.
@@ -21,6 +27,12 @@ export const LEDGER_INFERRED_FALLBACK_MAX_RATIO = 4.5;
 /** Skip ratio cross-check when fallback gross is tiny (noise vs rounding). */
 export const LEDGER_INFERRED_FALLBACK_MIN_SAR = 400;
 
+/**
+ * Manual-price books: if present value exceeds this multiple of net invested, treat marks as
+ * unreliable without live quotes (e.g. 73k PV on 2.5k deposits → hide ROI). Live books ignore this.
+ */
+export const MANUAL_MARKS_MAX_PV_TO_NET_RATIO = 5;
+
 /** Investor-facing definition for ROI / net invested (headline + platform cards + AI). */
 export function describeInvestmentNetInvested(capitalSource: InvestmentCapitalSource): string {
   switch (capitalSource) {
@@ -30,6 +42,8 @@ export function describeInvestmentNetInvested(capitalSource: InvestmentCapitalSo
       return 'Net invested is inferred from buys/sells/dividends and cash when deposit history is missing, floored at holdings cost + idle cash when books look incomplete.';
     case 'cost_basis_fallback':
       return 'Net invested uses holdings cost basis + idle broker cash because deposit/withdrawal history was never recorded.';
+    case 'manual_marks':
+      return 'This book uses manual holding prices. Net invested floors at your purchase cost + idle cash (not deposit-only ROI), so live quote portfolios stay on the deposits path.';
     case 'deposits':
     default:
       return 'Net invested is deposits − withdrawals (reconcile cash stamps excluded), plus commodity/Sukuk purchase costs on the headline. Cost basis is used only when deposit history is missing.';
@@ -45,6 +59,8 @@ export function netInvestedSubtitle(capitalSource: InvestmentCapitalSource): str
       return 'Ledger-inferred (incomplete deposit history)';
     case 'cost_basis_fallback':
       return 'Cost basis + cash (no deposit history)';
+    case 'manual_marks':
+      return 'Manual prices · cost + cash floor';
     case 'deposits':
     default:
       return 'Deposits − withdrawals';
@@ -58,11 +74,17 @@ export type ScopedInvestmentCapitalResult = {
   economicFloorApplied: boolean;
   inferredInvestedFromLedgerSar: number;
   fallbackInvestedSar: number;
+  /**
+   * Manual marks with no purchase cost / buy history — ROI must not use deposit-only math.
+   * Callers neutralize gain (net ≈ present value) and suppress ROI display.
+   */
+  manualMarksInvestedHistoryIncomplete?: boolean;
 };
 
 /**
  * Single-scope capital (one portfolio or one platform treated as one book):
  * deposits − withdrawals when funding exists; otherwise ledger-inferred / cost+cash with incomplete-books floor.
+ * Manual-price sleeves always floor at cost + cash and never invent deposit-only ROI when cost history is missing.
  */
 export function resolveScopedInvestmentCapitalSar(args: {
   depositsRecordedSar: number;
@@ -74,6 +96,11 @@ export function resolveScopedInvestmentCapitalSar(args: {
   dividendsSar?: number;
   /** When true (default), reject wild ledger-inferred vs cost-basis ratios. */
   applyLedgerInferredRatioGuard?: boolean;
+  /**
+   * True when every open holding is `manual_fund` (no live quotes).
+   * Live quote portfolios must leave this false/undefined.
+   */
+  manualMarksOnly?: boolean;
 }): ScopedInvestmentCapitalResult {
   const deposits = Math.max(0, Number.isFinite(args.depositsRecordedSar) ? args.depositsRecordedSar : 0);
   const withdrawn = Math.max(0, Number.isFinite(args.withdrawnSar) ? args.withdrawnSar : 0);
@@ -83,10 +110,44 @@ export function resolveScopedInvestmentCapitalSar(args: {
   const sells = Math.max(0, Number.isFinite(args.sellsSar) ? args.sellsSar! : 0);
   const dividends = Math.max(0, Number.isFinite(args.dividendsSar) ? args.dividendsSar! : 0);
   const applyGuard = args.applyLedgerInferredRatioGuard !== false;
+  const manualMarksOnly = args.manualMarksOnly === true;
 
   const inferredInvestedFromLedgerSar = Math.max(0, buys - sells - dividends + cash + withdrawn);
   const fallbackInvestedSar = Math.max(0, cost + cash + withdrawn);
   const economicDeployedSar = Math.max(0, cost + cash);
+
+  /**
+   * Manual marks: typed avgCost alone is not “invested history” (users often set cost/current value
+   * without buy ledger rows). Require buy history so deposit-only + fantasy marks cannot show 1000%+ ROI.
+   * Live quote path below is unchanged.
+   */
+  const investedHistoryReliable = buys > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
+
+  if (manualMarksOnly) {
+    const depositNet = deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR ? Math.max(0, deposits - withdrawn) : 0;
+    if (!investedHistoryReliable) {
+      return {
+        capitalSource: 'manual_marks',
+        // Keep recorded deposits as “invested” for display; incomplete books suppress ROI separately.
+        totalInvestedSar: deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR ? deposits : fallbackInvestedSar,
+        netCapitalSar: Math.max(depositNet, economicDeployedSar),
+        economicFloorApplied: true,
+        inferredInvestedFromLedgerSar,
+        fallbackInvestedSar,
+        manualMarksInvestedHistoryIncomplete: true,
+      };
+    }
+    const netCapitalSar = Math.max(depositNet, economicDeployedSar);
+    return {
+      capitalSource: 'manual_marks',
+      totalInvestedSar: deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR ? deposits : fallbackInvestedSar,
+      netCapitalSar,
+      economicFloorApplied: netCapitalSar > depositNet + 1e-9,
+      inferredInvestedFromLedgerSar,
+      fallbackInvestedSar,
+      manualMarksInvestedHistoryIncomplete: false,
+    };
+  }
 
   if (deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
     const totalInvestedSar = deposits;
@@ -142,7 +203,7 @@ export function aggregateInvestmentCapitalSources(
 /**
  * Headline platform capital: deposits − withdrawals when funding history exists.
  * Cost-basis + idle cash is a floor only when deposits are missing (incomplete books).
- * For `'mixed'`, `ledgerNetCapitalSar` is already the hybrid sum — pass through without re-flooring.
+ * Manual-marks and mixed books already carry floors — pass through without re-flooring.
  */
 export function resolveHeadlinePlatformNetCapitalSar(args: {
   capitalSource: InvestmentCapitalSource;
@@ -151,8 +212,15 @@ export function resolveHeadlinePlatformNetCapitalSar(args: {
 }): { platformNetSar: number; economicFloorApplied: boolean } {
   const ledger = Math.max(0, Number.isFinite(args.ledgerNetCapitalSar) ? args.ledgerNetCapitalSar : 0);
   const economic = Math.max(0, Number.isFinite(args.economicDeployedSar) ? args.economicDeployedSar : 0);
-  if (args.capitalSource === 'deposits' || args.capitalSource === 'mixed') {
-    return { platformNetSar: ledger, economicFloorApplied: args.capitalSource === 'mixed' };
+  if (
+    args.capitalSource === 'deposits' ||
+    args.capitalSource === 'mixed' ||
+    args.capitalSource === 'manual_marks'
+  ) {
+    return {
+      platformNetSar: ledger,
+      economicFloorApplied: args.capitalSource === 'mixed' || args.capitalSource === 'manual_marks',
+    };
   }
   const platformNetSar = Math.max(ledger, economic);
   return {

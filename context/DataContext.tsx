@@ -7027,7 +7027,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 roundMoney(Number(priorSukuk.faceValue) || 0) !== roundMoney(Number(position.faceValue) || 0));
         if (!opts?.viaReconciliation && principalMoved) {
             toast(
-                'Face value and outstanding principal can only change via Restate principal (audited). Edit metadata only here.',
+                'Face value and outstanding balance can only change via Correct outstanding (audited). Edit metadata only here.',
                 'error',
             );
             return;

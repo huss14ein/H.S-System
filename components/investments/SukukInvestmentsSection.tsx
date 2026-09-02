@@ -10,6 +10,11 @@ import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { parseMoneyInput, roundMoney } from '../../utils/money';
 import { getPersonalSukukPositions } from '../../utils/wealthScope';
 import RevaluationModal from '../reconciliation/RevaluationModal';
+import {
+  SUKUK_PAYOUT_CADENCE_OPTIONS,
+  formatSukukPayoutCadenceLabel,
+  formatSukukPayoutKindLabel,
+} from '../../services/sukuk/sukukPayoutLabels';
 
 const SukukPositionModal: React.FC<{
   isOpen: boolean;
@@ -96,35 +101,62 @@ const SukukPositionModal: React.FC<{
         <p className="text-sm text-slate-600 bg-sky-50 border border-sky-100 rounded-lg p-3">
           Direct Sukuk contracts live under Investments (not Assets). For broker-held Sukuk funds, use <strong>Record Trade</strong> with asset class Sukuk.
         </p>
-        <input className="input-base" value={name} onChange={(e) => setName(e.target.value)} placeholder="Contract name" />
-        <select className="select-base" value={investmentAccountId} onChange={(e) => setInvestmentAccountId(e.target.value)}>
-          <option value="">Mapped platform account…</option>
-          {investmentAccounts.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
-        <select className="select-base" value={currency} onChange={(e) => setCurrency(e.target.value as 'SAR' | 'USD')}>
-          <option value="SAR">SAR</option>
-          <option value="USD">USD</option>
-        </select>
-        <input className="input-base" type="number" min={0} step="any" value={faceValue} onChange={(e) => setFaceValue(e.target.value)} placeholder="Face value" disabled={!!positionToEdit} />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Contract name</span>
+          <input className="input-base" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Government Sukuk 2027" />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Investment account</span>
+          <select className="select-base" value={investmentAccountId} onChange={(e) => setInvestmentAccountId(e.target.value)}>
+            <option value="">Choose platform account…</option>
+            {investmentAccounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Currency</span>
+          <select className="select-base" value={currency} onChange={(e) => setCurrency(e.target.value as 'SAR' | 'USD')}>
+            <option value="SAR">SAR</option>
+            <option value="USD">USD</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Face value (original capital)</span>
+          <input className="input-base" type="number" min={0} step="any" value={faceValue} onChange={(e) => setFaceValue(e.target.value)} disabled={!!positionToEdit} inputMode="decimal" />
+        </label>
         {positionToEdit ? (
           <p className="text-xs text-slate-500 -mt-2">
-            Face value and outstanding principal are locked after create — use <strong>Restate principal</strong> for audited corrections.
+            Face value and outstanding balance are locked after create — use <strong>Correct outstanding</strong> for audited corrections.
           </p>
         ) : null}
-        <input className="input-base" type="number" min={0} step="any" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} placeholder="Purchase price (optional)" />
-        <div className="grid grid-cols-2 gap-3">
-          <input className="input-base" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
-          <input className="input-base" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Purchase price (optional)</span>
+          <input className="input-base" type="number" min={0} step="any" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} inputMode="decimal" />
+        </label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-800">Issue date</span>
+            <input className="input-base" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-800">Maturity date</span>
+            <input className="input-base" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
+          </label>
         </div>
-        <select className="select-base" value={goalId} onChange={(e) => setGoalId(e.target.value)}>
-          <option value="">No goal link</option>
-          {goals.map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
-          ))}
-        </select>
-        <textarea className="input-base min-h-[72px]" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Linked goal (optional)</span>
+          <select className="select-base" value={goalId} onChange={(e) => setGoalId(e.target.value)}>
+            <option value="">No goal link</option>
+            {goals.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Notes (optional)</span>
+          <textarea className="input-base min-h-[72px]" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </label>
         {error && <div className="text-sm text-danger bg-red-50 border border-red-200 rounded-lg p-2">{error}</div>}
         <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">{isSaving ? 'Saving…' : 'Save Sukuk'}</button>
       </div>
@@ -186,6 +218,9 @@ const SukukPayoutScheduleModal: React.FC<{
     (a) => (a.type ?? '').toLowerCase().includes('investment') || (a.name ?? '').toLowerCase().includes('platform'),
   );
 
+  const periodic = cadence === 'monthly' || cadence === 'quarterly';
+  const currencyLabel = currency === 'USD' ? 'USD' : 'SAR';
+
   const nextEvent = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     return (existingEvents || [])
@@ -193,16 +228,40 @@ const SukukPayoutScheduleModal: React.FC<{
       .sort((a, b) => a.payoutDate.localeCompare(b.payoutDate))[0] ?? null;
   }, [existingEvents]);
 
+  const scheduleSummary = useMemo(() => {
+    const parts: string[] = [formatSukukPayoutCadenceLabel(cadence)];
+    if (periodic) {
+      parts.push(`on day ${Math.max(1, Math.min(28, Math.trunc(Number(dayOfMonth || '1')) || 1))}`);
+    }
+    const coupon = couponAmount.trim() === '' ? null : parseMoneyInput(couponAmount);
+    if (coupon != null && coupon > 0) {
+      parts.push(periodic ? `${coupon} ${currencyLabel} profit each payment` : `${coupon} ${currencyLabel} profit at maturity`);
+    }
+    const installment = principalInstallment.trim() === '' ? null : parseMoneyInput(principalInstallment);
+    if (periodic && installment != null && installment > 0) {
+      parts.push(`${installment} ${currencyLabel} capital each payment`);
+    }
+    const finalPrincipal = principalAmount.trim() === '' ? null : parseMoneyInput(principalAmount);
+    if (finalPrincipal != null && finalPrincipal > 0) {
+      parts.push(`${finalPrincipal} ${currencyLabel} capital at maturity`);
+    } else {
+      parts.push('remaining capital at maturity');
+    }
+    return parts.join(' · ');
+  }, [cadence, periodic, dayOfMonth, couponAmount, principalInstallment, principalAmount, currencyLabel]);
+
   const handleSave = async () => {
     setError(null);
     if (!investmentAccountId) {
-      setError('Choose the Sukuk platform account.');
+      setError('Choose which investment account receives the cash.');
       return;
     }
     const dom = Math.max(1, Math.min(28, Math.trunc(Number(dayOfMonth || '1'))));
     const coupon = couponAmount.trim() === '' ? null : parseMoneyInput(couponAmount);
     const principal = principalAmount.trim() === '' ? null : parseMoneyInput(principalAmount);
-    const principalInst = principalInstallment.trim() === '' ? null : parseMoneyInput(principalInstallment);
+    const principalInst = periodic
+      ? (principalInstallment.trim() === '' ? null : parseMoneyInput(principalInstallment))
+      : null;
 
     setIsSaving(true);
     try {
@@ -210,7 +269,7 @@ const SukukPayoutScheduleModal: React.FC<{
         investmentAccountId,
         currency,
         cadence,
-        dayOfMonth: cadence === 'monthly' || cadence === 'quarterly' ? dom : null,
+        dayOfMonth: periodic ? dom : null,
         couponAmount: coupon,
         principalAmount: principal,
         principalInstallmentAmount: principalInst,
@@ -227,31 +286,164 @@ const SukukPayoutScheduleModal: React.FC<{
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Sukuk payout schedule">
-      <div className="space-y-4">
-        <div className="text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-3">
-          <p>Payouts post into <strong>platform cash</strong> on the mapped account. Principal reduces outstanding balance and closes the contract when paid off.</p>
-          {nextEvent && <p className="mt-2">Next: <strong>{nextEvent.payoutDate}</strong> ({nextEvent.kind}, {nextEvent.amount} {nextEvent.currency})</p>}
+    <Modal isOpen={isOpen} onClose={onClose} title="How are you paid?">
+      <div className="space-y-5">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-slate-900">{position.name}</p>
+          <p className="text-sm text-slate-600">
+            Tell Finova when profit and capital come back so cash and outstanding balance stay accurate.
+          </p>
+          {nextEvent && (
+            <p className="text-xs text-slate-600 pt-1">
+              Next scheduled: <strong>{nextEvent.payoutDate}</strong>
+              {' · '}
+              {formatSukukPayoutKindLabel(nextEvent.kind)}
+              {' · '}
+              {roundMoney(nextEvent.amount)} {nextEvent.currency}
+            </p>
+          )}
         </div>
-        <select className="select-base" value={investmentAccountId} onChange={(e) => setInvestmentAccountId(e.target.value)}>
-          <option value="">Choose account…</option>
-          {investmentAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-        <select className="select-base" value={cadence} onChange={(e) => setCadence(e.target.value as SukukPayoutCadence)}>
-          <option value="maturity_only">Bullet — pay at maturity</option>
-          <option value="monthly">Monthly coupons (+ optional principal installments)</option>
-          <option value="quarterly">Quarterly coupons (+ optional principal installments)</option>
-        </select>
-        {(cadence === 'monthly' || cadence === 'quarterly') && (
-          <input className="input-base" type="number" min={1} max={28} value={dayOfMonth} onChange={(e) => setDayOfMonth(e.target.value)} placeholder="Day of month (1-28)" />
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Cash lands in</span>
+          <select
+            className="select-base"
+            value={investmentAccountId}
+            onChange={(e) => setInvestmentAccountId(e.target.value)}
+            aria-label="Investment account that receives payouts"
+          >
+            <option value="">Choose investment account…</option>
+            {investmentAccounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+          <span className="text-xs text-slate-500">Usually the same platform account mapped to this Sukuk.</span>
+        </label>
+
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-slate-800">Payment frequency</legend>
+          <div className="space-y-2" role="radiogroup" aria-label="Payment frequency">
+            {SUKUK_PAYOUT_CADENCE_OPTIONS.map((option) => {
+              const selected = cadence === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setCadence(option.value)}
+                  className={`w-full text-left rounded-xl border px-3 py-3 transition-colors ${
+                    selected
+                      ? 'border-sky-500 bg-sky-50 ring-1 ring-sky-500'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <span className="flex items-start gap-3">
+                    <span
+                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                        selected ? 'border-sky-600 bg-sky-600' : 'border-slate-300 bg-white'
+                      }`}
+                      aria-hidden
+                    >
+                      {selected ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-900">{option.title}</span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-slate-600">{option.description}</span>
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        {periodic && (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-800">Payment day each period</span>
+            <input
+              className="input-base"
+              type="number"
+              min={1}
+              max={28}
+              value={dayOfMonth}
+              onChange={(e) => setDayOfMonth(e.target.value)}
+              inputMode="numeric"
+            />
+            <span className="text-xs text-slate-500">Day of the month from 1–28 (e.g. 25).</span>
+          </label>
         )}
-        <div className="grid grid-cols-2 gap-3">
-          <input className="input-base" type="number" min={0} step="any" value={couponAmount} onChange={(e) => setCouponAmount(e.target.value)} placeholder="Coupon per period" />
-          <input className="input-base" type="number" min={0} step="any" value={principalInstallment} onChange={(e) => setPrincipalInstallment(e.target.value)} placeholder="Principal installment (optional)" />
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">
+            {periodic ? `Profit each payment (${currencyLabel})` : `Profit at maturity (${currencyLabel}, optional)`}
+          </span>
+          <input
+            className="input-base"
+            type="number"
+            min={0}
+            step="any"
+            value={couponAmount}
+            onChange={(e) => setCouponAmount(e.target.value)}
+            placeholder="0"
+            inputMode="decimal"
+          />
+          <span className="text-xs text-slate-500">
+            {periodic
+              ? 'The regular profit amount you expect each period.'
+              : 'Leave blank if profit is already included in the final payout, or enter the profit portion separately.'}
+          </span>
+        </label>
+
+        {periodic && (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-800">
+              Capital returned each payment ({currencyLabel}, optional)
+            </span>
+            <input
+              className="input-base"
+              type="number"
+              min={0}
+              step="any"
+              value={principalInstallment}
+              onChange={(e) => setPrincipalInstallment(e.target.value)}
+              placeholder="0"
+              inputMode="decimal"
+            />
+            <span className="text-xs text-slate-500">
+              Only if part of your invested capital comes back with each payment. Leave 0 if you only receive profit until maturity.
+            </span>
+          </label>
+        )}
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">
+            Capital at maturity ({currencyLabel})
+          </span>
+          <input
+            className="input-base"
+            type="number"
+            min={0}
+            step="any"
+            value={principalAmount}
+            onChange={(e) => setPrincipalAmount(e.target.value)}
+            placeholder="Leave blank for remaining balance"
+            inputMode="decimal"
+          />
+          <span className="text-xs text-slate-500">
+            Leave blank to return whatever outstanding capital is left on {position.maturityDate || 'maturity'}.
+          </span>
+        </label>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Summary</p>
+          <p className="mt-1 leading-relaxed">{scheduleSummary}</p>
         </div>
-        <input className="input-base" type="number" min={0} step="any" value={principalAmount} onChange={(e) => setPrincipalAmount(e.target.value)} placeholder="Final principal at maturity (blank = remaining outstanding)" />
+
         {error && <div className="text-sm text-danger bg-red-50 border border-red-200 rounded-lg p-2">{error}</div>}
-        <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">{isSaving ? 'Saving…' : 'Save schedule'}</button>
+        <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">
+          {isSaving ? 'Saving…' : 'Save payout schedule'}
+        </button>
       </div>
     </Modal>
   );
@@ -296,7 +488,9 @@ export const SukukInvestmentsSection: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Direct Sukuk contracts</h2>
-          <p className="text-sm text-slate-600 mt-1">Off-platform Sukuk with maturity dates and payout schedules. Broker Sukuk use Record Trade with asset class Sukuk.</p>
+          <p className="text-sm text-slate-600 mt-1">
+            Off-platform Sukuk with maturity dates and a simple payout schedule. Broker Sukuk funds use Record Trade with asset class Sukuk.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select className="select-base text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
@@ -351,12 +545,20 @@ export const SukukInvestmentsSection: React.FC = () => {
                   className="self-start px-2 py-1 text-[11px] font-medium text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50"
                   onClick={() => setRestatePosition(p)}
                 >
-                  Restate principal
+                  Correct outstanding
                 </button>
                 )}
-                {next && <p className="text-xs text-slate-700">Next payout: <strong>{next.payoutDate}</strong> ({next.kind}, {roundMoney(next.amount)} {next.currency})</p>}
+                {next && (
+                  <p className="text-xs text-slate-700">
+                    Next payout: <strong>{next.payoutDate}</strong>
+                    {' · '}
+                    {formatSukukPayoutKindLabel(next.kind)}
+                    {' · '}
+                    {roundMoney(next.amount)} {next.currency}
+                  </p>
+                )}
                 <button type="button" className="btn-secondary text-sm mt-auto" onClick={() => setSchedulePosition(p)}>
-                  {schedule ? 'Edit payouts' : 'Set payouts'}
+                  {schedule ? 'Edit how you are paid' : 'Set how you are paid'}
                 </button>
               </div>
             );
@@ -378,7 +580,7 @@ export const SukukInvestmentsSection: React.FC = () => {
       <RevaluationModal
         isOpen={!!restatePosition}
         onClose={() => setRestatePosition(null)}
-        title={`Restate principal — ${restatePosition?.name ?? ''}`}
+        title={`Correct outstanding — ${restatePosition?.name ?? ''}`}
         entityType="sukuk_position"
         entityId={restatePosition?.id ?? ''}
         entityLabel={restatePosition?.name ?? 'Sukuk'}
@@ -393,7 +595,7 @@ export const SukukInvestmentsSection: React.FC = () => {
             actualValue,
             reason,
           });
-          if (!result.ok) throw new Error(result.error || 'Could not restate Sukuk principal.');
+          if (!result.ok) throw new Error(result.error || 'Could not correct Sukuk outstanding balance.');
         }}
       />
       {schedulePosition && (

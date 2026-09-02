@@ -87,6 +87,15 @@ const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen,
                 });
             });
             subPages.push({
+                name: 'Go to Investments → Sukuk',
+                action: () => {
+                    trackAction('go-to-inv-Sukuk', 'Investments');
+                    triggerPageAction('Investments', 'investment-tab:Sukuk');
+                    setIsOpen(false);
+                },
+                icon: NAVIGATION_ITEMS.find((i) => i.name === 'Investments')!.icon,
+            });
+            subPages.push({
                 name: 'Import dividends from broker SMS',
                 action: () => {
                     trackAction('focus-dividend-sms', 'Investments');

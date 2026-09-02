@@ -93,9 +93,11 @@ describe('computePortfolioMetricsBundle', () => {
     expect(mb.totalValueInSAR).toBeCloseTo(3750, 5);
     expect(ma.totalAvailable).toBeCloseTo(250, 5);
     expect(mb.totalAvailable).toBeCloseTo(750, 5);
-    // Growth = present value (holdings + cash share) − net invested (deposits − withdrawals).
-    expect(ma.totalGainLossSAR).toBeCloseTo(ma.totalValueInSAR - ma.netCapitalSAR, 5);
-    expect(mb.totalGainLossSAR).toBeCloseTo(mb.totalValueInSAR - mb.netCapitalSAR, 5);
+    // Manual funds without buy history: ROI suppressed; gain neutralized (net ≈ PV).
+    expect(ma.roiSuppressed).toBe(true);
+    expect(mb.roiSuppressed).toBe(true);
+    expect(ma.totalGainLossSAR).toBeCloseTo(0, 5);
+    expect(mb.totalGainLossSAR).toBeCloseTo(0, 5);
     expect(ma.unrealizedPnLBasis ?? 'net_capital').toBe('net_capital');
   });
 
@@ -266,13 +268,12 @@ describe('computePortfolioMetricsBundle', () => {
     const m = bundle.metricsByPortfolioId.get('solo')!;
     expect(m.totalInvestedSAR).toBe(2000);
     expect(m.totalWithdrawnSAR).toBe(400);
-    expect(m.netCapitalSAR).toBeCloseTo(1600, 5);
+    expect(m.capitalSource).toBe('manual_marks');
+    expect(m.roiSuppressed).toBe(true);
+    expect(m.roi).toBe(0);
+    expect(m.totalGainLossSAR).toBeCloseTo(0, 5);
+    expect(m.netCapitalSAR).toBeCloseTo(m.totalValueInSAR, 5);
     expect(m.unrealizedPnLBasis ?? 'net_capital').toBe('net_capital');
-    expect(m.totalGainLossSAR).toBeCloseTo(m.totalValueInSAR - m.netCapitalSAR, 5);
-    expect(m.roi).toBeCloseTo(
-      m.netCapitalSAR > 0 ? (m.totalGainLossSAR / m.netCapitalSAR) * 100 : 0,
-      5,
-    );
     expect(m.totalValueInSAR).toBeCloseTo(1000 + 50, 5);
   });
 
@@ -326,7 +327,10 @@ describe('computePortfolioMetricsBundle', () => {
     const m = bundle.metricsByPortfolioId.get('jazirah')!;
     expect(m.unrealizedPnLBasis ?? 'net_capital').toBe('net_capital');
     expect(m.totalInvestedSAR).toBe(1000);
-    expect(m.totalGainLossSAR).toBeCloseTo(m.totalValueInSAR - m.netCapitalSAR, 0);
-    expect(m.totalGainLossSAR).toBeCloseTo(72671 - 1000, 0);
+    expect(m.capitalSource).toBe('manual_marks');
+    expect(m.roiSuppressed).toBe(true);
+    expect(m.roi).toBe(0);
+    expect(m.totalGainLossSAR).toBeCloseTo(0, 0);
+    expect(m.netCapitalSAR).toBeCloseTo(m.totalValueInSAR, 0);
   });
 });

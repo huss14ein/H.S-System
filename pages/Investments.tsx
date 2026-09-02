@@ -3383,10 +3383,12 @@ const PlatformCardInner: React.FC<{
                         >
                             ROI
                         </dt>
-                        <dd className={`metric-value w-full mt-1.5 flex flex-col items-center justify-center font-bold text-lg tabular-nums ${platformGrowth.isGrowing ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        <dd className={`metric-value w-full mt-1.5 flex flex-col items-center justify-center font-bold text-lg tabular-nums ${platformGrowth.roiSuppressed ? 'text-slate-500' : platformGrowth.isGrowing ? 'text-emerald-600' : 'text-rose-600'}`}>
                             <span>{platformGrowth.roiDisplay}</span>
                             <span className="text-[10px] mt-1 font-normal text-slate-500">
-                                {platformGrowth.ageLabel ?? 'On money still invested'}
+                                {platformGrowth.roiSuppressed
+                                  ? 'Manual prices · add purchase cost'
+                                  : (platformGrowth.ageLabel ?? 'On money still invested')}
                             </span>
                         </dd>
                     </div>
@@ -3401,7 +3403,9 @@ const PlatformCardInner: React.FC<{
                             <CurrencyDualDisplay value={netCapitalSAR} inCurrency="SAR" digits={0} size="lg" weight="bold" />
                             <span className="text-[10px] text-slate-500 mt-1 font-normal">
                                 {netInvestedSubtitle(platformGrowth.capitalSource)}
-                                {platformGrowth.capitalSource === 'deposits'
+                                {platformGrowth.roiSuppressed
+                                  ? ' · ROI hidden until cost/buy history exists'
+                                  : platformGrowth.capitalSource === 'deposits'
                                   ? ` · Deposited ${formatCurrencyString(totalInvestedSAR, { inCurrency: 'SAR', digits: 0 })} − withdrawn ${formatCurrencyString(totalWithdrawnSAR, { inCurrency: 'SAR', digits: 0 })}`
                                   : ''}
                             </span>
@@ -6534,7 +6538,9 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                 tooltip={headlineNetInvestedDefinition}
                 trend={
                     headlineKpisReady
-                      ? principalFullyRecovered
+                      ? presentedGrowth?.roiSuppressed
+                        ? 'Add purchase cost to track growth'
+                        : principalFullyRecovered
                         ? 'Principal recovered — remaining is profit'
                         : totalGainLoss >= 0
                           ? 'Growing vs net invested'
@@ -6551,14 +6557,16 @@ const InvestmentsPageBody: React.FC<InvestmentsProps> = ({ pageAction, clearPage
                         <ExtendedMetricGate ready={false} compact className="border-0 bg-transparent py-2" />
                     )
                 }
-                valueColor={(presentedGrowth?.isGrowing ?? roi >= 0) ? 'text-emerald-700' : 'text-rose-700'}
+                valueColor={presentedGrowth?.roiSuppressed ? 'text-slate-600' : (presentedGrowth?.isGrowing ?? roi >= 0) ? 'text-emerald-700' : 'text-rose-700'}
                 density="compact"
-                indicatorColor={(presentedGrowth?.isGrowing ?? roi >= 0) ? 'green' : 'red'}
-                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${(presentedGrowth?.isGrowing ?? roi >= 0) ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
+                indicatorColor={presentedGrowth?.roiSuppressed ? 'yellow' : (presentedGrowth?.isGrowing ?? roi >= 0) ? 'green' : 'red'}
+                icon={<ArrowTrendingUpIcon className={`h-5 w-5 ${presentedGrowth?.roiSuppressed ? 'text-slate-500' : (presentedGrowth?.isGrowing ?? roi >= 0) ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden />}
                 tooltip={`Growth ÷ net invested. ${headlineNetInvestedDefinition}`}
                 footer={
                     headlineKpisReady
-                      ? principalFullyRecovered
+                      ? presentedGrowth?.roiSuppressed
+                        ? 'Manual prices — add purchase cost or buy history to track ROI (live portfolios unchanged).'
+                        : principalFullyRecovered
                         ? 'You withdrew all deposits; leftover value is profit.'
                         : `${netInvestedSubtitle(headlineCapitalSource ?? 'deposits')} · ${formatCurrencyString(netInvestedSar, { inCurrency: 'SAR', digits: 0 })} still invested`
                       : undefined

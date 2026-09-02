@@ -40,6 +40,23 @@ export function holdingUsesLiveQuote(h: Holding | { holdingType?: string; holdin
     return t !== 'manual_fund';
 }
 
+/** True when the holding is valued from user-entered marks (not the live quote feed). */
+export function holdingUsesManualMarks(h: Holding | { holdingType?: string; holding_type?: string }): boolean {
+  return !holdingUsesLiveQuote(h);
+}
+
+/**
+ * True when every open lot (qty &gt; 0) is `manual_fund`. Empty books are not treated as manual-only
+ * so live platforms with cash-only sleeves keep the deposits ROI path.
+ */
+export function holdingsAreManualMarksOnly(
+  holdings: Array<Holding | { quantity?: number; holdingType?: string; holding_type?: string }> | null | undefined,
+): boolean {
+  const open = (holdings ?? []).filter((h) => Number(h.quantity ?? 0) > 0);
+  if (open.length === 0) return false;
+  return open.every((h) => holdingUsesManualMarks(h));
+}
+
 /**
  * Market value of one holding in the portfolio's **book currency** (matches Portfolios / Overview).
  * Uses live/simulated price when the holding is quote-backed; otherwise stored value or cost basis.
