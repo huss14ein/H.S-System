@@ -29,6 +29,7 @@ import { AnalyticsWorkspaceProvider } from '../context/AnalyticsWorkspaceContext
 import { MetricPassportProvider } from '../context/MetricPassportContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { PerformanceProvider } from '../context/PerformanceContext';
+import { PeriodFinancialReportHost } from './reports/PeriodFinancialReportModal';
 
 const VALID_PAGES: Page[] = [
   'Dashboard', 'Summary', 'Wealth Analytics', 'Accounts', 'Goals', 'Liabilities', 'Transactions',
@@ -306,6 +307,7 @@ const AuthenticatedAppShell: React.FC = () => {
                             <MultiBankProvider>
                               <PrivacyProvider>
                                 <MarketSimulator />
+                                <PeriodFinancialReportHost />
                                 <Layout
                                   activePage={activePage}
                                   setActivePage={setActivePage}

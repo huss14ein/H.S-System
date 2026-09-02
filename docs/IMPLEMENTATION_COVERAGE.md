@@ -115,7 +115,7 @@ Grounding notes: [`AI_GROUNDING.md`](./AI_GROUNDING.md).
 | Probabilistic planning | `services/probabilisticPlanningEngine.ts` | simulateGoalCompletionProbability, simulatePortfolioRange, simulateCashShortfallRisk |
 | Sensitivity analysis | `services/sensitivityEngine.ts` | sensitivityToReturn/Income/Inflation/ExpenseGrowth |
 | Planning assumptions | `services/planningAssumptionsEngine.ts` | getPlanningAssumption, validateAssumptionRanges, assumptionImpactSummary |
-| Reporting/export | `services/reportingEngine.ts` | generateMonthlyReport, generateAnnualWealthSummary, exportGoalStatus, exportPortfolioReview (wired in **Settings** Reports & export) |
+| Reporting/export | `services/periodFinancialReportModel.ts`, `periodFinancialReportHtml.ts`, `reportingEngine.ts` | **Period Financial Report** (PDF via print): FY/CY/YTD/12M/custom — Settings, Wealth Analytics, Summary, Dashboard, Command palette. Also generateMonthlyReport, exportGoalStatus, exportPortfolioReview; `generateAnnualWealthSummary` is a thin stub superseded by the period report. |
 | UX guardrails | `services/uxGuardrailsEngine.ts` | fieldHintEngine, statusBadgeEngine, userInputGuard, workflowShortcutMenu |
 | Return measurement | `services/returnMeasurementEngine.ts` | simpleReturn, annualizedReturn, moneyWeightedReturn, timeWeightedReturn, benchmarkExcessReturn, totalReturnAttribution |
 | Goal conflict | `services/goalConflictEngine.ts` | detectGoalConflict, goalFeasibilityCheck, reprioritizeConflictingGoals (wired on **Goals** page) |

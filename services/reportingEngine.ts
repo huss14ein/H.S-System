@@ -49,6 +49,7 @@ export function generateAnnualWealthSummary(args: {
   dividends?: number;
   interest?: number;
 }): string {
+  /** Thin legacy JSON stub — prefer {@link buildPeriodFinancialReportModel} + HTML for full reports. */
   const growth = Math.max(0, (args.endNetWorth || 0) - (args.startNetWorth || 0));
   const summary = {
     type: 'annual_wealth_summary',
@@ -58,6 +59,7 @@ export function generateAnnualWealthSummary(args: {
     growth,
     dividends: args.dividends ?? 0,
     interest: args.interest ?? 0,
+    supersededBy: 'period_financial_report',
   };
   return JSON.stringify(summary, null, 2);
 }

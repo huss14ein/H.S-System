@@ -675,6 +675,19 @@ const DashboardContent: React.FC<{
                 />
             ) : null}
             {setActivePage && <WealthAnalyticsGuideBanner setActivePage={setActivePage} />}
+            <div className="flex justify-end mb-2">
+                <button
+                    type="button"
+                    className="btn-outline text-xs"
+                    onClick={() => {
+                        void import('../components/reports/PeriodFinancialReportModal').then((m) =>
+                            m.openPeriodFinancialReportModal(),
+                        );
+                    }}
+                >
+                    Period financial report (PDF)
+                </button>
+            </div>
 
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">
