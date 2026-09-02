@@ -81,6 +81,22 @@ describe('sukuk investments E2E wiring', () => {
     expect(src).not.toContain('asset_id');
   });
 
+  it('Sukuk payout schedule modal uses plain-language UX (not jargon-only selects)', () => {
+    const src = read('components/investments/SukukInvestmentsSection.tsx');
+    expect(src).toContain('How are you paid?');
+    expect(src).toContain('All at maturity');
+    expect(src).toContain('Every month');
+    expect(src).toContain('Every 3 months');
+    expect(src).toContain('Profit each payment');
+    expect(src).toContain('Capital returned each payment');
+    expect(src).toContain('Capital at maturity');
+    expect(src).toContain('role="radiogroup"');
+    expect(src).toContain('Set how you are paid');
+    expect(src).not.toContain('Bullet — pay at maturity');
+    expect(src).not.toContain('placeholder="Coupon per period"');
+    expect(src).not.toContain('grid grid-cols-2 gap-3');
+  });
+
   it('weekly digest edge function fetches sukuk_positions and portfolio P/L', () => {
     const src = read('supabase/functions/send-weekly-digest/index.ts');
     expect(src).toContain("from('sukuk_positions')");
