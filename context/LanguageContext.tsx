@@ -174,6 +174,194 @@ const DICT: Dict = {
   analyticsHealthLoading: { en: 'Loading wealth health indicators…', ar: 'جاري تحميل مؤشرات صحة الثروة…' },
   analyticsAtlasLoading: { en: 'Loading wealth atlas charts…', ar: 'جاري تحميل مخططات أطلس الثروة…' },
   sectionLoading: { en: 'Loading…', ar: 'جاري التحميل…' },
+
+  // Sukuk payout schedule modal (Investments → Sukuk)
+  sukukPayoutHowPaid: { en: 'How are you paid?', ar: 'كيف تُدفع لك؟' },
+  sukukPayoutIntro: {
+    en: 'Tell Finova when profit and capital come back so cash and outstanding balance stay accurate.',
+    ar: 'أخبر فينوفا متى يعود الربح ورأس المال حتى يبقى النقد والرصيد المستحق دقيقاً.',
+  },
+  sukukPayoutNextScheduled: { en: 'Next scheduled', ar: 'القادم المجدول' },
+  sukukPayoutCashLandsIn: { en: 'Cash lands in', ar: 'يودع النقد في' },
+  sukukPayoutChooseAccount: { en: 'Choose investment account…', ar: 'اختر حساب الاستثمار…' },
+  sukukPayoutAccountAria: {
+    en: 'Investment account that receives payouts',
+    ar: 'حساب الاستثمار الذي يستلم الدفعات',
+  },
+  sukukPayoutAccountHint: {
+    en: 'Usually the same platform account mapped to this Sukuk.',
+    ar: 'عادةً نفس حساب المنصة المرتبط بهذا الصك.',
+  },
+  sukukPayoutFrequency: { en: 'Payment frequency', ar: 'تكرار الدفع' },
+  sukukPayoutPaymentDay: { en: 'Payment day each period', ar: 'يوم الدفع في كل فترة' },
+  sukukPayoutPaymentDayHint: {
+    en: 'Day of the month from 1–28 (e.g. 25).',
+    ar: 'يوم من الشهر بين 1–28 (مثل 25).',
+  },
+  sukukPayoutProfitEach: { en: 'Profit each payment ({currency})', ar: 'الربح في كل دفعة ({currency})' },
+  sukukPayoutProfitMaturity: {
+    en: 'Profit at maturity ({currency}, optional)',
+    ar: 'الربح عند الاستحقاق ({currency}، اختياري)',
+  },
+  sukukPayoutProfitEachHint: {
+    en: 'The regular profit amount you expect each period.',
+    ar: 'مبلغ الربح المنتظم المتوقع لكل فترة.',
+  },
+  sukukPayoutProfitMaturityHint: {
+    en: 'Leave blank if profit is already included in the final payout, or enter the profit portion separately.',
+    ar: 'اتركه فارغاً إذا كان الربح مضمّناً في الدفعة النهائية، أو أدخل جزء الربح بشكل منفصل.',
+  },
+  sukukPayoutCapitalEach: {
+    en: 'Capital returned each payment ({currency}, optional)',
+    ar: 'رأس المال المُسترد في كل دفعة ({currency}، اختياري)',
+  },
+  sukukPayoutCapitalEachHint: {
+    en: 'Only if part of your invested capital comes back with each payment. Leave 0 if you only receive profit until maturity.',
+    ar: 'فقط إذا عاد جزء من رأس مالك المستثمر مع كل دفعة. اترك 0 إذا كنت تستلم الربح فقط حتى الاستحقاق.',
+  },
+  sukukPayoutCapitalMaturity: {
+    en: 'Capital at maturity ({currency})',
+    ar: 'رأس المال عند الاستحقاق ({currency})',
+  },
+  sukukPayoutCapitalMaturityPlaceholder: {
+    en: 'Leave blank for remaining balance',
+    ar: 'اتركه فارغاً للرصيد المتبقي',
+  },
+  sukukPayoutCapitalMaturityHint: {
+    en: 'Leave blank to return whatever outstanding capital is left on {date}.',
+    ar: 'اتركه فارغاً لإرجاع ما تبقى من رأس المال المستحق في {date}.',
+  },
+  sukukPayoutMaturityFallback: { en: 'maturity', ar: 'الاستحقاق' },
+  sukukPayoutSummary: { en: 'Summary', ar: 'الملخص' },
+  sukukPayoutSave: { en: 'Save payout schedule', ar: 'حفظ جدول الدفع' },
+  sukukPayoutSaving: { en: 'Saving…', ar: 'جاري الحفظ…' },
+  sukukPayoutChooseAccountError: {
+    en: 'Choose which investment account receives the cash.',
+    ar: 'اختر حساب الاستثمار الذي يستلم النقد.',
+  },
+  sukukPayoutSaveFailed: { en: 'Failed to save schedule.', ar: 'تعذّر حفظ الجدول.' },
+  sukukPayoutSetHowPaid: { en: 'Set how you are paid', ar: 'حدد كيف تُدفع لك' },
+  sukukPayoutEditHowPaid: { en: 'Edit how you are paid', ar: 'تعديل كيف تُدفع لك' },
+  sukukPayoutCorrectOutstanding: { en: 'Correct outstanding', ar: 'تصحيح المستحق' },
+  sukukPayoutNextPayout: { en: 'Next payout', ar: 'الدفعة القادمة' },
+  sukukPayoutSummaryOnDay: { en: 'on day {day}', ar: 'في اليوم {day}' },
+  sukukPayoutSummaryProfitEach: {
+    en: '{amount} {currency} profit each payment',
+    ar: '{amount} {currency} ربح لكل دفعة',
+  },
+  sukukPayoutSummaryProfitMaturity: {
+    en: '{amount} {currency} profit at maturity',
+    ar: '{amount} {currency} ربح عند الاستحقاق',
+  },
+  sukukPayoutSummaryCapitalEach: {
+    en: '{amount} {currency} capital each payment',
+    ar: '{amount} {currency} رأس مال لكل دفعة',
+  },
+  sukukPayoutSummaryCapitalMaturity: {
+    en: '{amount} {currency} capital at maturity',
+    ar: '{amount} {currency} رأس مال عند الاستحقاق',
+  },
+  sukukPayoutSummaryRemainingCapital: {
+    en: 'remaining capital at maturity',
+    ar: 'رأس المال المتبقي عند الاستحقاق',
+  },
+
+  // Sukuk Investments section + contract modal + correct-outstanding
+  sukukSectionTitle: { en: 'Direct Sukuk contracts', ar: 'عقود الصكوك المباشرة' },
+  sukukSectionSubtitle: {
+    en: 'Off-platform Sukuk with maturity dates and a simple payout schedule. Broker Sukuk funds use Record Trade with asset class Sukuk.',
+    ar: 'صكوك خارج المنصة بتاريخ استحقاق وجدول دفع بسيط. صناديق الصكوك لدى الوسطاء تُسجَّل عبر تسجيل صفقة بفئة أصول صكوك.',
+  },
+  sukukFilterActive: { en: 'Active', ar: 'نشط' },
+  sukukFilterCompleted: { en: 'Completed', ar: 'مكتمل' },
+  sukukFilterAll: { en: 'All', ar: 'الكل' },
+  sukukAdd: { en: 'Add Sukuk', ar: 'إضافة صك' },
+  sukukNoun: { en: 'Sukuk', ar: 'صك' },
+  sukukEmpty: { en: 'No Sukuk contracts in this view.', ar: 'لا توجد عقود صكوك في هذا العرض.' },
+  sukukEmptyCompletedHint: {
+    en: '{count} completed or matured contract(s) — switch to All or Completed.',
+    ar: '{count} عقد مكتمل أو منتهٍ — انتقل إلى الكل أو مكتمل.',
+  },
+  sukukEmptyTryAll: {
+    en: 'Try switching to All to see every contract.',
+    ar: 'جرّب التبديل إلى الكل لعرض كل العقود.',
+  },
+  sukukOutstanding: { en: 'Outstanding', ar: 'المستحق' },
+  sukukFaceValue: { en: 'Face value', ar: 'القيمة الاسمية' },
+  sukukEditAria: { en: 'Edit', ar: 'تعديل' },
+  sukukDeleteAria: { en: 'Delete', ar: 'حذف' },
+  sukukStatusActive: { en: 'Active', ar: 'نشط' },
+  sukukStatusCompleted: { en: 'Completed', ar: 'مكتمل' },
+  sukukAddContract: { en: 'Add Sukuk contract', ar: 'إضافة عقد صك' },
+  sukukEditContract: { en: 'Edit Sukuk contract', ar: 'تعديل عقد صك' },
+  sukukContractIntro: {
+    en: 'Direct Sukuk contracts live under Investments (not Assets). For broker-held Sukuk funds, use Record Trade with asset class Sukuk.',
+    ar: 'عقود الصكوك المباشرة ضمن الاستثمارات (وليست الأصول). لصناديق الصكوك لدى الوسطاء استخدم تسجيل صفقة بفئة أصول صكوك.',
+  },
+  sukukContractName: { en: 'Contract name', ar: 'اسم العقد' },
+  sukukContractNamePlaceholder: {
+    en: 'e.g. Government Sukuk 2027',
+    ar: 'مثال: صكوك حكومية 2027',
+  },
+  sukukInvestmentAccount: { en: 'Investment account', ar: 'حساب الاستثمار' },
+  sukukChoosePlatformAccount: { en: 'Choose platform account…', ar: 'اختر حساب المنصة…' },
+  sukukCurrency: { en: 'Currency', ar: 'العملة' },
+  sukukFaceValueOriginal: {
+    en: 'Face value (original capital)',
+    ar: 'القيمة الاسمية (رأس المال الأصلي)',
+  },
+  sukukFaceLockedHint: {
+    en: 'Face value and outstanding balance are locked after create — use Correct outstanding for audited corrections.',
+    ar: 'القيمة الاسمية والرصيد المستحق مقفولان بعد الإنشاء — استخدم تصحيح المستحق للتعديلات المدققة.',
+  },
+  sukukPurchasePrice: { en: 'Purchase price (optional)', ar: 'سعر الشراء (اختياري)' },
+  sukukIssueDate: { en: 'Issue date', ar: 'تاريخ الإصدار' },
+  sukukMaturityDate: { en: 'Maturity date', ar: 'تاريخ الاستحقاق' },
+  sukukLinkedGoal: { en: 'Linked goal (optional)', ar: 'هدف مرتبط (اختياري)' },
+  sukukNoGoalLink: { en: 'No goal link', ar: 'بدون ربط بهدف' },
+  sukukNotesOptional: { en: 'Notes (optional)', ar: 'ملاحظات (اختياري)' },
+  sukukSave: { en: 'Save Sukuk', ar: 'حفظ الصك' },
+  sukukFaceValueError: {
+    en: 'Face value must be a non-negative number.',
+    ar: 'يجب أن تكون القيمة الاسمية رقماً غير سالب.',
+  },
+  sukukChooseAccountError: {
+    en: 'Choose the mapped investment platform account.',
+    ar: 'اختر حساب منصة الاستثمار المرتبط.',
+  },
+  sukukDatesRequiredError: {
+    en: 'Issue and maturity dates are required.',
+    ar: 'تاريخا الإصدار والاستحقاق مطلوبان.',
+  },
+  sukukSaveFailed: { en: 'Failed to save Sukuk.', ar: 'تعذّر حفظ الصك.' },
+  sukukCorrectFailed: {
+    en: 'Could not correct Sukuk outstanding balance.',
+    ar: 'تعذّر تصحيح رصيد الصك المستحق.',
+  },
+
+  // Shared revaluation / correct-outstanding modal
+  revalCurrentBook: { en: 'Current book', ar: 'القيمة الدفترية الحالية' },
+  revalDelta: { en: 'Delta', ar: 'الفرق' },
+  revalNewValue: { en: 'New value ({currency})', ar: 'القيمة الجديدة ({currency})' },
+  revalReason: { en: 'Reason (required)', ar: 'السبب (مطلوب)' },
+  revalReasonPlaceholder: { en: 'e.g. Annual appraisal', ar: 'مثال: تقييم سنوي' },
+  revalCancel: { en: 'Cancel', ar: 'إلغاء' },
+  revalApplying: { en: 'Applying…', ar: 'جاري التطبيق…' },
+  revalAlreadyMatches: { en: 'Already matches', ar: 'مطابق بالفعل' },
+  revalApply: { en: 'Apply revaluation', ar: 'تطبيق إعادة التقييم' },
+  revalReasonError: {
+    en: 'Reason is required (at least 3 characters).',
+    ar: 'السبب مطلوب (3 أحرف على الأقل).',
+  },
+  revalInvalidValue: { en: 'Enter a valid value.', ar: 'أدخل قيمة صحيحة.' },
+  revalSukukIntro: {
+    en: 'correcting the outstanding balance updates Sukuk exposure and net worth. Posted payouts stay; only unposted future payouts are rebuilt.',
+    ar: 'تصحيح الرصيد المستحق يحدّث تعرض الصكوك وصافي الثروة. الدفعات المرحّلة تبقى؛ يُعاد بناء الدفعات المستقبلية غير المرحّلة فقط.',
+  },
+  revalGenericIntro: {
+    en: 'revaluation updates net worth only — no cash transaction is created.',
+    ar: 'إعادة التقييم تحدّث صافي الثروة فقط — دون إنشاء حركة نقدية.',
+  },
 };
 
 export type LanguageContextValue = {
