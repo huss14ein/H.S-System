@@ -276,6 +276,7 @@ const DICT: Dict = {
   sukukFilterCompleted: { en: 'Completed', ar: 'مكتمل' },
   sukukFilterAll: { en: 'All', ar: 'الكل' },
   sukukAdd: { en: 'Add Sukuk', ar: 'إضافة صك' },
+  sukukNoun: { en: 'Sukuk', ar: 'صك' },
   sukukEmpty: { en: 'No Sukuk contracts in this view.', ar: 'لا توجد عقود صكوك في هذا العرض.' },
   sukukEmptyCompletedHint: {
     en: '{count} completed or matured contract(s) — switch to All or Completed.',
