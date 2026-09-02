@@ -192,8 +192,8 @@ export function previewRevaluation(args: {
 }
 
 /**
- * Direct Sukuk position: restate outstanding principal (the number that feeds Sukuk exposure).
- * Posted coupon/principal events stay untouched; only unposted future events are rebuilt on apply.
+ * Direct Sukuk position: correct outstanding balance (the number that feeds Sukuk exposure).
+ * Posted profit/capital payouts stay untouched; only unposted future events are rebuilt on apply.
  */
 export function previewSukukPrincipalRestatement(args: {
   positionId: string;
@@ -209,11 +209,11 @@ export function previewSukukPrincipalRestatement(args: {
   const delta = computeReconcileDelta(before, actual);
   let blockedReason: string | undefined;
   if (!Number.isFinite(actual) || actual < 0) {
-    blockedReason = 'Outstanding principal must be a non-negative finite number.';
+    blockedReason = 'Outstanding balance must be a non-negative finite number.';
   }
   const face = Number(args.faceValue);
   if (blockedReason == null && Number.isFinite(face) && face > 0 && actual > roundMoney(face)) {
-    blockedReason = 'Outstanding principal cannot exceed the Sukuk face value.';
+    blockedReason = 'Outstanding balance cannot exceed the Sukuk face value.';
   }
   if (blockedReason == null && args.reason != null && !isValidReason(args.reason)) {
     blockedReason = 'Reason is required (at least 3 characters).';
@@ -228,8 +228,8 @@ export function previewSukukPrincipalRestatement(args: {
     currency: args.currency === 'USD' ? 'USD' : 'SAR',
     noop: isNoopDelta(delta),
     impacts: [
-      'Sukuk exposure and net worth update from the restated outstanding principal. No cash transaction.',
-      'Posted coupon/principal payouts are preserved; only unposted future events are regenerated.',
+      'Sukuk exposure and net worth update from the corrected outstanding balance. No cash transaction.',
+      'Posted profit and capital payouts are preserved; only unposted future payouts are regenerated.',
     ],
     blockedReason,
   };

@@ -10,6 +10,11 @@ import { useFormatCurrency } from '../../hooks/useFormatCurrency';
 import { parseMoneyInput, roundMoney } from '../../utils/money';
 import { getPersonalSukukPositions } from '../../utils/wealthScope';
 import RevaluationModal from '../reconciliation/RevaluationModal';
+import {
+  SUKUK_PAYOUT_CADENCE_OPTIONS,
+  formatSukukPayoutCadenceLabel,
+  formatSukukPayoutKindLabel,
+} from '../../services/sukuk/sukukPayoutLabels';
 
 const SukukPositionModal: React.FC<{
   isOpen: boolean;
@@ -96,67 +101,68 @@ const SukukPositionModal: React.FC<{
         <p className="text-sm text-slate-600 bg-sky-50 border border-sky-100 rounded-lg p-3">
           Direct Sukuk contracts live under Investments (not Assets). For broker-held Sukuk funds, use <strong>Record Trade</strong> with asset class Sukuk.
         </p>
-        <input className="input-base" value={name} onChange={(e) => setName(e.target.value)} placeholder="Contract name" />
-        <select className="select-base" value={investmentAccountId} onChange={(e) => setInvestmentAccountId(e.target.value)}>
-          <option value="">Mapped platform account…</option>
-          {investmentAccounts.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
-        <select className="select-base" value={currency} onChange={(e) => setCurrency(e.target.value as 'SAR' | 'USD')}>
-          <option value="SAR">SAR</option>
-          <option value="USD">USD</option>
-        </select>
-        <input className="input-base" type="number" min={0} step="any" value={faceValue} onChange={(e) => setFaceValue(e.target.value)} placeholder="Face value" disabled={!!positionToEdit} />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Contract name</span>
+          <input className="input-base" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Government Sukuk 2027" />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Investment account</span>
+          <select className="select-base" value={investmentAccountId} onChange={(e) => setInvestmentAccountId(e.target.value)}>
+            <option value="">Choose platform account…</option>
+            {investmentAccounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Currency</span>
+          <select className="select-base" value={currency} onChange={(e) => setCurrency(e.target.value as 'SAR' | 'USD')}>
+            <option value="SAR">SAR</option>
+            <option value="USD">USD</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Face value (original capital)</span>
+          <input className="input-base" type="number" min={0} step="any" value={faceValue} onChange={(e) => setFaceValue(e.target.value)} disabled={!!positionToEdit} inputMode="decimal" />
+        </label>
         {positionToEdit ? (
           <p className="text-xs text-slate-500 -mt-2">
-            Face value and outstanding principal are locked after create — use <strong>Restate principal</strong> for audited corrections.
+            Face value and outstanding balance are locked after create — use <strong>Correct outstanding</strong> for audited corrections.
           </p>
         ) : null}
-        <input className="input-base" type="number" min={0} step="any" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} placeholder="Purchase price (optional)" />
-        <div className="grid grid-cols-2 gap-3">
-          <input className="input-base" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
-          <input className="input-base" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Purchase price (optional)</span>
+          <input className="input-base" type="number" min={0} step="any" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} inputMode="decimal" />
+        </label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-800">Issue date</span>
+            <input className="input-base" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-slate-800">Maturity date</span>
+            <input className="input-base" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
+          </label>
         </div>
-        <select className="select-base" value={goalId} onChange={(e) => setGoalId(e.target.value)}>
-          <option value="">No goal link</option>
-          {goals.map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
-          ))}
-        </select>
-        <textarea className="input-base min-h-[72px]" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" />
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Linked goal (optional)</span>
+          <select className="select-base" value={goalId} onChange={(e) => setGoalId(e.target.value)}>
+            <option value="">No goal link</option>
+            {goals.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-slate-800">Notes (optional)</span>
+          <textarea className="input-base min-h-[72px]" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </label>
         {error && <div className="text-sm text-danger bg-red-50 border border-red-200 rounded-lg p-2">{error}</div>}
         <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">{isSaving ? 'Saving…' : 'Save Sukuk'}</button>
       </div>
     </Modal>
   );
 };
-
-const PAYOUT_CADENCE_OPTIONS: {
-  value: SukukPayoutCadence;
-  title: string;
-  description: string;
-}[] = [
-  {
-    value: 'maturity_only',
-    title: 'All at maturity',
-    description: 'One payment when the contract ends — profit (optional) plus your capital back.',
-  },
-  {
-    value: 'monthly',
-    title: 'Every month',
-    description: 'Regular profit each month. You can also return some capital along the way.',
-  },
-  {
-    value: 'quarterly',
-    title: 'Every 3 months',
-    description: 'Regular profit each quarter. You can also return some capital along the way.',
-  },
-];
-
-function formatSukukPayoutKind(kind: SukukPayoutEvent['kind']): string {
-  return kind === 'coupon' ? 'profit' : 'capital returned';
-}
 
 const SukukPayoutScheduleModal: React.FC<{
   isOpen: boolean;
@@ -223,8 +229,7 @@ const SukukPayoutScheduleModal: React.FC<{
   }, [existingEvents]);
 
   const scheduleSummary = useMemo(() => {
-    const option = PAYOUT_CADENCE_OPTIONS.find((o) => o.value === cadence);
-    const parts: string[] = [option?.title ?? 'Custom'];
+    const parts: string[] = [formatSukukPayoutCadenceLabel(cadence)];
     if (periodic) {
       parts.push(`on day ${Math.max(1, Math.min(28, Math.trunc(Number(dayOfMonth || '1')) || 1))}`);
     }
@@ -292,7 +297,7 @@ const SukukPayoutScheduleModal: React.FC<{
             <p className="text-xs text-slate-600 pt-1">
               Next scheduled: <strong>{nextEvent.payoutDate}</strong>
               {' · '}
-              {formatSukukPayoutKind(nextEvent.kind)}
+              {formatSukukPayoutKindLabel(nextEvent.kind)}
               {' · '}
               {roundMoney(nextEvent.amount)} {nextEvent.currency}
             </p>
@@ -318,7 +323,7 @@ const SukukPayoutScheduleModal: React.FC<{
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium text-slate-800">Payment frequency</legend>
           <div className="space-y-2" role="radiogroup" aria-label="Payment frequency">
-            {PAYOUT_CADENCE_OPTIONS.map((option) => {
+            {SUKUK_PAYOUT_CADENCE_OPTIONS.map((option) => {
               const selected = cadence === option.value;
               return (
                 <button
@@ -385,7 +390,7 @@ const SukukPayoutScheduleModal: React.FC<{
           />
           <span className="text-xs text-slate-500">
             {periodic
-              ? 'The regular profit (coupon) amount you expect each period.'
+              ? 'The regular profit amount you expect each period.'
               : 'Leave blank if profit is already included in the final payout, or enter the profit portion separately.'}
           </span>
         </label>
@@ -540,14 +545,14 @@ export const SukukInvestmentsSection: React.FC = () => {
                   className="self-start px-2 py-1 text-[11px] font-medium text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50"
                   onClick={() => setRestatePosition(p)}
                 >
-                  Restate principal
+                  Correct outstanding
                 </button>
                 )}
                 {next && (
                   <p className="text-xs text-slate-700">
                     Next payout: <strong>{next.payoutDate}</strong>
                     {' · '}
-                    {formatSukukPayoutKind(next.kind)}
+                    {formatSukukPayoutKindLabel(next.kind)}
                     {' · '}
                     {roundMoney(next.amount)} {next.currency}
                   </p>
@@ -575,7 +580,7 @@ export const SukukInvestmentsSection: React.FC = () => {
       <RevaluationModal
         isOpen={!!restatePosition}
         onClose={() => setRestatePosition(null)}
-        title={`Restate principal — ${restatePosition?.name ?? ''}`}
+        title={`Correct outstanding — ${restatePosition?.name ?? ''}`}
         entityType="sukuk_position"
         entityId={restatePosition?.id ?? ''}
         entityLabel={restatePosition?.name ?? 'Sukuk'}
@@ -590,7 +595,7 @@ export const SukukInvestmentsSection: React.FC = () => {
             actualValue,
             reason,
           });
-          if (!result.ok) throw new Error(result.error || 'Could not restate Sukuk principal.');
+          if (!result.ok) throw new Error(result.error || 'Could not correct Sukuk outstanding balance.');
         }}
       />
       {schedulePosition && (

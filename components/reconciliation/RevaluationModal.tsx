@@ -112,7 +112,7 @@ const RevaluationModal: React.FC<RevaluationModalProps> = ({
         <p className="text-sm text-slate-600">
           {entityLabel}:{' '}
           {entityType === 'sukuk_position'
-            ? 'restating outstanding principal updates Sukuk exposure and net worth. Posted payouts stay; only unposted future payouts are rebuilt.'
+            ? 'correcting the outstanding balance updates Sukuk exposure and net worth. Posted payouts stay; only unposted future payouts are rebuilt.'
             : 'revaluation updates net worth only — no cash transaction is created.'}
         </p>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm tabular-nums flex justify-between">
