@@ -143,6 +143,7 @@ describe('periodFinancialReportCompletion', () => {
     expect(txIdx).toBeLessThan(invIdx);
     expect(invIdx).toBeLessThan(recIdx);
     expect(html).toContain('Contents');
+    expect(html).toContain('Live NW (today)');
     expect(html).toContain('Wealth change waterfall');
     expect(html).toContain('Top holdings by |G/L|');
     expect(html).toContain('Credit card activity');
@@ -179,11 +180,17 @@ describe('periodFinancialReportCompletion', () => {
     const html = read('services/periodFinancialReportHtml.ts');
     expect(html).toContain('generatePeriodFinancialReportHtml');
     expect(html).toContain('periodReportTransactionsCsv');
+    expect(html).toContain('Budget drift');
+    expect(html).toContain('Payoff order');
     const modal = read('components/reports/PeriodFinancialReportModal.tsx');
     expect(modal).toContain('openHtmlForPrint');
     expect(modal).toContain('generatePeriodFinancialReportHtml');
     expect(modal).toContain('buildPeriodFinancialReportModel');
     expect(modal).toContain('openPeriodFinancialReportModal');
+    expect(modal).toContain('PERIOD_REPORT_OPEN_EVENT');
+    expect(modal).toContain("finova:open-period-financial-report");
+    expect(modal).toContain('Choose both start and end dates');
+    expect(modal).toContain('periodReportTransactionsCsv');
   });
 
   it('all entry points open the same modal', () => {
@@ -200,7 +207,9 @@ describe('periodFinancialReportCompletion', () => {
     expect(wa).toContain('period-financial-report');
     expect(wa).toContain('openPeriodFinancialReportModal');
     expect(summary).toContain('Period financial report (PDF)');
+    expect(summary).toContain('openPeriodFinancialReportModal');
     expect(dash).toContain('Period financial report (PDF)');
+    expect(dash).toContain('openPeriodFinancialReportModal');
     expect(palette).toContain('Generate period financial report (PDF)');
     expect(palette).toContain('openPeriodFinancialReportModal');
   });

@@ -14,9 +14,9 @@ Use after `npm run test` (lint + typecheck + unit tests) and optionally `npm run
 5. **Accounts** — list loads; add/edit path does not crash (optional).
 6. **Transactions** — list/filter; add one tx (optional).
 7. **Budgets** — page renders; derived / emergency copy if applicable.
-8. **Summary** — net worth card; exports dropdown does not throw (optional).
+8. **Summary** — net worth card; exports dropdown does not throw; **Period financial report (PDF)** opens modal (optional).
 9. **Investments** — hub tabs switch without blank screen.
-10. **Settings** — Reports & export: wealth summary + monthly JSON if data exists.
+10. **Settings** — Reports & export: **Period financial report (PDF)** + wealth summary + monthly JSON if data exists.
 
 ## Cross-browser / device (spot check)
 

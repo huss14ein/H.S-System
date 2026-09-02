@@ -1406,7 +1406,7 @@ const Settings: React.FC<{
             </SectionCard>
 
             <SectionCard id="reports-export" title="Reports & export" collapsible collapsibleSummary="Wealth summary, backup">
-                <p className="text-sm text-slate-600 mb-4">Generate structured reports and exports. Wealth summary includes net worth, cashflow, holdings, and risk metrics.</p>
+                <p className="text-sm text-slate-600 mb-4">Generate structured reports and exports. Prefer <strong>Period financial report (PDF)</strong> for a full-system period extract; wealth summary and monthly JSON remain available for lighter snapshots.</p>
                 <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50/60 p-3">
                     <p className="text-xs font-semibold text-sky-800 uppercase mb-1">Period financial report</p>
                     <p className="text-sm text-slate-600 mb-2">Full-system PDF for financial year, calendar year, YTD, last 12 months, or a custom range — wealth, budgets, transactions, investments, goals, and more.</p>

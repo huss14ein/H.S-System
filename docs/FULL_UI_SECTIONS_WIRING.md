@@ -318,8 +318,9 @@ Refresh also runs when **`data.transactions.length`** changes (effect dependency
 
 | Button | Output | Data / service |
 |--------|--------|----------------|
+| **Period financial report (PDF)** | Print / Save as PDF (+ optional TX CSV) | **`openPeriodFinancialReportModal`** → **`buildPeriodFinancialReportModel`** + **`generatePeriodFinancialReportHtml`** → **`openHtmlForPrint`**. Presets: financial year, calendar year, YTD, last 12 months, custom. Same entry from Wealth Analytics export, Summary, Dashboard, and Command palette; host mounted in **`AuthenticatedAppShell`**. |
 | **Wealth summary** JSON / CSV / Print HTML | File or print | **`generateWealthSummaryReportJson/Csv/Html`** — payload from **`wealthSummaryPayload`** `useMemo`: `computePersonalNetWorthBreakdownSAR`, `personalTransactions`, `netCashFlowForMonth`, personal accounts/investments, `ef`, `localSettings.riskProfile` |
-| **Monthly report (JSON)** | Download | **`generateMonthlyReport`** — current month label, liquid cash from checking/savings, `netCashFlowForMonth` on personal txs |
+| **Monthly report (JSON)** | Download | **`generateMonthlyReport`** — current month label, liquid cash from checking/savings, `netCashFlowForMonth` on personal txs (lightweight vs full period PDF) |
 | **Goal status (CSV)** | Download | **`exportGoalStatus`** — `data.goals` |
 | **Portfolio review (CSV)** | Download | **`exportPortfolioReview`** — positions from **`personalInvestments`** flattened holdings |
 

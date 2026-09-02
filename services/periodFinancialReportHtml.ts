@@ -305,10 +305,12 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
     <div class="meta">
       <div><strong>Net worth (end)</strong><span class="kpi">${money(wealth.endNwSar)}</span></div>
       <div><strong>Period Δ NW</strong><span class="kpi">${money(wealth.deltaSar)}</span></div>
+      <div><strong>Live NW (today)</strong><span class="kpi">${money(cover.personalNetWorthSar)}</span></div>
       <div><strong>FX SAR/USD</strong><span class="kpi">${fmt(cover.sarPerUsd, 4)}</span></div>
       <div><strong>Quotes</strong><span>${esc(cover.quotesAsOf ?? 'n/a')}</span></div>
       <div><strong>Data quality</strong><span>${esc(cover.integritySeverity)}${cover.staleQuotes ? ' · stale quotes' : ''}</span></div>
     </div>
+    ${cover.managedNote ? `<p class="muted">${esc(cover.managedNote)}</p>` : ''}
     <p class="muted">${esc(cover.taxDisclaimer)}</p>
     <h3>Contents</h3>
     <ol class="toc">${toc}</ol>
@@ -349,7 +351,7 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
          ? `<p>Prior period — in ${money(cashflow.priorTotals.inflow)}, out ${money(cashflow.priorTotals.outflow)}, net ${money(cashflow.priorTotals.net)}</p>`
          : ''
      }
-     <p>Salary → invest: ${pct(cashflow.salaryInvest.ratePct)} · attributed ${money(cashflow.salaryInvest.attributedSar)}</p>
+     <p>Salary → invest: ${pct(cashflow.salaryInvest.ratePct)} · attributed ${money(cashflow.salaryInvest.attributedSar)}${cashflow.salaryInvest.detail ? ` <span class="muted">(${esc(cashflow.salaryInvest.detail)})</span>` : ''}</p>
      <p>Subscriptions (heuristic): ${money(cashflow.subscriptionsMonthlySar)}/mo · ${fmt(cashflow.subscriptionsCount)} matches</p>`,
   )}
 
@@ -365,7 +367,23 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
          (c) =>
            `<tr><td>${esc(c.category)}</td><td class="num">${fmt(c.spentSar)}</td><td class="num">${fmt(c.limitSar)}</td><td class="num">${pct(c.utilizationPct)}</td><td>${esc(c.status)}</td></tr>`,
        )
-       .join('')}</tbody></table>`,
+       .join('')}</tbody></table>
+     ${
+       budgets.drift.length
+         ? `<h3>Budget drift</h3><table><thead><tr><th>Category</th><th class="num">Drift %</th></tr></thead><tbody>${budgets.drift
+             .slice(0, 20)
+             .map((d) => `<tr><td>${esc(d.category)}</td><td class="num">${pct(d.driftPct)}</td></tr>`)
+             .join('')}</tbody></table>`
+         : ''
+     }
+     ${
+       budgets.insights.length
+         ? `<h3>Budget insights</h3><ul>${budgets.insights
+             .slice(0, 12)
+             .map((i) => `<li><strong>${esc(i.priority)}</strong> · ${esc(i.title)} — ${esc(i.detail)}</li>`)
+             .join('')}</ul>`
+         : ''
+     }`,
   )}
 
   ${section(
@@ -434,8 +452,18 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
   ${section(
     'report-debt',
     '7. Debt & credit',
-    `<p>Total liabilities ${money(debt.totalLiabilitiesSar)}${debt.stress ? ` · Stress ${esc(debt.stress.label)} (${fmt(debt.stress.score)})` : ''}</p>
+    `<p>Total liabilities ${money(debt.totalLiabilitiesSar)}${debt.stress ? ` · Stress ${esc(debt.stress.label)} (${fmt(debt.stress.score)}) · PTI ${pct(debt.stress.paymentToIncomeRatio * 100)}` : ''}</p>
      ${debtBars}
+     ${
+       debt.payoffOrderIds.length
+         ? `<h3>Payoff order (avalanche)</h3><ol>${debt.payoffOrderIds
+             .map((id) => {
+               const li = debt.liabilities.find((l) => l.id === id);
+               return `<li>${esc(li?.name ?? id)}${li ? ` · ${money(li.balanceSar)}` : ''}</li>`;
+             })
+             .join('')}</ol>`
+         : ''
+     }
      <h3>Credit card activity (period)</h3>
      <table><thead><tr><th>Card</th><th class="num">Purchases</th><th class="num">Refunds</th><th class="num">Payments in</th><th class="num">Interest/fees</th></tr></thead>
      <tbody>${
@@ -458,7 +486,7 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
   ${section(
     'report-safety',
     '8. Safety, liquidity, risk',
-    `<p>Emergency fund: ${fmt(safety.emergencyFund.monthsCovered, 1)} mo (${esc(safety.emergencyFund.status)}), shortfall ${money(safety.emergencyFund.shortfall)}</p>
+    `<p>Emergency fund: ${fmt(safety.emergencyFund.monthsCovered, 1)} mo of ${fmt(safety.emergencyFund.targetMonths, 1)} target (${esc(safety.emergencyFund.status)}), shortfall ${money(safety.emergencyFund.shortfall)}</p>
      <p>Runway ${fmt(safety.runwayMonths, 1)} mo · Risk lane ${esc(safety.riskLane)} · Suggested ${esc(safety.suggestedProfile)}</p>
      <p>Discipline ${fmt(safety.disciplineScore)} · Household stress ${esc(safety.householdStress)}</p>
      <p>Deployable capital ${money(safety.capitalDeployableSar)}</p>

@@ -59,6 +59,16 @@ export const PeriodFinancialReportModal: React.FC<{
       showToast('Load workspace data before generating the report.', 'warning');
       return;
     }
+    if (preset === 'custom') {
+      if (!customStart || !customEnd) {
+        showToast('Choose both start and end dates for a custom range.', 'warning');
+        return;
+      }
+      if (customStart > customEnd) {
+        showToast('Custom start date must be on or before the end date.', 'warning');
+        return;
+      }
+    }
     setBusy(true);
     startTransition(() => {
       try {
@@ -78,9 +88,9 @@ export const PeriodFinancialReportModal: React.FC<{
         const ok = openHtmlForPrint(html);
         if (!ok) {
           showToast('Could not open print preview — check browser pop-up settings.', 'error');
-        } else {
-          showToast('Period financial report opened for Print / Save as PDF.', 'success');
+          return;
         }
+        showToast('Period financial report opened for Print / Save as PDF.', 'success');
         if (alsoCsv) {
           const csv = periodReportTransactionsCsv(model);
           const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });

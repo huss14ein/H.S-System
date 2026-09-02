@@ -1001,7 +1001,10 @@ export function buildPeriodFinancialReportModel(
       integritySeverity: integrityIssues.length ? 'attention' : 'ok',
       staleQuotes: Boolean(stale),
       personalNetWorthSar: metrics.netWorth,
-      managedNote: null,
+      managedNote:
+        !periodIncludesToday && Math.abs(metrics.netWorth - endNw) > 1
+          ? `Period end NW uses the closest snapshot on/before ${endDay}; live personal NW (today) is shown separately on the cover.`
+          : 'Figures are personal-scope balance sheet (canonical headline engines).',
       taxDisclaimer:
         'Tax reporting is out of product scope (KSA). Fees/VAT/dividends below are informational ledger totals only.',
     },
