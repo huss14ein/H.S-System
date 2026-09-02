@@ -94,7 +94,7 @@ describe('sukuk investments E2E wiring', () => {
     expect(src).toContain('Set how you are paid');
     expect(src).not.toContain('Bullet — pay at maturity');
     expect(src).not.toContain('placeholder="Coupon per period"');
-    expect(src).not.toContain('grid grid-cols-2 gap-3');
+    expect(src).not.toContain('Monthly coupons (+ optional principal installments)');
   });
 
   it('weekly digest edge function fetches sukuk_positions and portfolio P/L', () => {
