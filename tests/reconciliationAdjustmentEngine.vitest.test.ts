@@ -575,7 +575,7 @@ describe('Sukuk principal restatement protocol', () => {
 
   it('Sukuk UI corrects outstanding through the engine instead of overwriting principal', () => {
     const src = read('components/investments/SukukInvestmentsSection.tsx');
-    expect(src).toContain('Correct outstanding');
+    expect(src).toContain("t('sukukPayoutCorrectOutstanding')");
     expect(src).toContain('applyReconciliationAdjustment');
     expect(src).toContain("entityType=\"sukuk_position\"");
   });

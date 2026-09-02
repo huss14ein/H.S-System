@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Modal from '../Modal';
+import { useLanguage } from '../../context/LanguageContext';
 import {
   isValidReason,
   previewRevaluation,
@@ -28,6 +29,13 @@ export interface RevaluationModalProps {
   }) => Promise<void>;
 }
 
+function fillTemplate(template: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (s, [key, value]) => s.split(`{${key}}`).join(String(value)),
+    template,
+  );
+}
+
 const RevaluationModal: React.FC<RevaluationModalProps> = ({
   isOpen,
   onClose,
@@ -40,6 +48,7 @@ const RevaluationModal: React.FC<RevaluationModalProps> = ({
   maxValue,
   onApply,
 }) => {
+  const { t, dir } = useLanguage();
   const [actualStr, setActualStr] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -79,12 +88,12 @@ const RevaluationModal: React.FC<RevaluationModalProps> = ({
     e.preventDefault();
     setError(null);
     if (!isValidReason(reason)) {
-      setError('Reason is required (at least 3 characters).');
+      setError(t('revalReasonError'));
       return;
     }
     const actual = Number(String(actualStr).replace(/,/g, ''));
     if (!Number.isFinite(actual)) {
-      setError('Enter a valid value.');
+      setError(t('revalInvalidValue'));
       return;
     }
     if (preview?.blockedReason) {
@@ -108,22 +117,20 @@ const RevaluationModal: React.FC<RevaluationModalProps> = ({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title}>
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4" dir={dir}>
         <p className="text-sm text-slate-600">
           {entityLabel}:{' '}
-          {entityType === 'sukuk_position'
-            ? 'correcting the outstanding balance updates Sukuk exposure and net worth. Posted payouts stay; only unposted future payouts are rebuilt.'
-            : 'revaluation updates net worth only — no cash transaction is created.'}
+          {entityType === 'sukuk_position' ? t('revalSukukIntro') : t('revalGenericIntro')}
         </p>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm tabular-nums flex justify-between">
-          <span className="text-slate-600">Current book</span>
+          <span className="text-slate-600">{t('revalCurrentBook')}</span>
           <span className="font-medium">
             {Number(beforeValue).toFixed(2)} {currency}
           </span>
         </div>
         {preview && (
           <div className="text-sm tabular-nums flex justify-between px-1">
-            <span className="text-slate-600">Delta</span>
+            <span className="text-slate-600">{t('revalDelta')}</span>
             <span>
               {preview.delta >= 0 ? '+' : ''}
               {preview.delta.toFixed(2)} {currency}
@@ -131,7 +138,9 @@ const RevaluationModal: React.FC<RevaluationModalProps> = ({
           </div>
         )}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">New value ({currency})</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {fillTemplate(t('revalNewValue'), { currency })}
+          </label>
           <input
             type="number"
             step="any"
@@ -142,13 +151,13 @@ const RevaluationModal: React.FC<RevaluationModalProps> = ({
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Reason (required)</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('revalReason')}</label>
           <input
             type="text"
             className="input-base"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. Annual appraisal"
+            placeholder={t('revalReasonPlaceholder')}
             required
             minLength={3}
           />
@@ -156,10 +165,10 @@ const RevaluationModal: React.FC<RevaluationModalProps> = ({
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         <div className="flex gap-2">
           <button type="button" className="btn-outline flex-1" onClick={onClose} disabled={busy}>
-            Cancel
+            {t('revalCancel')}
           </button>
           <button type="submit" className="btn-primary flex-1" disabled={busy || Boolean(preview?.noop)}>
-            {busy ? 'Applying…' : preview?.noop ? 'Already matches' : 'Apply revaluation'}
+            {busy ? t('revalApplying') : preview?.noop ? t('revalAlreadyMatches') : t('revalApply')}
           </button>
         </div>
       </form>

@@ -265,6 +265,102 @@ const DICT: Dict = {
     en: 'remaining capital at maturity',
     ar: 'رأس المال المتبقي عند الاستحقاق',
   },
+
+  // Sukuk Investments section + contract modal + correct-outstanding
+  sukukSectionTitle: { en: 'Direct Sukuk contracts', ar: 'عقود الصكوك المباشرة' },
+  sukukSectionSubtitle: {
+    en: 'Off-platform Sukuk with maturity dates and a simple payout schedule. Broker Sukuk funds use Record Trade with asset class Sukuk.',
+    ar: 'صكوك خارج المنصة بتاريخ استحقاق وجدول دفع بسيط. صناديق الصكوك لدى الوسطاء تُسجَّل عبر تسجيل صفقة بفئة أصول صكوك.',
+  },
+  sukukFilterActive: { en: 'Active', ar: 'نشط' },
+  sukukFilterCompleted: { en: 'Completed', ar: 'مكتمل' },
+  sukukFilterAll: { en: 'All', ar: 'الكل' },
+  sukukAdd: { en: 'Add Sukuk', ar: 'إضافة صك' },
+  sukukEmpty: { en: 'No Sukuk contracts in this view.', ar: 'لا توجد عقود صكوك في هذا العرض.' },
+  sukukEmptyCompletedHint: {
+    en: '{count} completed or matured contract(s) — switch to All or Completed.',
+    ar: '{count} عقد مكتمل أو منتهٍ — انتقل إلى الكل أو مكتمل.',
+  },
+  sukukEmptyTryAll: {
+    en: 'Try switching to All to see every contract.',
+    ar: 'جرّب التبديل إلى الكل لعرض كل العقود.',
+  },
+  sukukOutstanding: { en: 'Outstanding', ar: 'المستحق' },
+  sukukFaceValue: { en: 'Face value', ar: 'القيمة الاسمية' },
+  sukukEditAria: { en: 'Edit', ar: 'تعديل' },
+  sukukDeleteAria: { en: 'Delete', ar: 'حذف' },
+  sukukStatusActive: { en: 'Active', ar: 'نشط' },
+  sukukStatusCompleted: { en: 'Completed', ar: 'مكتمل' },
+  sukukAddContract: { en: 'Add Sukuk contract', ar: 'إضافة عقد صك' },
+  sukukEditContract: { en: 'Edit Sukuk contract', ar: 'تعديل عقد صك' },
+  sukukContractIntro: {
+    en: 'Direct Sukuk contracts live under Investments (not Assets). For broker-held Sukuk funds, use Record Trade with asset class Sukuk.',
+    ar: 'عقود الصكوك المباشرة ضمن الاستثمارات (وليست الأصول). لصناديق الصكوك لدى الوسطاء استخدم تسجيل صفقة بفئة أصول صكوك.',
+  },
+  sukukContractName: { en: 'Contract name', ar: 'اسم العقد' },
+  sukukContractNamePlaceholder: {
+    en: 'e.g. Government Sukuk 2027',
+    ar: 'مثال: صكوك حكومية 2027',
+  },
+  sukukInvestmentAccount: { en: 'Investment account', ar: 'حساب الاستثمار' },
+  sukukChoosePlatformAccount: { en: 'Choose platform account…', ar: 'اختر حساب المنصة…' },
+  sukukCurrency: { en: 'Currency', ar: 'العملة' },
+  sukukFaceValueOriginal: {
+    en: 'Face value (original capital)',
+    ar: 'القيمة الاسمية (رأس المال الأصلي)',
+  },
+  sukukFaceLockedHint: {
+    en: 'Face value and outstanding balance are locked after create — use Correct outstanding for audited corrections.',
+    ar: 'القيمة الاسمية والرصيد المستحق مقفولان بعد الإنشاء — استخدم تصحيح المستحق للتعديلات المدققة.',
+  },
+  sukukPurchasePrice: { en: 'Purchase price (optional)', ar: 'سعر الشراء (اختياري)' },
+  sukukIssueDate: { en: 'Issue date', ar: 'تاريخ الإصدار' },
+  sukukMaturityDate: { en: 'Maturity date', ar: 'تاريخ الاستحقاق' },
+  sukukLinkedGoal: { en: 'Linked goal (optional)', ar: 'هدف مرتبط (اختياري)' },
+  sukukNoGoalLink: { en: 'No goal link', ar: 'بدون ربط بهدف' },
+  sukukNotesOptional: { en: 'Notes (optional)', ar: 'ملاحظات (اختياري)' },
+  sukukSave: { en: 'Save Sukuk', ar: 'حفظ الصك' },
+  sukukFaceValueError: {
+    en: 'Face value must be a non-negative number.',
+    ar: 'يجب أن تكون القيمة الاسمية رقماً غير سالب.',
+  },
+  sukukChooseAccountError: {
+    en: 'Choose the mapped investment platform account.',
+    ar: 'اختر حساب منصة الاستثمار المرتبط.',
+  },
+  sukukDatesRequiredError: {
+    en: 'Issue and maturity dates are required.',
+    ar: 'تاريخا الإصدار والاستحقاق مطلوبان.',
+  },
+  sukukSaveFailed: { en: 'Failed to save Sukuk.', ar: 'تعذّر حفظ الصك.' },
+  sukukCorrectFailed: {
+    en: 'Could not correct Sukuk outstanding balance.',
+    ar: 'تعذّر تصحيح رصيد الصك المستحق.',
+  },
+
+  // Shared revaluation / correct-outstanding modal
+  revalCurrentBook: { en: 'Current book', ar: 'القيمة الدفترية الحالية' },
+  revalDelta: { en: 'Delta', ar: 'الفرق' },
+  revalNewValue: { en: 'New value ({currency})', ar: 'القيمة الجديدة ({currency})' },
+  revalReason: { en: 'Reason (required)', ar: 'السبب (مطلوب)' },
+  revalReasonPlaceholder: { en: 'e.g. Annual appraisal', ar: 'مثال: تقييم سنوي' },
+  revalCancel: { en: 'Cancel', ar: 'إلغاء' },
+  revalApplying: { en: 'Applying…', ar: 'جاري التطبيق…' },
+  revalAlreadyMatches: { en: 'Already matches', ar: 'مطابق بالفعل' },
+  revalApply: { en: 'Apply revaluation', ar: 'تطبيق إعادة التقييم' },
+  revalReasonError: {
+    en: 'Reason is required (at least 3 characters).',
+    ar: 'السبب مطلوب (3 أحرف على الأقل).',
+  },
+  revalInvalidValue: { en: 'Enter a valid value.', ar: 'أدخل قيمة صحيحة.' },
+  revalSukukIntro: {
+    en: 'correcting the outstanding balance updates Sukuk exposure and net worth. Posted payouts stay; only unposted future payouts are rebuilt.',
+    ar: 'تصحيح الرصيد المستحق يحدّث تعرض الصكوك وصافي الثروة. الدفعات المرحّلة تبقى؛ يُعاد بناء الدفعات المستقبلية غير المرحّلة فقط.',
+  },
+  revalGenericIntro: {
+    en: 'revaluation updates net worth only — no cash transaction is created.',
+    ar: 'إعادة التقييم تحدّث صافي الثروة فقط — دون إنشاء حركة نقدية.',
+  },
 };
 
 export type LanguageContextValue = {

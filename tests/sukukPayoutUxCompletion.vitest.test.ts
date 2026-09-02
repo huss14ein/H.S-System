@@ -83,6 +83,11 @@ describe('sukukPayoutUxCompletion', () => {
       'sukukPayoutSetHowPaid',
       'sukukPayoutEditHowPaid',
       'sukukPayoutCorrectOutstanding',
+      'sukukSectionTitle',
+      'sukukAddContract',
+      'sukukEditContract',
+      'revalSukukIntro',
+      'revalApply',
     ];
     for (const key of requiredKeys) {
       expect(lang, `missing DICT key ${key}`).toContain(`${key}:`);
@@ -90,6 +95,20 @@ describe('sukukPayoutUxCompletion', () => {
     expect(lang).toContain("ar: 'كيف تُدفع لك؟'");
     expect(lang).toContain("ar: 'حفظ جدول الدفع'");
     expect(lang).toContain("ar: 'حدد كيف تُدفع لك'");
+    expect(lang).toContain("ar: 'عقود الصكوك المباشرة'");
+    expect(lang).toContain("ar: 'إضافة عقد صك'");
+  });
+
+  it('Sukuk section + contract modal + revaluation modal use LanguageContext', () => {
+    const src = read('components/investments/SukukInvestmentsSection.tsx');
+    const reval = read('components/reconciliation/RevaluationModal.tsx');
+    expect(src).toContain("t('sukukSectionTitle')");
+    expect(src).toContain("t('sukukAddContract')");
+    expect(src).toContain("t('sukukEditContract')");
+    expect(src).toContain("t('sukukOutstanding')");
+    expect(reval).toContain('useLanguage');
+    expect(reval).toContain("t('revalSukukIntro')");
+    expect(reval).toContain("t('revalApply')");
   });
 
   it('full save → materialize → regenerate path is wired in DataContext + services', () => {

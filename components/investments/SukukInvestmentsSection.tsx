@@ -34,6 +34,7 @@ const SukukPositionModal: React.FC<{
   goals: Goal[];
   onSave: (position: Omit<SukukPosition, 'id' | 'user_id'> | SukukPosition) => Promise<void>;
 }> = ({ isOpen, onClose, positionToEdit, accounts, goals, onSave }) => {
+  const { t, dir } = useLanguage();
   const [name, setName] = useState('');
   const [investmentAccountId, setInvestmentAccountId] = useState('');
   const [currency, setCurrency] = useState<'SAR' | 'USD'>('SAR');
@@ -69,15 +70,15 @@ const SukukPositionModal: React.FC<{
     const fv = parseMoneyInput(faceValue);
     const pp = purchasePrice.trim() === '' ? null : parseMoneyInput(purchasePrice);
     if (fv == null || !Number.isFinite(fv) || fv < 0) {
-      setError('Face value must be a non-negative number.');
+      setError(t('sukukFaceValueError'));
       return;
     }
     if (!investmentAccountId) {
-      setError('Choose the mapped investment platform account.');
+      setError(t('sukukChooseAccountError'));
       return;
     }
     if (!issueDate || !maturityDate) {
-      setError('Issue and maturity dates are required.');
+      setError(t('sukukDatesRequiredError'));
       return;
     }
     setIsSaving(true);
@@ -99,76 +100,76 @@ const SukukPositionModal: React.FC<{
       else await onSave(base);
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save Sukuk.');
+      setError(e instanceof Error ? e.message : t('sukukSaveFailed'));
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={positionToEdit ? 'Edit Sukuk contract' : 'Add Sukuk contract'}>
-      <div className="space-y-4">
+    <Modal isOpen={isOpen} onClose={onClose} title={positionToEdit ? t('sukukEditContract') : t('sukukAddContract')}>
+      <div className="space-y-4" dir={dir}>
         <p className="text-sm text-slate-600 bg-sky-50 border border-sky-100 rounded-lg p-3">
-          Direct Sukuk contracts live under Investments (not Assets). For broker-held Sukuk funds, use <strong>Record Trade</strong> with asset class Sukuk.
+          {t('sukukContractIntro')}
         </p>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Contract name</span>
-          <input className="input-base" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Government Sukuk 2027" />
+          <span className="text-sm font-medium text-slate-800">{t('sukukContractName')}</span>
+          <input className="input-base" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('sukukContractNamePlaceholder')} />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Investment account</span>
+          <span className="text-sm font-medium text-slate-800">{t('sukukInvestmentAccount')}</span>
           <select className="select-base" value={investmentAccountId} onChange={(e) => setInvestmentAccountId(e.target.value)}>
-            <option value="">Choose platform account…</option>
+            <option value="">{t('sukukChoosePlatformAccount')}</option>
             {investmentAccounts.map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Currency</span>
+          <span className="text-sm font-medium text-slate-800">{t('sukukCurrency')}</span>
           <select className="select-base" value={currency} onChange={(e) => setCurrency(e.target.value as 'SAR' | 'USD')}>
             <option value="SAR">SAR</option>
             <option value="USD">USD</option>
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Face value (original capital)</span>
+          <span className="text-sm font-medium text-slate-800">{t('sukukFaceValueOriginal')}</span>
           <input className="input-base" type="number" min={0} step="any" value={faceValue} onChange={(e) => setFaceValue(e.target.value)} disabled={!!positionToEdit} inputMode="decimal" />
         </label>
         {positionToEdit ? (
           <p className="text-xs text-slate-500 -mt-2">
-            Face value and outstanding balance are locked after create — use <strong>Correct outstanding</strong> for audited corrections.
+            {t('sukukFaceLockedHint')}
           </p>
         ) : null}
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Purchase price (optional)</span>
+          <span className="text-sm font-medium text-slate-800">{t('sukukPurchasePrice')}</span>
           <input className="input-base" type="number" min={0} step="any" value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} inputMode="decimal" />
         </label>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium text-slate-800">Issue date</span>
+            <span className="text-sm font-medium text-slate-800">{t('sukukIssueDate')}</span>
             <input className="input-base" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium text-slate-800">Maturity date</span>
+            <span className="text-sm font-medium text-slate-800">{t('sukukMaturityDate')}</span>
             <input className="input-base" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} />
           </label>
         </div>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Linked goal (optional)</span>
+          <span className="text-sm font-medium text-slate-800">{t('sukukLinkedGoal')}</span>
           <select className="select-base" value={goalId} onChange={(e) => setGoalId(e.target.value)}>
-            <option value="">No goal link</option>
+            <option value="">{t('sukukNoGoalLink')}</option>
             {goals.map((g) => (
               <option key={g.id} value={g.id}>{g.name}</option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Notes (optional)</span>
+          <span className="text-sm font-medium text-slate-800">{t('sukukNotesOptional')}</span>
           <textarea className="input-base min-h-[72px]" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
         {error && <div className="text-sm text-danger bg-red-50 border border-red-200 rounded-lg p-2">{error}</div>}
-        <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">{isSaving ? 'Saving…' : 'Save Sukuk'}</button>
+        <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">{isSaving ? t('sukukPayoutSaving') : t('sukukSave')}</button>
       </div>
     </Modal>
   );
@@ -517,32 +518,32 @@ export const SukukInvestmentsSection: React.FC = () => {
   const events = data.sukukPayoutEvents ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" dir={language === 'ar' ? 'rtl' : 'ltr'}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Direct Sukuk contracts</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{t('sukukSectionTitle')}</h2>
           <p className="text-sm text-slate-600 mt-1">
-            Off-platform Sukuk with maturity dates and a simple payout schedule. Broker Sukuk funds use Record Trade with asset class Sukuk.
+            {t('sukukSectionSubtitle')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select className="select-base text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
-            <option value="active">Active</option>
-            <option value="completed">Completed</option>
-            <option value="all">All</option>
+            <option value="active">{t('sukukFilterActive')}</option>
+            <option value="completed">{t('sukukFilterCompleted')}</option>
+            <option value="all">{t('sukukFilterAll')}</option>
           </select>
-          <button type="button" className="btn-primary" onClick={() => { setEditPosition(null); setModalOpen(true); }}>Add Sukuk</button>
+          <button type="button" className="btn-primary" onClick={() => { setEditPosition(null); setModalOpen(true); }}>{t('sukukAdd')}</button>
         </div>
       </div>
 
       {filtered.length === 0 ? (
         <div className="text-sm text-slate-500 border border-dashed border-slate-200 rounded-xl p-8 text-center space-y-2">
-          <p>No Sukuk contracts in this view.</p>
+          <p>{t('sukukEmpty')}</p>
           {positions.length > 0 && statusFilter === 'active' && (
             <p className="text-xs text-slate-600">
               {positions.length - filtered.length > 0
-                ? `${positions.length - filtered.length} completed or matured contract(s) — switch to All or Completed.`
-                : 'Try switching to All to see every contract.'}
+                ? fillTemplate(t('sukukEmptyCompletedHint'), { count: positions.length - filtered.length })
+                : t('sukukEmptyTryAll')}
             </p>
           )}
         </div>
@@ -560,17 +561,17 @@ export const SukukInvestmentsSection: React.FC = () => {
                     <BanknotesIcon className="h-7 w-7 text-sky-600 shrink-0" />
                     <div className="min-w-0">
                       <h3 className="font-semibold text-slate-900 truncate">{p.name}</h3>
-                      <p className="text-xs text-slate-500">{p.status === 'completed' ? 'Completed' : 'Active'} · {p.issueDate} → {p.maturityDate}</p>
+                      <p className="text-xs text-slate-500">{p.status === 'completed' ? t('sukukStatusCompleted') : t('sukukStatusActive')} · {p.issueDate} → {p.maturityDate}</p>
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <button type="button" className="p-2 text-slate-400 hover:text-primary" onClick={() => { setEditPosition(p); setModalOpen(true); }} aria-label="Edit"><PencilIcon className="h-4 w-4" /></button>
-                    <button type="button" className="p-2 text-slate-400 hover:text-danger" onClick={() => void deleteSukukPosition(p.id)} aria-label="Delete"><TrashIcon className="h-4 w-4" /></button>
+                    <button type="button" className="p-2 text-slate-400 hover:text-primary" onClick={() => { setEditPosition(p); setModalOpen(true); }} aria-label={t('sukukEditAria')}><PencilIcon className="h-4 w-4" /></button>
+                    <button type="button" className="p-2 text-slate-400 hover:text-danger" onClick={() => void deleteSukukPosition(p.id)} aria-label={t('sukukDeleteAria')}><TrashIcon className="h-4 w-4" /></button>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div><span className="text-slate-500">Outstanding</span><p className="font-semibold tabular-nums">{formatCurrencyString(p.outstandingPrincipal, { inCurrency: p.currency })}</p></div>
-                  <div><span className="text-slate-500">Face value</span><p className="font-medium tabular-nums">{formatCurrencyString(p.faceValue, { inCurrency: p.currency })}</p></div>
+                  <div><span className="text-slate-500">{t('sukukOutstanding')}</span><p className="font-semibold tabular-nums">{formatCurrencyString(p.outstandingPrincipal, { inCurrency: p.currency })}</p></div>
+                  <div><span className="text-slate-500">{t('sukukFaceValue')}</span><p className="font-medium tabular-nums">{formatCurrencyString(p.faceValue, { inCurrency: p.currency })}</p></div>
                 </div>
                 {canRestate && (
                 <button
@@ -616,7 +617,7 @@ export const SukukInvestmentsSection: React.FC = () => {
         title={`${t('sukukPayoutCorrectOutstanding')} — ${restatePosition?.name ?? ''}`}
         entityType="sukuk_position"
         entityId={restatePosition?.id ?? ''}
-        entityLabel={restatePosition?.name ?? 'Sukuk'}
+        entityLabel={restatePosition?.name ?? t('sukukNoun')}
         beforeValue={Number(restatePosition?.outstandingPrincipal ?? 0)}
         currency={restatePosition?.currency === 'USD' ? 'USD' : 'SAR'}
         maxValue={Number(restatePosition?.faceValue ?? 0)}
@@ -628,7 +629,7 @@ export const SukukInvestmentsSection: React.FC = () => {
             actualValue,
             reason,
           });
-          if (!result.ok) throw new Error(result.error || 'Could not correct Sukuk outstanding balance.');
+          if (!result.ok) throw new Error(result.error || t('sukukCorrectFailed'));
         }}
       />
       {schedulePosition && (
