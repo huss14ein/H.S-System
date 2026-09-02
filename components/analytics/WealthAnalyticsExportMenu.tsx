@@ -20,6 +20,7 @@ import type { SimulatedPriceMap } from '../../services/investmentPlatformCardMet
 import { useLanguage } from '../../context/LanguageContext';
 import PageLanguageToggle from '../PageLanguageToggle';
 import { useEmergencyFund } from '../../hooks/useEmergencyFund';
+import { openPeriodFinancialReportModal } from '../reports/PeriodFinancialReportModal';
 
 export const WealthAnalyticsExportMenu: React.FC<{
   data: FinancialData;
@@ -106,6 +107,11 @@ export const WealthAnalyticsExportMenu: React.FC<{
         ariaLabel="Wealth Analytics export"
         actions={[
           { value: 'executive-summary', label: t('exportExecutiveSummary'), onClick: printExecutive },
+          {
+            value: 'period-financial-report',
+            label: 'Period financial report (PDF)',
+            onClick: () => openPeriodFinancialReportModal(),
+          },
           ...passportActions,
         ]}
       />

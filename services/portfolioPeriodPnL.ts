@@ -901,6 +901,185 @@ export function computePortfolioPeriodPnLSummary(args: {
   };
 }
 
+export type PortfolioWindowPnLRow = {
+  portfolioId: string;
+  portfolioName: string;
+  accountId: string;
+  valueSar: number;
+  period: PortfolioPeriodPnLBreakdown;
+};
+
+export type PortfolioWindowPnLSummary = {
+  rows: PortfolioWindowPnLRow[];
+  totalSar: number;
+  ledgerTotalSar: number;
+  marketTotalSar: number;
+  startMs: number;
+  endMs: number;
+};
+
+/**
+ * Per-portfolio mark-to-market + ledger P/L for an arbitrary [startMs, endMs] window.
+ * Same formula as week/month hub rows — for Period Financial Report / YTD ranges.
+ */
+export function computePortfolioPnLForWindow(args: {
+  data: FinancialData;
+  portfolios: InvestmentPortfolio[];
+  accounts: Account[];
+  sarPerUsd: number;
+  simulatedPrices: SimulatedPriceMap;
+  startMs: number;
+  endMs: number;
+  getAvailableCashForAccount?: (accountId: string) => { SAR?: number; USD?: number } | null | undefined;
+}): PortfolioWindowPnLSummary {
+  const {
+    data,
+    portfolios,
+    accounts,
+    sarPerUsd,
+    simulatedPrices,
+    startMs,
+    endMs,
+    getAvailableCashForAccount,
+  } = args;
+
+  const allTx = getPersonalInvestmentTransactionsForKpis(data);
+  const allInvestments = data.investments ?? [];
+  const allCostLots = data.investmentCostLots ?? [];
+
+  const byAccount = new Map<string, InvestmentPortfolio[]>();
+  for (const p of portfolios) {
+    const list = byAccount.get(p.accountId) ?? [];
+    list.push(p);
+    byAccount.set(p.accountId, list);
+  }
+
+  const rows: PortfolioWindowPnLRow[] = [];
+
+  for (const [, siblings] of byAccount) {
+    const sorted = [...siblings].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const accountId = sorted[0]?.accountId ?? '';
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account) continue;
+    const accountTx = allTx.filter(
+      (t) => resolveInvestmentTransactionAccountId(t, accounts, allInvestments) === accountId,
+    );
+    const scope = buildInvestmentAccountKpiScope({
+      account,
+      personalPortfolios: sorted,
+      data,
+      accountTransactions: accountTx,
+      getAvailableCashForAccount,
+    });
+    const accountTxForMetrics = scope.transactionsForMetrics;
+    const cashBuckets = scope.availableCashByCurrency;
+
+    const bundle = computePortfolioMetricsBundle({
+      siblingPortfolios: sorted,
+      transactions: accountTxForMetrics,
+      accounts,
+      allInvestments: portfolios,
+      sarPerUsd,
+      simulatedPrices,
+      accountAvailableCashByCurrency: cashBuckets,
+      datedFxData: data,
+    });
+
+    const siblingWeights =
+      sorted.length === 1
+        ? [1]
+        : portfolioSiblingAttributionWeights(sorted, sarPerUsd, simulatedPrices);
+    const accountCashSar = tradableCashBucketToSAR(
+      {
+        SAR: Math.max(0, cashBuckets?.SAR ?? 0),
+        USD: Math.max(0, cashBuckets?.USD ?? 0),
+      },
+      sarPerUsd,
+    );
+
+    for (let i = 0; i < sorted.length; i++) {
+      const p = sorted[i]!;
+      const txsForLedger =
+        sorted.length === 1
+          ? accountTxForMetrics
+          : getPortfolioAttributedTransactions({
+              portfolioId: p.id,
+              portfolioIndex: i,
+              siblingPortfolios: sorted,
+              transactions: accountTxForMetrics,
+              sarPerUsd,
+              simulatedPrices,
+            });
+
+      const book = resolveInvestmentPortfolioCurrency(p);
+      const metrics =
+        bundle.metricsByPortfolioId.get(p.id) ??
+        computePlatformCardMetrics({
+          portfolios: [p],
+          transactions: txsForLedger,
+          accounts,
+          allInvestments: portfolios,
+          sarPerUsd,
+          availableCashByCurrency:
+            sorted.length === 1
+              ? { SAR: Math.max(0, cashBuckets?.SAR ?? 0), USD: Math.max(0, cashBuckets?.USD ?? 0) }
+              : { SAR: 0, USD: 0 },
+          simulatedPrices,
+          platformCurrency: book,
+          unrealizedPnLBasis: 'holdings_cost',
+          datedFxData: data,
+        });
+
+      const endValueSar = resolvePortfolioPeriodPnLEndValueSar({
+        metrics,
+        siblingCount: sorted.length,
+        portfolioWeight: siblingWeights[i] ?? 0,
+        accountCashSar,
+      });
+      const endCashSar =
+        sorted.length === 1
+          ? Math.max(0, endValueSar - metrics.holdingsValueInSAR)
+          : Math.max(0, accountCashSar) * Math.max(0, siblingWeights[i] ?? 0);
+
+      const period = computePortfolioMarkToMarketPeriodPnLSar({
+        portfolio: p,
+        transactions: txsForLedger,
+        startMs,
+        endMs,
+        endValueSar,
+        endCashSar,
+        singlePortfolioOnAccount: sorted.length === 1,
+        includeCash: true,
+        accounts,
+        portfolios,
+        data,
+        sarPerUsd,
+        simulatedPrices,
+        costLots: allCostLots,
+      });
+
+      rows.push({
+        portfolioId: p.id,
+        portfolioName: p.name || p.id,
+        accountId,
+        valueSar: endValueSar,
+        period,
+      });
+    }
+  }
+
+  rows.sort((a, b) => b.valueSar - a.valueSar);
+
+  return {
+    rows,
+    totalSar: rows.reduce((s, r) => s + r.period.totalSar, 0),
+    ledgerTotalSar: rows.reduce((s, r) => s + r.period.ledgerSar, 0),
+    marketTotalSar: rows.reduce((s, r) => s + r.period.marketEstimateSar, 0),
+    startMs,
+    endMs,
+  };
+}
+
 /** Lookup map for UI surfaces (Investments portfolio rows, etc.). */
 export function portfolioPeriodPnLMap(summary: PortfolioPeriodPnLSummary): Map<string, PortfolioPeriodPnLRow> {
   return new Map(summary.rows.map((r) => [r.portfolioId, r]));

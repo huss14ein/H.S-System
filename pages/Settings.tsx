@@ -1407,6 +1407,21 @@ const Settings: React.FC<{
 
             <SectionCard id="reports-export" title="Reports & export" collapsible collapsibleSummary="Wealth summary, backup">
                 <p className="text-sm text-slate-600 mb-4">Generate structured reports and exports. Wealth summary includes net worth, cashflow, holdings, and risk metrics.</p>
+                <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50/60 p-3">
+                    <p className="text-xs font-semibold text-sky-800 uppercase mb-1">Period financial report</p>
+                    <p className="text-sm text-slate-600 mb-2">Full-system PDF for financial year, calendar year, YTD, last 12 months, or a custom range — wealth, budgets, transactions, investments, goals, and more.</p>
+                    <button
+                        type="button"
+                        className="btn-primary text-sm"
+                        onClick={() => {
+                            void import('../components/reports/PeriodFinancialReportModal').then((m) =>
+                                m.openPeriodFinancialReportModal(),
+                            );
+                        }}
+                    >
+                        Period financial report (PDF)
+                    </button>
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                     <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
                         <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Wealth summary</p>

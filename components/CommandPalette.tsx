@@ -195,6 +195,15 @@ const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen,
             icon: ArrowDownTrayIcon,
         });
         quick.push({
+            name: 'Generate period financial report (PDF)',
+            action: () => {
+                void import('./reports/PeriodFinancialReportModal').then((m) => m.openPeriodFinancialReportModal());
+                trackAction('period-financial-report', 'CommandPalette');
+                setIsOpen(false);
+            },
+            icon: ArrowDownTrayIcon,
+        });
+        quick.push({
             name: 'Export review pack (Markdown)',
             action: () => {
                 if (!data) return;

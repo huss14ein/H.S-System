@@ -366,6 +366,15 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                         ariaLabel="Summary quick links"
                         actions={[
                             { value: 'print-wealth-summary', label: 'Print wealth summary', onClick: () => setIsPrintOptionsOpen(true) },
+                            {
+                                value: 'period-financial-report',
+                                label: 'Period financial report (PDF)',
+                                onClick: () => {
+                                    void import('../components/reports/PeriodFinancialReportModal').then((m) =>
+                                        m.openPeriodFinancialReportModal(),
+                                    );
+                                },
+                            },
                             { value: 'capture-snapshot', label: 'Capture net worth snapshot', onClick: handleCaptureSnapshot },
                             { value: 'export-review-pack', label: 'Export review pack (Markdown)', onClick: handleExportReviewPack },
                             {
