@@ -4,6 +4,7 @@ import { PencilIcon } from '../icons/PencilIcon';
 import { TrashIcon } from '../icons/TrashIcon';
 import { DataContext } from '../../context/DataContext';
 import { AuthContext } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 import type { Account, Goal, SukukPayoutCadence, SukukPayoutEvent, SukukPayoutSchedule, SukukPosition } from '../../types';
 import Modal from '../Modal';
 import { useFormatCurrency } from '../../hooks/useFormatCurrency';
@@ -12,9 +13,18 @@ import { getPersonalSukukPositions } from '../../utils/wealthScope';
 import RevaluationModal from '../reconciliation/RevaluationModal';
 import {
   SUKUK_PAYOUT_CADENCE_OPTIONS,
+  cadenceOptionDescription,
+  cadenceOptionTitle,
   formatSukukPayoutCadenceLabel,
   formatSukukPayoutKindLabel,
 } from '../../services/sukuk/sukukPayoutLabels';
+
+function fillTemplate(template: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce(
+    (s, [key, value]) => s.split(`{${key}}`).join(String(value)),
+    template,
+  );
+}
 
 const SukukPositionModal: React.FC<{
   isOpen: boolean;
@@ -184,6 +194,7 @@ const SukukPayoutScheduleModal: React.FC<{
     enabled?: boolean;
   }) => Promise<void>;
 }> = ({ isOpen, onClose, position, accounts, existingSchedule, existingEvents, onSave }) => {
+  const { t, language, dir } = useLanguage();
   const [investmentAccountId, setInvestmentAccountId] = useState(existingSchedule?.investmentAccountId ?? position.investmentAccountId);
   const [cadence, setCadence] = useState<SukukPayoutCadence>(existingSchedule?.cadence ?? 'maturity_only');
   const [dayOfMonth, setDayOfMonth] = useState(String(existingSchedule?.dayOfMonth ?? 25));
@@ -229,31 +240,47 @@ const SukukPayoutScheduleModal: React.FC<{
   }, [existingEvents]);
 
   const scheduleSummary = useMemo(() => {
-    const parts: string[] = [formatSukukPayoutCadenceLabel(cadence)];
+    const parts: string[] = [formatSukukPayoutCadenceLabel(cadence, language)];
     if (periodic) {
-      parts.push(`on day ${Math.max(1, Math.min(28, Math.trunc(Number(dayOfMonth || '1')) || 1))}`);
+      const day = Math.max(1, Math.min(28, Math.trunc(Number(dayOfMonth || '1')) || 1));
+      parts.push(fillTemplate(t('sukukPayoutSummaryOnDay'), { day }));
     }
     const coupon = couponAmount.trim() === '' ? null : parseMoneyInput(couponAmount);
     if (coupon != null && coupon > 0) {
-      parts.push(periodic ? `${coupon} ${currencyLabel} profit each payment` : `${coupon} ${currencyLabel} profit at maturity`);
+      parts.push(
+        fillTemplate(
+          t(periodic ? 'sukukPayoutSummaryProfitEach' : 'sukukPayoutSummaryProfitMaturity'),
+          { amount: coupon, currency: currencyLabel },
+        ),
+      );
     }
     const installment = principalInstallment.trim() === '' ? null : parseMoneyInput(principalInstallment);
     if (periodic && installment != null && installment > 0) {
-      parts.push(`${installment} ${currencyLabel} capital each payment`);
+      parts.push(
+        fillTemplate(t('sukukPayoutSummaryCapitalEach'), {
+          amount: installment,
+          currency: currencyLabel,
+        }),
+      );
     }
     const finalPrincipal = principalAmount.trim() === '' ? null : parseMoneyInput(principalAmount);
     if (finalPrincipal != null && finalPrincipal > 0) {
-      parts.push(`${finalPrincipal} ${currencyLabel} capital at maturity`);
+      parts.push(
+        fillTemplate(t('sukukPayoutSummaryCapitalMaturity'), {
+          amount: finalPrincipal,
+          currency: currencyLabel,
+        }),
+      );
     } else {
-      parts.push('remaining capital at maturity');
+      parts.push(t('sukukPayoutSummaryRemainingCapital'));
     }
     return parts.join(' · ');
-  }, [cadence, periodic, dayOfMonth, couponAmount, principalInstallment, principalAmount, currencyLabel]);
+  }, [cadence, periodic, dayOfMonth, couponAmount, principalInstallment, principalAmount, currencyLabel, language, t]);
 
   const handleSave = async () => {
     setError(null);
     if (!investmentAccountId) {
-      setError('Choose which investment account receives the cash.');
+      setError(t('sukukPayoutChooseAccountError'));
       return;
     }
     const dom = Math.max(1, Math.min(28, Math.trunc(Number(dayOfMonth || '1'))));
@@ -279,25 +306,27 @@ const SukukPayoutScheduleModal: React.FC<{
       });
       onClose();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save schedule.');
+      setError(e instanceof Error ? e.message : t('sukukPayoutSaveFailed'));
     } finally {
       setIsSaving(false);
     }
   };
 
+  const radioAlign = language === 'ar' ? 'text-right' : 'text-left';
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="How are you paid?">
-      <div className="space-y-5">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('sukukPayoutHowPaid')}>
+      <div className="space-y-5" dir={dir}>
         <div className="space-y-1">
           <p className="text-sm font-medium text-slate-900">{position.name}</p>
           <p className="text-sm text-slate-600">
-            Tell Finova when profit and capital come back so cash and outstanding balance stay accurate.
+            {t('sukukPayoutIntro')}
           </p>
           {nextEvent && (
             <p className="text-xs text-slate-600 pt-1">
-              Next scheduled: <strong>{nextEvent.payoutDate}</strong>
+              {t('sukukPayoutNextScheduled')}: <strong>{nextEvent.payoutDate}</strong>
               {' · '}
-              {formatSukukPayoutKindLabel(nextEvent.kind)}
+              {formatSukukPayoutKindLabel(nextEvent.kind, language)}
               {' · '}
               {roundMoney(nextEvent.amount)} {nextEvent.currency}
             </p>
@@ -305,24 +334,24 @@ const SukukPayoutScheduleModal: React.FC<{
         </div>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium text-slate-800">Cash lands in</span>
+          <span className="text-sm font-medium text-slate-800">{t('sukukPayoutCashLandsIn')}</span>
           <select
             className="select-base"
             value={investmentAccountId}
             onChange={(e) => setInvestmentAccountId(e.target.value)}
-            aria-label="Investment account that receives payouts"
+            aria-label={t('sukukPayoutAccountAria')}
           >
-            <option value="">Choose investment account…</option>
+            <option value="">{t('sukukPayoutChooseAccount')}</option>
             {investmentAccounts.map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
-          <span className="text-xs text-slate-500">Usually the same platform account mapped to this Sukuk.</span>
+          <span className="text-xs text-slate-500">{t('sukukPayoutAccountHint')}</span>
         </label>
 
         <fieldset className="space-y-2">
-          <legend className="text-sm font-medium text-slate-800">Payment frequency</legend>
-          <div className="space-y-2" role="radiogroup" aria-label="Payment frequency">
+          <legend className="text-sm font-medium text-slate-800">{t('sukukPayoutFrequency')}</legend>
+          <div className="space-y-2" role="radiogroup" aria-label={t('sukukPayoutFrequency')}>
             {SUKUK_PAYOUT_CADENCE_OPTIONS.map((option) => {
               const selected = cadence === option.value;
               return (
@@ -332,7 +361,7 @@ const SukukPayoutScheduleModal: React.FC<{
                   role="radio"
                   aria-checked={selected}
                   onClick={() => setCadence(option.value)}
-                  className={`w-full text-left rounded-xl border px-3 py-3 transition-colors ${
+                  className={`w-full ${radioAlign} rounded-xl border px-3 py-3 transition-colors ${
                     selected
                       ? 'border-sky-500 bg-sky-50 ring-1 ring-sky-500'
                       : 'border-slate-200 bg-white hover:border-slate-300'
@@ -348,8 +377,8 @@ const SukukPayoutScheduleModal: React.FC<{
                       {selected ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
                     </span>
                     <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-slate-900">{option.title}</span>
-                      <span className="mt-0.5 block text-xs leading-relaxed text-slate-600">{option.description}</span>
+                      <span className="block text-sm font-semibold text-slate-900">{cadenceOptionTitle(option, language)}</span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-slate-600">{cadenceOptionDescription(option, language)}</span>
                     </span>
                   </span>
                 </button>
@@ -360,7 +389,7 @@ const SukukPayoutScheduleModal: React.FC<{
 
         {periodic && (
           <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium text-slate-800">Payment day each period</span>
+            <span className="text-sm font-medium text-slate-800">{t('sukukPayoutPaymentDay')}</span>
             <input
               className="input-base"
               type="number"
@@ -370,13 +399,16 @@ const SukukPayoutScheduleModal: React.FC<{
               onChange={(e) => setDayOfMonth(e.target.value)}
               inputMode="numeric"
             />
-            <span className="text-xs text-slate-500">Day of the month from 1–28 (e.g. 25).</span>
+            <span className="text-xs text-slate-500">{t('sukukPayoutPaymentDayHint')}</span>
           </label>
         )}
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-slate-800">
-            {periodic ? `Profit each payment (${currencyLabel})` : `Profit at maturity (${currencyLabel}, optional)`}
+            {fillTemplate(
+              t(periodic ? 'sukukPayoutProfitEach' : 'sukukPayoutProfitMaturity'),
+              { currency: currencyLabel },
+            )}
           </span>
           <input
             className="input-base"
@@ -389,16 +421,14 @@ const SukukPayoutScheduleModal: React.FC<{
             inputMode="decimal"
           />
           <span className="text-xs text-slate-500">
-            {periodic
-              ? 'The regular profit amount you expect each period.'
-              : 'Leave blank if profit is already included in the final payout, or enter the profit portion separately.'}
+            {t(periodic ? 'sukukPayoutProfitEachHint' : 'sukukPayoutProfitMaturityHint')}
           </span>
         </label>
 
         {periodic && (
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium text-slate-800">
-              Capital returned each payment ({currencyLabel}, optional)
+              {fillTemplate(t('sukukPayoutCapitalEach'), { currency: currencyLabel })}
             </span>
             <input
               className="input-base"
@@ -411,14 +441,14 @@ const SukukPayoutScheduleModal: React.FC<{
               inputMode="decimal"
             />
             <span className="text-xs text-slate-500">
-              Only if part of your invested capital comes back with each payment. Leave 0 if you only receive profit until maturity.
+              {t('sukukPayoutCapitalEachHint')}
             </span>
           </label>
         )}
 
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-slate-800">
-            Capital at maturity ({currencyLabel})
+            {fillTemplate(t('sukukPayoutCapitalMaturity'), { currency: currencyLabel })}
           </span>
           <input
             className="input-base"
@@ -427,22 +457,24 @@ const SukukPayoutScheduleModal: React.FC<{
             step="any"
             value={principalAmount}
             onChange={(e) => setPrincipalAmount(e.target.value)}
-            placeholder="Leave blank for remaining balance"
+            placeholder={t('sukukPayoutCapitalMaturityPlaceholder')}
             inputMode="decimal"
           />
           <span className="text-xs text-slate-500">
-            Leave blank to return whatever outstanding capital is left on {position.maturityDate || 'maturity'}.
+            {fillTemplate(t('sukukPayoutCapitalMaturityHint'), {
+              date: position.maturityDate || t('sukukPayoutMaturityFallback'),
+            })}
           </span>
         </label>
 
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Summary</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t('sukukPayoutSummary')}</p>
           <p className="mt-1 leading-relaxed">{scheduleSummary}</p>
         </div>
 
         {error && <div className="text-sm text-danger bg-red-50 border border-red-200 rounded-lg p-2">{error}</div>}
         <button disabled={isSaving} onClick={handleSave} className="w-full btn-primary">
-          {isSaving ? 'Saving…' : 'Save payout schedule'}
+          {isSaving ? t('sukukPayoutSaving') : t('sukukPayoutSave')}
         </button>
       </div>
     </Modal>
@@ -459,6 +491,7 @@ export const SukukInvestmentsSection: React.FC = () => {
     applyReconciliationAdjustment,
   } = useContext(DataContext)!;
   const auth = useContext(AuthContext);
+  const { t, language } = useLanguage();
   const canRestate = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
   const { formatCurrencyString } = useFormatCurrency();
   const [statusFilter, setStatusFilter] = useState<'active' | 'completed' | 'all'>('active');
@@ -545,20 +578,20 @@ export const SukukInvestmentsSection: React.FC = () => {
                   className="self-start px-2 py-1 text-[11px] font-medium text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-50"
                   onClick={() => setRestatePosition(p)}
                 >
-                  Correct outstanding
+                  {t('sukukPayoutCorrectOutstanding')}
                 </button>
                 )}
                 {next && (
                   <p className="text-xs text-slate-700">
-                    Next payout: <strong>{next.payoutDate}</strong>
+                    {t('sukukPayoutNextPayout')}: <strong>{next.payoutDate}</strong>
                     {' · '}
-                    {formatSukukPayoutKindLabel(next.kind)}
+                    {formatSukukPayoutKindLabel(next.kind, language)}
                     {' · '}
                     {roundMoney(next.amount)} {next.currency}
                   </p>
                 )}
                 <button type="button" className="btn-secondary text-sm mt-auto" onClick={() => setSchedulePosition(p)}>
-                  {schedule ? 'Edit how you are paid' : 'Set how you are paid'}
+                  {schedule ? t('sukukPayoutEditHowPaid') : t('sukukPayoutSetHowPaid')}
                 </button>
               </div>
             );
@@ -580,7 +613,7 @@ export const SukukInvestmentsSection: React.FC = () => {
       <RevaluationModal
         isOpen={!!restatePosition}
         onClose={() => setRestatePosition(null)}
-        title={`Correct outstanding — ${restatePosition?.name ?? ''}`}
+        title={`${t('sukukPayoutCorrectOutstanding')} — ${restatePosition?.name ?? ''}`}
         entityType="sukuk_position"
         entityId={restatePosition?.id ?? ''}
         entityLabel={restatePosition?.name ?? 'Sukuk'}

@@ -174,6 +174,97 @@ const DICT: Dict = {
   analyticsHealthLoading: { en: 'Loading wealth health indicators…', ar: 'جاري تحميل مؤشرات صحة الثروة…' },
   analyticsAtlasLoading: { en: 'Loading wealth atlas charts…', ar: 'جاري تحميل مخططات أطلس الثروة…' },
   sectionLoading: { en: 'Loading…', ar: 'جاري التحميل…' },
+
+  // Sukuk payout schedule modal (Investments → Sukuk)
+  sukukPayoutHowPaid: { en: 'How are you paid?', ar: 'كيف تُدفع لك؟' },
+  sukukPayoutIntro: {
+    en: 'Tell Finova when profit and capital come back so cash and outstanding balance stay accurate.',
+    ar: 'أخبر فينوفا متى يعود الربح ورأس المال حتى يبقى النقد والرصيد المستحق دقيقاً.',
+  },
+  sukukPayoutNextScheduled: { en: 'Next scheduled', ar: 'القادم المجدول' },
+  sukukPayoutCashLandsIn: { en: 'Cash lands in', ar: 'يودع النقد في' },
+  sukukPayoutChooseAccount: { en: 'Choose investment account…', ar: 'اختر حساب الاستثمار…' },
+  sukukPayoutAccountAria: {
+    en: 'Investment account that receives payouts',
+    ar: 'حساب الاستثمار الذي يستلم الدفعات',
+  },
+  sukukPayoutAccountHint: {
+    en: 'Usually the same platform account mapped to this Sukuk.',
+    ar: 'عادةً نفس حساب المنصة المرتبط بهذا الصك.',
+  },
+  sukukPayoutFrequency: { en: 'Payment frequency', ar: 'تكرار الدفع' },
+  sukukPayoutPaymentDay: { en: 'Payment day each period', ar: 'يوم الدفع في كل فترة' },
+  sukukPayoutPaymentDayHint: {
+    en: 'Day of the month from 1–28 (e.g. 25).',
+    ar: 'يوم من الشهر بين 1–28 (مثل 25).',
+  },
+  sukukPayoutProfitEach: { en: 'Profit each payment ({currency})', ar: 'الربح في كل دفعة ({currency})' },
+  sukukPayoutProfitMaturity: {
+    en: 'Profit at maturity ({currency}, optional)',
+    ar: 'الربح عند الاستحقاق ({currency}، اختياري)',
+  },
+  sukukPayoutProfitEachHint: {
+    en: 'The regular profit amount you expect each period.',
+    ar: 'مبلغ الربح المنتظم المتوقع لكل فترة.',
+  },
+  sukukPayoutProfitMaturityHint: {
+    en: 'Leave blank if profit is already included in the final payout, or enter the profit portion separately.',
+    ar: 'اتركه فارغاً إذا كان الربح مضمّناً في الدفعة النهائية، أو أدخل جزء الربح بشكل منفصل.',
+  },
+  sukukPayoutCapitalEach: {
+    en: 'Capital returned each payment ({currency}, optional)',
+    ar: 'رأس المال المُسترد في كل دفعة ({currency}، اختياري)',
+  },
+  sukukPayoutCapitalEachHint: {
+    en: 'Only if part of your invested capital comes back with each payment. Leave 0 if you only receive profit until maturity.',
+    ar: 'فقط إذا عاد جزء من رأس مالك المستثمر مع كل دفعة. اترك 0 إذا كنت تستلم الربح فقط حتى الاستحقاق.',
+  },
+  sukukPayoutCapitalMaturity: {
+    en: 'Capital at maturity ({currency})',
+    ar: 'رأس المال عند الاستحقاق ({currency})',
+  },
+  sukukPayoutCapitalMaturityPlaceholder: {
+    en: 'Leave blank for remaining balance',
+    ar: 'اتركه فارغاً للرصيد المتبقي',
+  },
+  sukukPayoutCapitalMaturityHint: {
+    en: 'Leave blank to return whatever outstanding capital is left on {date}.',
+    ar: 'اتركه فارغاً لإرجاع ما تبقى من رأس المال المستحق في {date}.',
+  },
+  sukukPayoutMaturityFallback: { en: 'maturity', ar: 'الاستحقاق' },
+  sukukPayoutSummary: { en: 'Summary', ar: 'الملخص' },
+  sukukPayoutSave: { en: 'Save payout schedule', ar: 'حفظ جدول الدفع' },
+  sukukPayoutSaving: { en: 'Saving…', ar: 'جاري الحفظ…' },
+  sukukPayoutChooseAccountError: {
+    en: 'Choose which investment account receives the cash.',
+    ar: 'اختر حساب الاستثمار الذي يستلم النقد.',
+  },
+  sukukPayoutSaveFailed: { en: 'Failed to save schedule.', ar: 'تعذّر حفظ الجدول.' },
+  sukukPayoutSetHowPaid: { en: 'Set how you are paid', ar: 'حدد كيف تُدفع لك' },
+  sukukPayoutEditHowPaid: { en: 'Edit how you are paid', ar: 'تعديل كيف تُدفع لك' },
+  sukukPayoutCorrectOutstanding: { en: 'Correct outstanding', ar: 'تصحيح المستحق' },
+  sukukPayoutNextPayout: { en: 'Next payout', ar: 'الدفعة القادمة' },
+  sukukPayoutSummaryOnDay: { en: 'on day {day}', ar: 'في اليوم {day}' },
+  sukukPayoutSummaryProfitEach: {
+    en: '{amount} {currency} profit each payment',
+    ar: '{amount} {currency} ربح لكل دفعة',
+  },
+  sukukPayoutSummaryProfitMaturity: {
+    en: '{amount} {currency} profit at maturity',
+    ar: '{amount} {currency} ربح عند الاستحقاق',
+  },
+  sukukPayoutSummaryCapitalEach: {
+    en: '{amount} {currency} capital each payment',
+    ar: '{amount} {currency} رأس مال لكل دفعة',
+  },
+  sukukPayoutSummaryCapitalMaturity: {
+    en: '{amount} {currency} capital at maturity',
+    ar: '{amount} {currency} رأس مال عند الاستحقاق',
+  },
+  sukukPayoutSummaryRemainingCapital: {
+    en: 'remaining capital at maturity',
+    ar: 'رأس المال المتبقي عند الاستحقاق',
+  },
 };
 
 export type LanguageContextValue = {

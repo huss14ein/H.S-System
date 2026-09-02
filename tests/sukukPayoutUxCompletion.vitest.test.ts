@@ -41,20 +41,55 @@ describe('sukukPayoutUxCompletion', () => {
     expect(SUKUK_PAYOUT_CADENCE_OPTIONS).toHaveLength(3);
   });
 
+  it('shared labels include Arabic translations', () => {
+    expect(formatSukukPayoutKindLabel('coupon', 'ar')).toBe('ربح');
+    expect(formatSukukPayoutKindLabel('principal', 'ar')).toBe('رأس مال مُسترد');
+    expect(formatSukukPayoutCadenceLabel('maturity_only', 'ar')).toBe('كامل المبلغ عند الاستحقاق');
+    expect(formatSukukPayoutCadenceLabel('monthly', 'ar')).toBe('كل شهر');
+    expect(formatSukukPayoutCadenceLabel('quarterly', 'ar')).toBe('كل 3 أشهر');
+    for (const option of SUKUK_PAYOUT_CADENCE_OPTIONS) {
+      expect(option.title.ar.trim().length).toBeGreaterThan(0);
+      expect(option.description.ar.trim().length).toBeGreaterThan(0);
+    }
+  });
+
   it('Investments Sukuk section uses shared labels + plain-language CTA path', () => {
     const src = read('components/investments/SukukInvestmentsSection.tsx');
     expect(src).toContain("from '../../services/sukuk/sukukPayoutLabels'");
     expect(src).toContain('SUKUK_PAYOUT_CADENCE_OPTIONS');
     expect(src).toContain('formatSukukPayoutKindLabel');
-    expect(src).toContain('How are you paid?');
-    expect(src).toContain('Set how you are paid');
-    expect(src).toContain('Correct outstanding');
+    expect(src).toContain("t('sukukPayoutHowPaid')");
+    expect(src).toContain("t('sukukPayoutSetHowPaid')");
+    expect(src).toContain("t('sukukPayoutCorrectOutstanding')");
+    expect(src).toContain('useLanguage');
     expect(src).toContain('saveSukukPayoutSchedule');
     expect(src).toContain('applyReconciliationAdjustment');
     expect(src).toContain("mechanism: 'sukuk_face_yield'");
     for (const banned of SUKUK_PAYOUT_UX_BANNED_STRINGS) {
       expect(src, `banned in Sukuk UI: ${banned}`).not.toContain(banned);
     }
+  });
+
+  it('LanguageContext ships Arabic copy for the Sukuk payout modal', () => {
+    const lang = read('context/LanguageContext.tsx');
+    const requiredKeys = [
+      'sukukPayoutHowPaid',
+      'sukukPayoutIntro',
+      'sukukPayoutCashLandsIn',
+      'sukukPayoutFrequency',
+      'sukukPayoutProfitEach',
+      'sukukPayoutCapitalMaturity',
+      'sukukPayoutSave',
+      'sukukPayoutSetHowPaid',
+      'sukukPayoutEditHowPaid',
+      'sukukPayoutCorrectOutstanding',
+    ];
+    for (const key of requiredKeys) {
+      expect(lang, `missing DICT key ${key}`).toContain(`${key}:`);
+    }
+    expect(lang).toContain("ar: 'كيف تُدفع لك؟'");
+    expect(lang).toContain("ar: 'حفظ جدول الدفع'");
+    expect(lang).toContain("ar: 'حدد كيف تُدفع لك'");
   });
 
   it('full save → materialize → regenerate path is wired in DataContext + services', () => {
