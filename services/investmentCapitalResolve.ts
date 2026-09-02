@@ -128,7 +128,8 @@ export function resolveScopedInvestmentCapitalSar(args: {
     if (!investedHistoryReliable) {
       return {
         capitalSource: 'manual_marks',
-        totalInvestedSar: Math.max(depositNet, fallbackInvestedSar),
+        // Keep recorded deposits as “invested” for display; incomplete books suppress ROI separately.
+        totalInvestedSar: deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR ? deposits : fallbackInvestedSar,
         netCapitalSar: Math.max(depositNet, economicDeployedSar),
         economicFloorApplied: true,
         inferredInvestedFromLedgerSar,
@@ -139,7 +140,7 @@ export function resolveScopedInvestmentCapitalSar(args: {
     const netCapitalSar = Math.max(depositNet, economicDeployedSar);
     return {
       capitalSource: 'manual_marks',
-      totalInvestedSar: Math.max(deposits > 0 ? deposits : fallbackInvestedSar, fallbackInvestedSar),
+      totalInvestedSar: deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR ? deposits : fallbackInvestedSar,
       netCapitalSar,
       economicFloorApplied: netCapitalSar > depositNet + 1e-9,
       inferredInvestedFromLedgerSar,

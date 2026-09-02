@@ -495,8 +495,8 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
     (scoped.manualMarksInvestedHistoryIncomplete === true || absurdManualMarks) &&
     totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
   if (roiSuppressed) {
-    // Neutralize gain so incomplete/absurd manual marks cannot invent deposit-based ROI or pollute live books.
-    netCapitalSAR = Math.max(netCapitalSAR, totalValueInSAR);
+    // Full neutralize: incomplete/absurd manual marks contribute 0 gain (no invented +ROI or −ROI).
+    netCapitalSAR = totalValueInSAR;
   }
   const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
   const principalFullyRecovered =
@@ -1023,9 +1023,10 @@ function sanitizeAndValidatePlatformMetrics(
    * Manual-price sleeves keep their cost floor / neutralized net (never reset to deposit-only).
    */
   if (preserveManualMarks) {
-    safe.netCapitalSAR = Math.max(ledgerNet, economicDeployed, safe.netCapitalSAR);
     if (safe.roiSuppressed) {
-      safe.netCapitalSAR = Math.max(safe.netCapitalSAR, safe.totalValueInSAR);
+      safe.netCapitalSAR = safe.totalValueInSAR;
+    } else {
+      safe.netCapitalSAR = Math.max(ledgerNet, economicDeployed, safe.netCapitalSAR);
     }
   } else if (preserveHybrid && hasDeposits) {
     safe.netCapitalSAR = Math.max(ledgerNet, safe.netCapitalSAR);
