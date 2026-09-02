@@ -142,7 +142,96 @@ describe('manual marks ROI isolation', () => {
     expect(presentHeadlineInvestmentGrowth(headline)?.valueDisplay).toBe('—');
   });
 
-  it('manual marks with cost floor ROI at cost+cash (not deposit-only inflation)', () => {
+  it('manual marks with typed cost but no buy ledger still suppress ROI (user example ~2845%)', () => {
+    // Screenshot: cash 1,500 · growth 71,134 · ROI 2845.4% · net invested 2,500
+    // PV ≈ 73,634; deposit 2,500; avgCost typed without buys → must not show deposit ROI.
+    const positionsMark = 73_634 - 1_500;
+    const financial = fixture({
+      holdings: [manualHolding(1_000, 1, positionsMark)],
+      cashSar: 1_500,
+      txs: [
+        {
+          id: 'd1',
+          type: 'deposit',
+          total: 2_500,
+          date: '2026-06-01',
+          portfolioId: 'pf-manual',
+          accountId: 'acc-manual',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+          currency: 'SAR',
+        } as InvestmentTransaction,
+      ],
+    });
+    const m = computePlatformCardMetrics({
+      portfolios: financial.investments as InvestmentPortfolio[],
+      transactions: financial.investmentTransactions as InvestmentTransaction[],
+      accounts: financial.accounts as Account[],
+      allInvestments: financial.investments as InvestmentPortfolio[],
+      sarPerUsd: SAR_PER_USD,
+      availableCashByCurrency: { SAR: 1_500, USD: 0 },
+      simulatedPrices: {},
+      platformCurrency: 'SAR',
+      datedFxData: financial,
+    });
+    expect(m.roiSuppressed).toBe(true);
+    expect(m.roi).toBe(0);
+    expect(m.dailyPnLSAR).toBe(0);
+    expect(presentScopedInvestmentGrowth(m).roiDisplay).toBe('—');
+    // Without the fix, growth/net would be ~2845%.
+    expect(m.totalValueInSAR / 2_500).toBeGreaterThan(20);
+  });
+
+  it('manual marks with buy + cost still suppress when PV is absurd vs net (same 2845% shape)', () => {
+    const positionsMark = 73_634 - 1_500;
+    const financial = fixture({
+      holdings: [manualHolding(1_000, 1, positionsMark)],
+      cashSar: 1_500,
+      txs: [
+        {
+          id: 'd1',
+          type: 'deposit',
+          total: 2_500,
+          date: '2026-06-01',
+          portfolioId: 'pf-manual',
+          accountId: 'acc-manual',
+          symbol: 'CASH',
+          quantity: 0,
+          price: 0,
+          currency: 'SAR',
+        } as InvestmentTransaction,
+        {
+          id: 'b1',
+          type: 'buy',
+          total: 1_000,
+          date: '2026-06-02',
+          portfolioId: 'pf-manual',
+          accountId: 'acc-manual',
+          symbol: 'MANUAL-FUND',
+          quantity: 1,
+          price: 1_000,
+          currency: 'SAR',
+        } as InvestmentTransaction,
+      ],
+    });
+    const m = computePlatformCardMetrics({
+      portfolios: financial.investments as InvestmentPortfolio[],
+      transactions: financial.investmentTransactions as InvestmentTransaction[],
+      accounts: financial.accounts as Account[],
+      allInvestments: financial.investments as InvestmentPortfolio[],
+      sarPerUsd: SAR_PER_USD,
+      availableCashByCurrency: { SAR: 1_500, USD: 0 },
+      simulatedPrices: {},
+      platformCurrency: 'SAR',
+      datedFxData: financial,
+    });
+    expect(m.capitalSource).toBe('manual_marks');
+    expect(m.roiSuppressed).toBe(true);
+    expect(presentScopedInvestmentGrowth(m).roiDisplay).toBe('—');
+  });
+
+  it('manual marks with cost floor ROI at cost+cash when buy history exists', () => {
     // Mark 200 vs cost 100; deposit only 50 would otherwise invent huge ROI — floor at cost+cash.
     const scoped = resolveScopedInvestmentCapitalSar({
       depositsRecordedSar: 50,
@@ -155,6 +244,19 @@ describe('manual marks ROI isolation', () => {
     expect(scoped.capitalSource).toBe('manual_marks');
     expect(scoped.netCapitalSar).toBeCloseTo(10_000, 5);
     expect(scoped.manualMarksInvestedHistoryIncomplete).toBe(false);
+  });
+
+  it('manual marks with typed avgCost but zero buys are incomplete', () => {
+    const scoped = resolveScopedInvestmentCapitalSar({
+      depositsRecordedSar: 2_500,
+      withdrawnSar: 0,
+      holdingsCostBasisSar: 1_000,
+      cashSar: 1_500,
+      buysSar: 0,
+      manualMarksOnly: true,
+    });
+    expect(scoped.manualMarksInvestedHistoryIncomplete).toBe(true);
+    expect(scoped.capitalSource).toBe('manual_marks');
   });
 
   it('live quote portfolios keep deposits − withdrawals ROI unchanged', () => {

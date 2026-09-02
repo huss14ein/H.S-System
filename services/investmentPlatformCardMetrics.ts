@@ -27,6 +27,7 @@ import {
 import {
   describeInvestmentNetInvested,
   resolveScopedInvestmentCapitalSar,
+  MANUAL_MARKS_MAX_PV_TO_NET_RATIO,
   type InvestmentCapitalSource,
 } from './investmentCapitalResolve';
 import {
@@ -486,11 +487,15 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
   let netCapitalSAR = scoped.netCapitalSar;
   const capitalSource = scoped.capitalSource;
   const depositsRecordedSAR = totalInvestedSARRaw;
+  const absurdManualMarks =
+    capitalSource === 'manual_marks' &&
+    netCapitalSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
+    totalValueInSAR > netCapitalSAR * MANUAL_MARKS_MAX_PV_TO_NET_RATIO;
   const roiSuppressed =
-    scoped.manualMarksInvestedHistoryIncomplete === true &&
+    (scoped.manualMarksInvestedHistoryIncomplete === true || absurdManualMarks) &&
     totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
   if (roiSuppressed) {
-    // Neutralize gain so incomplete manual marks cannot invent deposit-based ROI or pollute live books.
+    // Neutralize gain so incomplete/absurd manual marks cannot invent deposit-based ROI or pollute live books.
     netCapitalSAR = Math.max(netCapitalSAR, totalValueInSAR);
   }
   const totalGainLossSAR = totalValueInSAR - netCapitalSAR;

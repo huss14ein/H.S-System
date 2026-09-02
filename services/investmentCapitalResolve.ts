@@ -27,6 +27,12 @@ export const LEDGER_INFERRED_FALLBACK_MAX_RATIO = 4.5;
 /** Skip ratio cross-check when fallback gross is tiny (noise vs rounding). */
 export const LEDGER_INFERRED_FALLBACK_MIN_SAR = 400;
 
+/**
+ * Manual-price books: if present value exceeds this multiple of net invested, treat marks as
+ * unreliable without live quotes (e.g. 73k PV on 2.5k deposits → hide ROI). Live books ignore this.
+ */
+export const MANUAL_MARKS_MAX_PV_TO_NET_RATIO = 5;
+
 /** Investor-facing definition for ROI / net invested (headline + platform cards + AI). */
 export function describeInvestmentNetInvested(capitalSource: InvestmentCapitalSource): string {
   switch (capitalSource) {
@@ -110,8 +116,12 @@ export function resolveScopedInvestmentCapitalSar(args: {
   const fallbackInvestedSar = Math.max(0, cost + cash + withdrawn);
   const economicDeployedSar = Math.max(0, cost + cash);
 
-  const investedHistoryReliable =
-    cost > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR || buys > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
+  /**
+   * Manual marks: typed avgCost alone is not “invested history” (users often set cost/current value
+   * without buy ledger rows). Require buy history so deposit-only + fantasy marks cannot show 1000%+ ROI.
+   * Live quote path below is unchanged.
+   */
+  const investedHistoryReliable = buys > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
 
   if (manualMarksOnly) {
     const depositNet = deposits > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR ? Math.max(0, deposits - withdrawn) : 0;
