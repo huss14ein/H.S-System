@@ -116,6 +116,8 @@ export type PersonalInvestmentKpiBreakdown = PersonalInvestmentKpisSar & {
    */
   platformsRollupSar: number;
   platformsDailyPnLSar: number;
+  /** All platforms are manual marks without invested history — suppress ROI display. */
+  roiSuppressed?: boolean;
 };
 
 export type PersonalInvestmentKpiBreakdownOptions = {
@@ -292,6 +294,10 @@ export function computePersonalInvestmentKpiBreakdown(
   let hybridTotalInvestedSar = 0;
   let platformsRollupSar = 0;
   let platformsDailyPnLSar = 0;
+  const hybridSources: InvestmentCapitalSource[] = [];
+  let anyRoiSuppressed = false;
+  let allRoiSuppressed = true;
+  let hybridPlatformCount = 0;
   if (includeHybrid) {
     for (const account of accounts) {
       if (account.type !== 'Investment' || !personalAccountIds.has(account.id)) continue;
@@ -304,8 +310,13 @@ export function computePersonalInvestmentKpiBreakdown(
       hybridTotalInvestedSar += m.totalInvestedSAR;
       platformsRollupSar += m.totalValueInSAR;
       platformsDailyPnLSar += m.dailyPnLSAR;
+      hybridPlatformCount += 1;
+      if (m.capitalSource) hybridSources.push(m.capitalSource);
+      if (m.roiSuppressed) anyRoiSuppressed = true;
+      else allRoiSuppressed = false;
     }
   }
+  if (hybridPlatformCount === 0) allRoiSuppressed = false;
 
   const depositsOnlyNetSar = Math.max(0, depositsRecordedSar - totalWithdrawnSar);
   const scopedLegacy = resolveScopedInvestmentCapitalSar({
@@ -319,9 +330,15 @@ export function computePersonalInvestmentKpiBreakdown(
   });
 
   let capitalSource: InvestmentCapitalSource = scopedLegacy.capitalSource;
-  if (includeHybrid && depositsRecordedSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
-    capitalSource =
-      hybridNetCapitalSar > depositsOnlyNetSar + 1 ? 'mixed' : 'deposits';
+  if (includeHybrid && hybridSources.length > 0) {
+    capitalSource = aggregateInvestmentCapitalSources(hybridSources);
+    if (
+      capitalSource === 'deposits' &&
+      hybridNetCapitalSar > depositsOnlyNetSar + 1 &&
+      depositsRecordedSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR
+    ) {
+      capitalSource = 'mixed';
+    }
   } else if (!includeHybrid) {
     capitalSource = scopedLegacy.capitalSource;
   }
@@ -339,13 +356,15 @@ export function computePersonalInvestmentKpiBreakdown(
   const economicDeployedSar = Math.max(0, holdingsCostBasisSar + brokerageCashSar);
   const economicFloorApplied =
     capitalSource === 'mixed' ||
+    capitalSource === 'manual_marks' ||
     (capitalSource !== 'deposits' &&
       netCapitalSar + 1e-9 >= economicDeployedSar &&
       netCapitalSar > depositsOnlyNetSar + 1e-9);
+  const roiSuppressed = includeHybrid && allRoiSuppressed && anyRoiSuppressed;
   const totalGainLossSar = totalInvestmentsValueSar - netCapitalSar;
-  const roi = sanitizeInvestmentRoiDecimal(
-    netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0,
-  );
+  const roi = roiSuppressed
+    ? 0
+    : sanitizeInvestmentRoiDecimal(netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0);
 
   return {
     holdingsValueSar,
@@ -372,6 +391,7 @@ export function computePersonalInvestmentKpiBreakdown(
     economicFloorApplied,
     platformsRollupSar,
     platformsDailyPnLSar,
+    roiSuppressed,
   };
 }
 
@@ -514,6 +534,8 @@ export type HeadlinePersonalInvestmentRoi = {
   principalFullyRecovered: boolean;
   firstCapitalDepositYmd: string | null;
   investmentAgeDays: number | null;
+  /** Manual-price books without cost/buy history — hide ROI % (live quote books unchanged). */
+  roiSuppressed?: boolean;
 };
 
 /**
@@ -564,13 +586,16 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
   const netCapitalSar = Math.max(0, platformNetForHeadline + commodityCost + sukukPositionsCostSar);
   const totalGainLossSar = totalExposureSar - netCapitalSar;
   const principalFullyRecovered =
+    !breakdown.roiSuppressed &&
     breakdown.capitalSource === 'deposits' &&
     breakdown.depositsRecordedSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     netCapitalSar <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     totalExposureSar > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
-  const roi = principalFullyRecovered
+  const roi = breakdown.roiSuppressed
     ? 0
-    : sanitizeInvestmentRoiDecimal(netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0);
+    : principalFullyRecovered
+      ? 0
+      : sanitizeInvestmentRoiDecimal(netCapitalSar > 0 ? totalGainLossSar / netCapitalSar : 0);
   const firstCapitalDepositYmd = safeCapitalDepositYmd(breakdown.firstCapitalDepositYmd);
   const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
 
@@ -596,5 +621,6 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
     principalFullyRecovered,
     firstCapitalDepositYmd,
     investmentAgeDays,
+    roiSuppressed: breakdown.roiSuppressed === true,
   };
 }

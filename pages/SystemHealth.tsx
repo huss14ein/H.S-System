@@ -615,6 +615,11 @@ const SystemHealth: React.FC<{
           'Mixed funding history — funded portfolios use deposits − withdrawals; portfolios without deposit/withdrawal history floor at cost basis + cash so sibling market value is not counted as free profit.',
         );
       }
+      if (b.capitalSource === 'manual_marks') {
+        notes.push(
+          'Manual-price holdings — net invested floors at purchase cost + cash (not deposit-only ROI). When cost/buy history is missing, ROI is suppressed so live quote portfolios stay on the deposits path.',
+        );
+      }
       if (Math.abs(cashLedgerDriftSar) > 50) {
         notes.push(
           'Cash drift compares signed broker balances to ledger-implied cash using the **same spot** SAR/USD as the UI. If drift persists, check missing trades or wrong currency on rows — not historical FX.',
@@ -1501,6 +1506,7 @@ const SystemHealth: React.FC<{
                       {integritySummary.investmentKpiReconciliation.capitalSource === 'ledger_inferred' && 'ledger-inferred (see detail)'}
                       {integritySummary.investmentKpiReconciliation.capitalSource === 'cost_basis_fallback' && 'cost-basis fallback (see detail)'}
                       {integritySummary.investmentKpiReconciliation.capitalSource === 'mixed' && 'hybrid (funded sleeves + incomplete-books floors)'}
+                      {integritySummary.investmentKpiReconciliation.capitalSource === 'manual_marks' && 'manual prices (cost + cash floor)'}
                     </span>
                   </p>
                 </div>
@@ -1605,6 +1611,8 @@ const SystemHealth: React.FC<{
                     {' — '}
                     {integritySummary.investmentKpiReconciliation.capitalSource === 'mixed'
                       ? 'funded sleeves use deposits − withdrawals; incomplete sleeves floor at cost + cash.'
+                      : integritySummary.investmentKpiReconciliation.capitalSource === 'manual_marks'
+                        ? 'manual-price books floor at cost + cash; ROI hidden when purchase history is missing.'
                       : integritySummary.investmentKpiReconciliation.capitalSource === 'deposits'
                         ? `deposits − withdrawals (${integritySummary.investmentKpiReconciliation.investmentsHeadline.stocksNetCapitalBeforeFloorSar.toFixed(2)}).`
                         : `cost/ledger path; economic floor ${integritySummary.investmentKpiReconciliation.investmentsHeadline.economicFloorApplied ? 'applied' : 'not used'} (cost+cash ${integritySummary.investmentKpiReconciliation.investmentsHeadline.holdingsCostBasisPlusBrokerCashSar.toFixed(2)}).`}

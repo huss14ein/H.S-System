@@ -107,6 +107,7 @@ export type InvestmentsHeadlineKpiRow = {
   firstCapitalDepositYmd: string | null;
   investmentAgeDays: number | null;
   investmentAgeLabel: string | null;
+  roiSuppressed: boolean;
 };
 
 export function buildInvestmentsHeadlineKpiRow(
@@ -115,8 +116,8 @@ export function buildInvestmentsHeadlineKpiRow(
   const h = pickHeadlineInvestmentExposure(metrics);
   if (!h) return null;
   const totalValue = h.totalExposureSar;
-  const totalGainLoss = h.totalGainLossSar;
-  const roi = Number.isFinite(h.roi) ? h.roi * 100 : 0;
+  const totalGainLoss = h.roiSuppressed ? 0 : h.totalGainLossSar;
+  const roi = h.roiSuppressed ? 0 : Number.isFinite(h.roi) ? h.roi * 100 : 0;
   const totalDailyPnL = h.platformsDailyPnLSar + h.commoditiesDailyPnLSar;
   const previousTotalValue = totalValue - totalDailyPnL;
   const trendPercentage = previousTotalValue > 0 ? (totalDailyPnL / previousTotalValue) * 100 : 0;
@@ -138,6 +139,7 @@ export function buildInvestmentsHeadlineKpiRow(
     firstCapitalDepositYmd: safeCapitalDepositYmd(h.firstCapitalDepositYmd),
     investmentAgeDays,
     investmentAgeLabel: formatInvestmentAgeLabel(investmentAgeDays),
+    roiSuppressed: h.roiSuppressed === true,
   };
 }
 
@@ -162,6 +164,7 @@ export type HeadlineInvestmentGrowthPresentation = {
   investmentAgeLabel: string | null;
   firstCapitalDepositYmd: string | null;
   definition: string;
+  roiSuppressed: boolean;
 };
 
 /** Single display object for Dashboard, Analytics, Analysis, passport, AI, and exports. */
@@ -170,10 +173,15 @@ export function presentHeadlineInvestmentGrowth(
 ): HeadlineInvestmentGrowthPresentation | null {
   if (!h) return null;
   const principalFullyRecovered = h.principalFullyRecovered === true;
-  const roiPct = Number.isFinite(h.roi) ? h.roi * 100 : 0;
-  const growthSar = Number.isFinite(h.totalGainLossSar) ? h.totalGainLossSar : 0;
+  const roiSuppressed = h.roiSuppressed === true;
+  const roiPct = roiSuppressed ? 0 : Number.isFinite(h.roi) ? h.roi * 100 : 0;
+  const growthSar = roiSuppressed ? 0 : Number.isFinite(h.totalGainLossSar) ? h.totalGainLossSar : 0;
   return {
-    valueDisplay: principalFullyRecovered ? 'Principal recovered' : `${roiPct.toFixed(1)}%`,
+    valueDisplay: roiSuppressed
+      ? '—'
+      : principalFullyRecovered
+        ? 'Principal recovered'
+        : `${roiPct.toFixed(1)}%`,
     roiPct,
     presentValueSar: Number.isFinite(h.totalExposureSar) ? h.totalExposureSar : 0,
     netInvestedSar: Number.isFinite(h.netCapitalSar) ? h.netCapitalSar : 0,
@@ -181,27 +189,36 @@ export function presentHeadlineInvestmentGrowth(
     depositsRecordedSar: Number.isFinite(h.depositsRecordedSar) ? h.depositsRecordedSar : 0,
     totalWithdrawnSar: Number.isFinite(h.totalWithdrawnSar) ? h.totalWithdrawnSar : 0,
     principalFullyRecovered,
-    isGrowing: principalFullyRecovered || growthSar >= 0,
-    statusLabel: principalFullyRecovered
-      ? 'Principal recovered'
-      : growthSar > 0.5
-        ? 'Growing'
-        : growthSar < -0.5
-          ? 'Shrinking'
-          : 'Flat',
+    isGrowing: !roiSuppressed && (principalFullyRecovered || growthSar >= 0),
+    statusLabel: roiSuppressed
+      ? 'Add purchase cost'
+      : principalFullyRecovered
+        ? 'Principal recovered'
+        : growthSar > 0.5
+          ? 'Growing'
+          : growthSar < -0.5
+            ? 'Shrinking'
+            : 'Flat',
     investmentAgeLabel: formatInvestmentAgeLabel(h.investmentAgeDays),
     firstCapitalDepositYmd: safeCapitalDepositYmd(h.firstCapitalDepositYmd),
-    definition:
-      h.capitalSource === 'mixed'
+    definition: roiSuppressed
+      ? 'Manual holding prices without purchase cost or buy history — ROI is hidden. Live quote portfolios still use deposits − withdrawals.'
+      : h.capitalSource === 'mixed'
         ? describeInvestmentNetInvested('mixed')
-        : h.capitalSource === 'cost_basis_fallback' || h.capitalSource === 'ledger_inferred'
+        : h.capitalSource === 'cost_basis_fallback' ||
+            h.capitalSource === 'ledger_inferred' ||
+            h.capitalSource === 'manual_marks'
           ? describeInvestmentNetInvested(h.capitalSource)
           : 'Present value minus net invested (deposits − withdrawals + commodity/Sukuk cost). Incomplete portfolios without deposit history floor at cost + cash so sibling market value is not free profit.',
+    roiSuppressed,
   };
 }
 
 /** True when gain/loss, ROI, and daily P/L are internally consistent (same rollup object). */
 export function headlineKpiMathIsConsistent(h: HeadlinePersonalInvestmentRoi): boolean {
+  if (h.roiSuppressed) {
+    return h.roi === 0;
+  }
   if (h.principalFullyRecovered) {
     return h.netCapitalSar <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR + 1e-9 && h.roi === 0;
   }

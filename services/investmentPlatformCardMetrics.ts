@@ -6,7 +6,7 @@
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction, TradeCurrency } from '../types';
 import { quoteDailyPnLInBookCurrency, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { quoteChangeForDailyPnL, resolveEquityListingExchange } from './marketSessionLocal';
-import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
+import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote, holdingsAreManualMarksOnly } from '../utils/holdingValuation';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
 import {
   inferInvestmentTransactionCurrency,
@@ -84,6 +84,11 @@ export interface PlatformCardMetrics {
   depositsRecordedSAR?: number;
   /** How net invested was resolved for this scope (deposits / inferred / cost floor / mixed siblings). */
   capitalSource?: InvestmentCapitalSource;
+  /**
+   * Manual-price book without purchase cost / buy history — ROI % must not be shown as deposit-based return.
+   * Net capital is neutralized to present value so this sleeve cannot inflate live-portfolio headline ROI.
+   */
+  roiSuppressed?: boolean;
 }
 
 export interface PlatformMetricValidationResult {
@@ -178,6 +183,9 @@ function computePlatformCardMetricsFromPortfolioBundle(
   let anyPrincipalRecovered = false;
   let fundedSleeves = 0;
   let incompleteSleeves = 0;
+  let manualMarksSleeves = 0;
+  let suppressedSleeves = 0;
+  let liveFundedSleeves = 0;
 
   for (const p of portfolios) {
     const m = bundle.metricsByPortfolioId.get(p.id);
@@ -195,8 +203,13 @@ function computePlatformCardMetricsFromPortfolioBundle(
     if (ymd && (!firstCapitalDepositYmd || ymd < firstCapitalDepositYmd)) firstCapitalDepositYmd = ymd;
     if (m.principalFullyRecovered) anyPrincipalRecovered = true;
     else principalFullyRecoveredAll = false;
-    if ((m.depositsRecordedSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) fundedSleeves += 1;
-    else if ((m.holdingsCostBasisSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR || m.netCapitalSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
+    if (m.roiSuppressed) suppressedSleeves += 1;
+    if (m.capitalSource === 'manual_marks') {
+      manualMarksSleeves += 1;
+    } else if ((m.depositsRecordedSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
+      fundedSleeves += 1;
+      liveFundedSleeves += 1;
+    } else if ((m.holdingsCostBasisSAR ?? 0) > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR || m.netCapitalSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR) {
       incompleteSleeves += 1;
     }
   }
@@ -205,23 +218,31 @@ function computePlatformCardMetricsFromPortfolioBundle(
   totalGainLossSAR = totalValueInSAR - netCapitalSAR;
 
   const capitalSource: InvestmentCapitalSource =
-    fundedSleeves > 0 && incompleteSleeves > 0
+    manualMarksSleeves > 0 && (liveFundedSleeves > 0 || incompleteSleeves > 0)
       ? 'mixed'
-      : fundedSleeves > 0
-        ? 'deposits'
-        : incompleteSleeves > 0
-          ? 'cost_basis_fallback'
-          : depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR
+      : manualMarksSleeves > 0 && fundedSleeves === 0 && incompleteSleeves === 0
+        ? 'manual_marks'
+        : fundedSleeves > 0 && incompleteSleeves > 0
+          ? 'mixed'
+          : fundedSleeves > 0
             ? 'deposits'
-            : 'cost_basis_fallback';
+            : incompleteSleeves > 0
+              ? 'cost_basis_fallback'
+              : depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR
+                ? 'deposits'
+                : 'cost_basis_fallback';
+
+  const roiSuppressed =
+    suppressedSleeves > 0 && suppressedSleeves === portfolios.filter((p) => bundle.metricsByPortfolioId.has(p.id)).length;
 
   const principalFullyRecovered =
+    !roiSuppressed &&
     depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     netCapitalSAR <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     (principalFullyRecoveredAll || anyPrincipalRecovered);
 
-  const roi = principalFullyRecovered ? 0 : netCapitalSAR > 0 ? (totalGainLossSAR / netCapitalSAR) * 100 : 0;
+  const roi = roiSuppressed || principalFullyRecovered ? 0 : netCapitalSAR > 0 ? (totalGainLossSAR / netCapitalSAR) * 100 : 0;
   const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
 
   const holdingsValue =
@@ -292,10 +313,12 @@ function computePlatformCardMetricsFromPortfolioBundle(
     principalFullyRecovered,
     depositsRecordedSAR,
     capitalSource,
+    roiSuppressed,
   };
   return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, {
     unrealizedPnLBasis,
     preserveHybridNetCapital: true,
+    preserveManualMarksNetCapital: capitalSource === 'manual_marks' || roiSuppressed || manualMarksSleeves > 0,
   });
 }
 
@@ -456,14 +479,23 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
     buysSar: buySAR + buyUSD * rate,
     sellsSar: sellSAR + sellUSD * rate,
     dividendsSar: divSAR + divUSD * rate,
+    manualMarksOnly: portfolios.every((p) => holdingsAreManualMarksOnly(p.holdings)),
   });
   void inferredInvestedFromLedgerSAR;
   const totalInvestedSAR = scoped.totalInvestedSar;
-  const netCapitalSAR = scoped.netCapitalSar;
+  let netCapitalSAR = scoped.netCapitalSar;
   const capitalSource = scoped.capitalSource;
-  const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
   const depositsRecordedSAR = totalInvestedSARRaw;
+  const roiSuppressed =
+    scoped.manualMarksInvestedHistoryIncomplete === true &&
+    totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
+  if (roiSuppressed) {
+    // Neutralize gain so incomplete manual marks cannot invent deposit-based ROI or pollute live books.
+    netCapitalSAR = Math.max(netCapitalSAR, totalValueInSAR);
+  }
+  const totalGainLossSAR = totalValueInSAR - netCapitalSAR;
   const principalFullyRecovered =
+    !roiSuppressed &&
     depositsRecordedSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     netCapitalSAR <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
@@ -485,7 +517,7 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
       : platformCurrency === 'USD'
         ? totalInvestedSAR / rate
         : totalInvestedSAR;
-  const roi = principalFullyRecovered ? 0 : netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
+  const roi = roiSuppressed || principalFullyRecovered ? 0 : netCapital > 0 ? (totalGainLoss / netCapital) * 100 : 0;
   const firstCapitalDepositYmd = earliestCapitalDepositYmd(transactions);
   const investmentAgeDays = investmentAgeDaysFromYmd(firstCapitalDepositYmd);
 
@@ -556,8 +588,12 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
     principalFullyRecovered,
     depositsRecordedSAR,
     capitalSource,
+    roiSuppressed,
   };
-  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, { unrealizedPnLBasis });
+  return sanitizeAndValidatePlatformMetrics(out, platformCurrency, rate, {
+    unrealizedPnLBasis,
+    preserveManualMarksNetCapital: capitalSource === 'manual_marks' || roiSuppressed,
+  });
 }
 
 /** Display labels for platform / portfolio ROI vs net invested (hybrid when books are incomplete). */
@@ -572,27 +608,38 @@ export function presentScopedInvestmentGrowth(m: PlatformCardMetrics): {
   principalFullyRecovered: boolean;
   capitalSource: InvestmentCapitalSource;
   netInvestedDefinition: string;
+  roiSuppressed: boolean;
 } {
   const principalFullyRecovered = m.principalFullyRecovered === true;
-  const growthSar = Number.isFinite(m.totalGainLossSAR) ? m.totalGainLossSAR : 0;
+  const roiSuppressed = m.roiSuppressed === true;
+  const growthSar = roiSuppressed ? 0 : Number.isFinite(m.totalGainLossSAR) ? m.totalGainLossSAR : 0;
   const capitalSource: InvestmentCapitalSource = m.capitalSource ?? 'deposits';
   return {
-    roiDisplay: principalFullyRecovered ? 'Principal recovered' : `${(Number.isFinite(m.roi) ? m.roi : 0).toFixed(1)}%`,
+    roiDisplay: roiSuppressed
+      ? '—'
+      : principalFullyRecovered
+        ? 'Principal recovered'
+        : `${(Number.isFinite(m.roi) ? m.roi : 0).toFixed(1)}%`,
     growthSar,
     netInvestedSar: Number.isFinite(m.netCapitalSAR) ? m.netCapitalSAR : 0,
-    isGrowing: principalFullyRecovered || growthSar >= 0,
-    statusLabel: principalFullyRecovered
-      ? 'Principal recovered'
-      : growthSar > 0.5
-        ? 'Growing'
-        : growthSar < -0.5
-          ? 'Shrinking'
-          : 'Flat',
+    isGrowing: !roiSuppressed && (principalFullyRecovered || growthSar >= 0),
+    statusLabel: roiSuppressed
+      ? 'Add purchase cost'
+      : principalFullyRecovered
+        ? 'Principal recovered'
+        : growthSar > 0.5
+          ? 'Growing'
+          : growthSar < -0.5
+            ? 'Shrinking'
+            : 'Flat',
     ageLabel: formatInvestmentAgeLabel(m.investmentAgeDays ?? null),
     firstCapitalDepositYmd: m.firstCapitalDepositYmd ?? null,
     principalFullyRecovered,
     capitalSource,
-    netInvestedDefinition: describeInvestmentNetInvested(capitalSource),
+    netInvestedDefinition: roiSuppressed
+      ? 'Manual prices without purchase cost or buy history — ROI is hidden so it cannot invent a return from deposits alone. Live quote portfolios are unchanged.'
+      : describeInvestmentNetInvested(capitalSource),
+    roiSuppressed,
   };
 }
 
@@ -918,12 +965,17 @@ function sanitizeAndValidatePlatformMetrics(
   metrics: PlatformCardMetrics,
   platformCurrency: TradeCurrency | undefined,
   sarPerUsd: number,
-  opts?: { unrealizedPnLBasis?: 'net_capital' | 'holdings_cost'; preserveHybridNetCapital?: boolean },
+  opts?: {
+    unrealizedPnLBasis?: 'net_capital' | 'holdings_cost';
+    preserveHybridNetCapital?: boolean;
+    preserveManualMarksNetCapital?: boolean;
+  },
 ): PlatformCardMetrics {
   const rate = sanitizeFinite(sarPerUsd) > 0 ? sarPerUsd : 1;
   const basisMode = opts?.unrealizedPnLBasis ?? metrics.unrealizedPnLBasis ?? 'net_capital';
   const basisSAR = sanitizeFinite(metrics.holdingsCostBasisSAR ?? 0);
   const preserveHybrid = opts?.preserveHybridNetCapital === true;
+  const preserveManualMarks = opts?.preserveManualMarksNetCapital === true || metrics.capitalSource === 'manual_marks';
 
   const safe: PlatformCardMetrics = {
     totalValue: sanitizeFinite(metrics.totalValue),
@@ -951,6 +1003,7 @@ function sanitizeAndValidatePlatformMetrics(
     principalFullyRecovered: metrics.principalFullyRecovered === true,
     depositsRecordedSAR: Math.max(0, sanitizeFinite(metrics.depositsRecordedSAR ?? 0)),
     capitalSource: metrics.capitalSource,
+    roiSuppressed: metrics.roiSuppressed === true,
   };
 
   // Canonical derivations (single source of truth).
@@ -962,13 +1015,20 @@ function sanitizeAndValidatePlatformMetrics(
    * Incomplete books (no deposit amounts): floor at cost + idle cash — same as headline.
    * Hybrid multi-portfolio aggregates may already include sibling cost floors above ledger net —
    * preserve that when `preserveHybridNetCapital` is set.
+   * Manual-price sleeves keep their cost floor / neutralized net (never reset to deposit-only).
    */
-  if (preserveHybrid && hasDeposits) {
+  if (preserveManualMarks) {
+    safe.netCapitalSAR = Math.max(ledgerNet, economicDeployed, safe.netCapitalSAR);
+    if (safe.roiSuppressed) {
+      safe.netCapitalSAR = Math.max(safe.netCapitalSAR, safe.totalValueInSAR);
+    }
+  } else if (preserveHybrid && hasDeposits) {
     safe.netCapitalSAR = Math.max(ledgerNet, safe.netCapitalSAR);
   } else {
     safe.netCapitalSAR = hasDeposits ? ledgerNet : Math.max(ledgerNet, economicDeployed);
   }
   safe.principalFullyRecovered =
+    !safe.roiSuppressed &&
     hasDeposits &&
     safe.netCapitalSAR <= HEADLINE_NEAR_ZERO_NET_INVESTED_SAR &&
     safe.totalValueInSAR > HEADLINE_NEAR_ZERO_NET_INVESTED_SAR;
@@ -977,7 +1037,7 @@ function sanitizeAndValidatePlatformMetrics(
     safe.roi = basisSAR > 1e-9 ? (safe.totalGainLossSAR / basisSAR) * 100 : 0;
   } else {
     safe.totalGainLossSAR = safe.totalValueInSAR - safe.netCapitalSAR;
-    if (safe.principalFullyRecovered) {
+    if (safe.roiSuppressed || safe.principalFullyRecovered) {
       safe.roi = 0;
     } else {
       safe.roi =
