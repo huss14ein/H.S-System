@@ -65,7 +65,15 @@ import { computeDeductibleLiabilities } from './zakatLiabilityMath';
 import { buildFinancialIntegrityReport } from './dataQuality/financialIntegrity';
 import { detectStaleMarketData } from './dataQuality/marketDataStale';
 import { buildEnhancementSignals } from './financialEnhancementSignals';
-import { runCrossEngineAnalysis } from './engineIntegration';
+import { buildWealthChangeWaterfallSteps } from './wealthChangeWaterfallModel';
+import { buildPersonalInvestmentTreemapRows, computeWealthSummaryReportModel } from './wealthSummaryReportModel';
+import { subscriptionSpendMonthlySar } from './transactionIntelligence';
+import { aggregateCreditCardStatementActivity } from './creditCardLedger';
+import { buildHouseholdPlanFromFinancialData } from './householdEngineFromData';
+import { projectForecastSeries } from './forecastProjection';
+import { buildTransferClearanceReport } from './transferClearance';
+import { reconcileDashboardVsSummaryKpis } from './kpiReconciliation';
+import { computeFinancialEnginesIntegration } from './financialEnginesIntegrationCompute';
 import {
   periodReportWindowMs,
   resolvePeriodReportWindow,
@@ -115,6 +123,7 @@ export type PeriodFinancialReportModel = {
     reservedLiquiditySar: number;
     priorDeltaSar: number | null;
     snapshotTrend: { at: string; netWorth: number }[];
+    waterfall: { name: string; deltaSar: number }[];
   };
   cashflow: {
     months: {
@@ -132,6 +141,8 @@ export type PeriodFinancialReportModel = {
       attributedSar: number | null;
       detail: string | null;
     };
+    subscriptionsMonthlySar: number | null;
+    subscriptionsCount: number;
   };
   budgets: {
     periodPresetUsed: AnalyticsPeriodPreset;
@@ -183,6 +194,13 @@ export type PeriodFinancialReportModel = {
     feesSar: number;
     vatSar: number;
     dividendsSar: number;
+    topHoldings: {
+      symbol: string;
+      name: string;
+      valueSar: number;
+      gainLossSar: number;
+      gainLossPct: number;
+    }[];
   };
   sukukCommodities: {
     sukukExposureSar: number;
@@ -200,6 +218,15 @@ export type PeriodFinancialReportModel = {
     stress: { score: number; label: string; paymentToIncomeRatio: number } | null;
     payoffOrderIds: string[];
     liabilities: { id: string; name: string; balanceSar: number; type: string }[];
+    creditCards: {
+      accountId: string;
+      name: string;
+      purchaseFlow: number;
+      refundFlow: number;
+      paymentPrincipalIn: number;
+      interestAndFees: number;
+    }[];
+    installmentNotes: string[];
   };
   safety: {
     emergencyFund: {
@@ -230,6 +257,11 @@ export type PeriodFinancialReportModel = {
     conflicts: string[];
     planRowCount: number;
     crossEngineActions: string[];
+    householdPlannedNet: number | null;
+    householdActualNet: number | null;
+    forecastFinalNw: number | null;
+    forecastHorizonYears: number | null;
+    forecastSeries: { label: string; netWorth: number }[];
   };
   zakatInsurance: {
     zakatableCashSar: number;
@@ -687,12 +719,6 @@ export function buildPeriodFinancialReportModel(
     null,
   );
 
-  const crossActions = safe(() => {
-    // Cross-engine needs a full UnifiedFinancialContext; omit when unavailable.
-    void runCrossEngineAnalysis;
-    return [] as string[];
-  }, [] as string[]);
-
   const zakCash = safe(
     () => summarizeZakatableCashForZakat(personalAccts, personalTx, sarPerUsd),
     { totalSar: 0, grossTotalSar: 0, lines: [] },
@@ -735,6 +761,168 @@ export function buildPeriodFinancialReportModel(
   );
 
   const enhancement = safe(() => buildEnhancementSignals(data, sarPerUsd), null);
+
+  const waterfall = safe(
+    () =>
+      buildWealthChangeWaterfallSteps({
+        netWorthSar: endNw,
+        monthlyPnLSar: metrics.kpiSnapshot?.monthlyPnL ?? cfTotals.net / Math.max(1, cashflowMonths.length),
+        buckets: {
+          cash: Number(metrics.headline?.buckets?.cash ?? metrics.liquidCashSar),
+          investments: Number(metrics.headline?.buckets?.investments ?? metrics.investmentsTotalSar),
+          liabilities: Number(metrics.headline?.buckets?.liabilities ?? totalLiabilitiesSar),
+        },
+      }).map((s) => ({ name: s.name, deltaSar: s.deltaSar })),
+    [] as { name: string; deltaSar: number }[],
+  );
+
+  const topHoldings = safe(() => {
+    const rows = buildPersonalInvestmentTreemapRows(data, sarPerUsd, simulatedPrices);
+    return [...rows]
+      .sort((a, b) => Math.abs(Number(b.gainLoss) || 0) - Math.abs(Number(a.gainLoss) || 0))
+      .slice(0, 15)
+      .map((h) => ({
+        symbol: String(h.symbol ?? ''),
+        name: String(h.name ?? h.symbol ?? ''),
+        valueSar: Number(h.currentValueSar ?? h.currentValue ?? 0),
+        gainLossSar: Number(h.gainLoss ?? 0),
+        gainLossPct: Number(h.gainLossPercent ?? 0),
+      }));
+  }, [] as PeriodFinancialReportModel['investments']['topHoldings']);
+
+  const subs = safe(
+    () => subscriptionSpendMonthlySar(personalTx, personalAccts, sarPerUsd, 3, data),
+    { monthlyEstimate: 0, count: 0 },
+  );
+
+  const creditCards = safe(() => {
+    const startYmd = isoDay(window.start);
+    const endYmd = isoDay(window.end);
+    const creditAccts = personalAccts.filter((a) => String(a.type).toLowerCase() === 'credit');
+    return creditAccts.map((a) => {
+      const act = aggregateCreditCardStatementActivity(personalTx, a.id, startYmd, endYmd);
+      return {
+        accountId: a.id,
+        name: a.name || a.id,
+        purchaseFlow: Number(act.purchaseFlow) || 0,
+        refundFlow: Number(act.refundFlow) || 0,
+        paymentPrincipalIn: Number(act.paymentPrincipalIn) || 0,
+        interestAndFees: Number(act.interestAndFees) || 0,
+      };
+    });
+  }, [] as PeriodFinancialReportModel['debt']['creditCards']);
+
+  const installmentNotes = safe(() => {
+    const notes: string[] = [];
+    const subsLedger = (data as { subscriptions?: { name?: string; amount?: number; status?: string; cadence?: string }[] })
+      .subscriptions;
+    if (Array.isArray(subsLedger) && subsLedger.length) {
+      const active = subsLedger.filter((s) => String(s.status ?? 'active').toLowerCase() !== 'cancelled');
+      notes.push(`${active.length} subscription ledger record(s) on file.`);
+    }
+    const inst = (data as { installments?: unknown[] }).installments;
+    if (Array.isArray(inst) && inst.length) {
+      notes.push(`${inst.length} installment plan(s) tracked in workspace.`);
+    }
+    if (!notes.length && (subs.count ?? 0) > 0) {
+      notes.push(
+        `Heuristic subscription spend ~${Math.round(subs.monthlyEstimate).toLocaleString()} SAR/mo (${subs.count} keyword matches).`,
+      );
+    }
+    return notes;
+  }, [] as string[]);
+
+  const householdPlan = safe(
+    () => buildHouseholdPlanFromFinancialData(data, { uiExchangeRate: exchangeRate, year: ref.getFullYear() }),
+    null,
+  );
+  const householdPlannedNet =
+    householdPlan && Number.isFinite(householdPlan.plannedVsActual?.plannedNet)
+      ? Number(householdPlan.plannedVsActual.plannedNet)
+      : null;
+  const householdActualNet =
+    householdPlan && Number.isFinite(householdPlan.plannedVsActual?.actualNet)
+      ? Number(householdPlan.plannedVsActual.actualNet)
+      : null;
+
+  const forecast = safe(() => {
+    const monthlySavings = cfTotals.net / Math.max(1, cashflowMonths.length);
+    return projectForecastSeries({
+      initialNetWorth: endNw,
+      initialInvestmentValue: metrics.investmentsTotalSar,
+      monthlySavings,
+      horizonYears: 5,
+      investmentGrowthAnnualPct: 7,
+      savingsGrowthAnnualPct: 0,
+    });
+  }, null);
+  const forecastSeries = safe(() => {
+    if (!forecast?.rows?.length) return [] as { label: string; netWorth: number }[];
+    // Sample yearly points for the print chart (months 12, 24, … + final).
+    const rows = forecast.rows;
+    const picks: { label: string; netWorth: number }[] = [];
+    for (let i = 11; i < rows.length; i += 12) {
+      const r = rows[i]!;
+      picks.push({ label: r.name, netWorth: r['Net Worth'] });
+    }
+    const last = rows[rows.length - 1]!;
+    if (!picks.length || picks[picks.length - 1]!.label !== last.name) {
+      picks.push({ label: last.name, netWorth: last['Net Worth'] });
+    }
+    return picks;
+  }, [] as { label: string; netWorth: number }[]);
+
+  const transferClearance = safe(() => buildTransferClearanceReport(personalTx), null);
+  const wealthSummaryFull = safe(
+    () => computeWealthSummaryReportModel(data, exchangeRate, getAvailableCashForAccount, simulatedPrices),
+    null,
+  );
+  const kpiRecon = safe(() => {
+    if (!metrics.kpiSnapshot || !wealthSummaryFull) return null;
+    return reconcileDashboardVsSummaryKpis({
+      dashboard: {
+        netWorth: metrics.netWorth,
+        monthlyPnL: metrics.kpiSnapshot.monthlyPnL,
+        budgetVariance: metrics.kpiSnapshot.budgetVariance,
+        roi: metrics.kpiSnapshot.roi,
+        emergencyFundMonths: ef.monthsCovered,
+      },
+      summaryMetrics: wealthSummaryFull.financialMetricsWithEf,
+      summaryMonthlyExtras: wealthSummaryFull.monthlyReportFinancialKpis,
+    });
+  }, null);
+
+  const engines = safe(() => computeFinancialEnginesIntegration(data, false), null);
+  const crossActions = safe(() => {
+    const queue = engines?.actionQueue;
+    if (Array.isArray(queue) && queue.length) {
+      return queue.map((a) => `${a.action}${a.details ? ` — ${a.details}` : ''}`).filter(Boolean);
+    }
+    const alerts = engines?.analysis?.alerts;
+    if (Array.isArray(alerts)) {
+      return alerts.map((a) => String(a.suggestedAction ?? a.message ?? a)).filter(Boolean);
+    }
+    return [] as string[];
+  }, [] as string[]);
+
+  const reconNotes: string[] = [];
+  if (kpiRecon) {
+    reconNotes.push(
+      kpiRecon.ok
+        ? 'Dashboard ↔ Summary KPI reconcile: OK'
+        : `Dashboard ↔ Summary KPI mismatches: ${kpiRecon.mismatchCount}`,
+    );
+    for (const row of kpiRecon.rows.filter((r) => !r.withinThreshold).slice(0, 8)) {
+      reconNotes.push(
+        `${row.label}: dashboard ${row.dashboardValue.toFixed(2)} vs summary ${row.summaryValue.toFixed(2)}`,
+      );
+    }
+  }
+  if (transferClearance) {
+    const unpaired = (transferClearance as { unpaired?: unknown[] }).unpaired?.length ?? 0;
+    const imbalanced = (transferClearance as { imbalanced?: unknown[] }).imbalanced?.length ?? 0;
+    reconNotes.push(`Transfer clearance: ${unpaired} unpaired, ${imbalanced} imbalanced group(s).`);
+  }
 
   const recommendations: PeriodFinancialReportRecommendation[] = [];
   if (enhancement) {
@@ -840,6 +1028,7 @@ export function buildPeriodFinancialReportModel(
       reservedLiquiditySar: metrics.reservedLiquiditySar,
       priorDeltaSar: priorCmp?.change ?? null,
       snapshotTrend,
+      waterfall,
     },
     cashflow: {
       months: cashflowMonths,
@@ -850,6 +1039,8 @@ export function buildPeriodFinancialReportModel(
         attributedSar: salary?.investedFromSalarySarMonth ?? null,
         detail: salary ? 'Salary → invest KPIs (canonical monthly attribution).' : null,
       },
+      subscriptionsMonthlySar: subs.monthlyEstimate ?? null,
+      subscriptionsCount: subs.count ?? 0,
     },
     budgets: {
       periodPresetUsed: budgetPreset,
@@ -920,6 +1111,7 @@ export function buildPeriodFinancialReportModel(
       feesSar,
       vatSar,
       dividendsSar,
+      topHoldings,
     },
     sukukCommodities: {
       sukukExposureSar: sukukSar,
@@ -931,6 +1123,8 @@ export function buildPeriodFinancialReportModel(
       stress,
       payoffOrderIds,
       liabilities: liabilityRows,
+      creditCards,
+      installmentNotes,
     },
     safety: {
       emergencyFund: {
@@ -959,6 +1153,11 @@ export function buildPeriodFinancialReportModel(
         return 0;
       })(),
       crossEngineActions: crossActions,
+      householdPlannedNet,
+      householdActualNet,
+      forecastFinalNw: forecast?.finalNetWorth ?? null,
+      forecastHorizonYears: forecast ? 5 : null,
+      forecastSeries,
     },
     zakatInsurance: {
       zakatableCashSar: Number((zakCash as { totalSar?: number }).totalSar) || 0,
@@ -966,7 +1165,12 @@ export function buildPeriodFinancialReportModel(
       zakatableSukukSar: Number((zakSuk as { totalSar?: number }).totalSar) || 0,
       zakatableCommoditiesSar: Number((zakCom as { totalSar?: number }).totalSar) || 0,
       deductibleLiabilitiesSar: Number(deductible.total) || 0,
-      insuranceNotes: ['Insurance coverage details depend on configured policies (see Insurance engines).'],
+      insuranceNotes: [
+        'No structured insurance policies on FinancialData — configure coverage in Engines & Tools for gap/renewal checks.',
+        ...((engines as { analysis?: { alerts?: { message?: string }[] } } | null)?.analysis?.alerts ?? [])
+          .filter((a) => /insur/i.test(String(a.message ?? '')))
+          .map((a) => String(a.message)),
+      ],
       rewardsSar: metrics.rewardsSar,
     },
     dataQuality: {
@@ -975,7 +1179,7 @@ export function buildPeriodFinancialReportModel(
       snapshotWarning: startSnapshotFallback
         ? 'No net-worth snapshot on/near period start — start NW may be unavailable or approximate.'
         : null,
-      reconNotes: [],
+      reconNotes,
     },
     recommendations: recommendations.slice(0, 40),
   };

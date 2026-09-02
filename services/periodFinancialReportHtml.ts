@@ -55,6 +55,32 @@ function svgBars(
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true"><line x1="0" y1="${mid}" x2="${width}" y2="${mid}" stroke="#e2e8f0"/>${bars}</svg>`;
 }
 
+/** Absolute-value bars (for NW trend / forecast where negatives are rare). */
+function svgAbsBars(
+  values: number[],
+  labels: string[],
+  width = 640,
+  height = 160,
+  color = '#0369a1',
+): string {
+  if (!values.length) return '<p class="muted">No chart data.</p>';
+  const max = Math.max(...values.map((v) => Math.abs(v)), 1);
+  const gap = 4;
+  const barW = Math.max(4, (width - gap * (values.length + 1)) / values.length);
+  const base = height - 18;
+  const bars = values
+    .map((v, i) => {
+      const h = (Math.abs(v) / max) * (height * 0.75);
+      const x = gap + i * (barW + gap);
+      const y = base - h;
+      const fill = v >= 0 ? color : '#ef4444';
+      const label = labels[i] ? esc(labels[i]!.slice(0, 10)) : '';
+      return `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(1, h)}" fill="${fill}"/><text x="${x + barW / 2}" y="${height - 4}" text-anchor="middle" font-size="8" fill="#64748b">${label}</text>`;
+    })
+    .join('');
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">${bars}</svg>`;
+}
+
 function svgPie(
   slices: { label: string; valueSar: number }[],
   size = 180,
@@ -94,7 +120,21 @@ function section(id: string, title: string, body: string): string {
 }
 
 export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportModel): string {
-  const { cover, wealth, cashflow, budgets, transactions, investments, sukukCommodities, debt, safety, goalsPlan, zakatInsurance, dataQuality, recommendations } = model;
+  const {
+    cover,
+    wealth,
+    cashflow,
+    budgets,
+    transactions,
+    investments,
+    sukukCommodities,
+    debt,
+    safety,
+    goalsPlan,
+    zakatInsurance,
+    dataQuality,
+    recommendations,
+  } = model;
 
   const nwBars = svgBars(
     [wealth.startNwSar ?? 0, wealth.endNwSar],
@@ -103,6 +143,26 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
     120,
     '#0369a1',
   );
+  const waterfallBars =
+    wealth.waterfall.length > 0
+      ? svgBars(
+          wealth.waterfall.map((s) => s.deltaSar),
+          wealth.waterfall.map((s) => s.name),
+          640,
+          140,
+          '#8b5cf6',
+        )
+      : '<p class="muted">No waterfall data.</p>';
+  const trendBars =
+    wealth.snapshotTrend.length > 1
+      ? svgAbsBars(
+          wealth.snapshotTrend.map((s) => s.netWorth),
+          wealth.snapshotTrend.map((s) => s.at.slice(0, 10)),
+          640,
+          140,
+          '#0ea5e9',
+        )
+      : '<p class="muted">Fewer than two net-worth snapshots in range.</p>';
   const netBars = svgBars(
     cashflow.months.map((m) => m.net),
     cashflow.months.map((m) => m.label),
@@ -131,6 +191,16 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
     160,
     '#0ea5e9',
   );
+  const holdingsBars =
+    investments.topHoldings.length > 0
+      ? svgBars(
+          investments.topHoldings.slice(0, 12).map((h) => h.gainLossSar),
+          investments.topHoldings.slice(0, 12).map((h) => h.symbol || h.name),
+          640,
+          140,
+          '#10b981',
+        )
+      : '<p class="muted">No holdings G/L rows.</p>';
   const debtBars = debt.liabilities.length
     ? svgBars(
         debt.liabilities.map((l) => l.balanceSar),
@@ -149,12 +219,39 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
         '#10b981',
       )
     : '<p class="muted">No goals.</p>';
+  const forecastBars =
+    goalsPlan.forecastSeries.length > 0
+      ? svgAbsBars(
+          goalsPlan.forecastSeries.map((p) => p.netWorth),
+          goalsPlan.forecastSeries.map((p) => p.label),
+          640,
+          140,
+          '#0369a1',
+        )
+      : '<p class="muted">No forecast series.</p>';
 
   const txAppendix = transactions.rows
     .map(
       (r) =>
         `<tr><td>${esc(r.date)}</td><td>${esc(r.description)}</td><td>${esc(r.category)}</td><td>${esc(r.accountName)}</td><td class="num">${fmt(r.amount, 2)}</td></tr>`,
     )
+    .join('');
+
+  const toc = [
+    ['report-wealth', '1. Wealth & growth'],
+    ['report-cashflow', '2. Cashflow & monthly savings'],
+    ['report-budgets', '3. Budgets & spending'],
+    ['report-transactions', '4. Transactions'],
+    ['report-investments', '5. Investments'],
+    ['report-sukuk', '6. Sukuk & commodities'],
+    ['report-debt', '7. Debt & credit'],
+    ['report-safety', '8. Safety, liquidity, risk'],
+    ['report-goals', '9. Goals, plan, forecast'],
+    ['report-zakat', '10. Zakat, insurance & rewards'],
+    ['report-quality', '11. Data quality'],
+    ['report-recommendations', '12. Recommendations'],
+  ]
+    .map(([id, label]) => `<li><a href="#${esc(id)}">${esc(label)}</a></li>`)
     .join('');
 
   return `<!DOCTYPE html>
@@ -190,10 +287,13 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
   .rec.high { border-color: #ef4444; }
   .rec.medium { border-color: #f59e0b; }
   .warn { color: #b45309; }
+  .toc { columns: 2; column-gap: 24px; font-size: 0.85rem; margin: 0 0 8px; padding-left: 18px; }
+  .toc a { color: #0369a1; text-decoration: none; }
   @media print {
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .section { page-break-inside: avoid; }
     #report-transactions { page-break-before: always; }
+    .toc a { color: inherit; }
   }
 </style>
 </head>
@@ -210,6 +310,8 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
       <div><strong>Data quality</strong><span>${esc(cover.integritySeverity)}${cover.staleQuotes ? ' · stale quotes' : ''}</span></div>
     </div>
     <p class="muted">${esc(cover.taxDisclaimer)}</p>
+    <h3>Contents</h3>
+    <ol class="toc">${toc}</ol>
   </header>
 
   ${section(
@@ -224,7 +326,9 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
       <p>Tradable broker cash: ${money(wealth.tradableBrokerCashSar)}</p>
       <p>Available liquidity: ${money(wealth.availableLiquiditySar)} · EF floor: ${money(wealth.emergencyFundFloorSar)} · Goal reserves: ${money(wealth.reservedLiquiditySar)}</p>
       <p>Buckets — cash ${money(wealth.buckets.cash)}, investments ${money(wealth.buckets.investments)}, physical ${money(wealth.buckets.physical)}, liabilities ${money(wealth.buckets.liabilities)}</p>
-    </div></div>`,
+    </div></div>
+    <h3>Wealth change waterfall</h3>${waterfallBars}
+    <h3>Snapshot trend</h3>${trendBars}`,
   )}
 
   ${section(
@@ -245,7 +349,8 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
          ? `<p>Prior period — in ${money(cashflow.priorTotals.inflow)}, out ${money(cashflow.priorTotals.outflow)}, net ${money(cashflow.priorTotals.net)}</p>`
          : ''
      }
-     <p>Salary → invest: ${pct(cashflow.salaryInvest.ratePct)} · attributed ${money(cashflow.salaryInvest.attributedSar)}</p>`,
+     <p>Salary → invest: ${pct(cashflow.salaryInvest.ratePct)} · attributed ${money(cashflow.salaryInvest.attributedSar)}</p>
+     <p>Subscriptions (heuristic): ${money(cashflow.subscriptionsMonthlySar)}/mo · ${fmt(cashflow.subscriptionsCount)} matches</p>`,
   )}
 
   ${section(
@@ -264,6 +369,23 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
   )}
 
   ${section(
+    'report-transactions',
+    '4. Transactions',
+    `<p>${fmt(transactions.count)} transactions · category summary below; full appendix follows.</p>
+     <table><thead><tr><th>Category</th><th class="num">Amount</th><th class="num">Count</th></tr></thead>
+     <tbody>${transactions.byCategory
+       .slice(0, 40)
+       .map(
+         (c) =>
+           `<tr><td>${esc(c.category)}</td><td class="num">${fmt(c.amountSar)}</td><td class="num">${fmt(c.count)}</td></tr>`,
+       )
+       .join('')}</tbody></table>
+     <h3>Transaction appendix</h3>
+     <table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr></thead>
+     <tbody>${txAppendix || '<tr><td colspan="5" class="muted">No transactions in period.</td></tr>'}</tbody></table>`,
+  )}
+
+  ${section(
     'report-investments',
     '5. Investments',
     `<p>Exposure ${money(investments.totalExposureSar)} · ROI ${esc(investments.roiPctDisplay)} <span class="muted">(${esc(investments.roiAsOfLabel)})</span></p>
@@ -277,7 +399,19 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
          (p) =>
            `<tr><td>${esc(p.portfolioName)}</td><td class="num">${fmt(p.valueSar)}</td><td class="num">${fmt(p.totalSar)}</td><td class="num">${fmt(p.ledgerSar)}</td><td class="num">${fmt(p.marketSar)}</td></tr>`,
        )
-       .join('')}</tbody></table>`,
+       .join('')}</tbody></table>
+     <h3>Top holdings by |G/L|</h3>${holdingsBars}
+     <table><thead><tr><th>Symbol</th><th>Name</th><th class="num">Value</th><th class="num">G/L</th><th class="num">G/L %</th></tr></thead>
+     <tbody>${
+       investments.topHoldings.length
+         ? investments.topHoldings
+             .map(
+               (h) =>
+                 `<tr><td>${esc(h.symbol)}</td><td>${esc(h.name)}</td><td class="num">${fmt(h.valueSar)}</td><td class="num">${fmt(h.gainLossSar)}</td><td class="num">${pct(h.gainLossPct)}</td></tr>`,
+             )
+             .join('')
+         : '<tr><td colspan="5" class="muted">No holdings.</td></tr>'
+     }</tbody></table>`,
   )}
 
   ${section(
@@ -301,7 +435,24 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
     'report-debt',
     '7. Debt & credit',
     `<p>Total liabilities ${money(debt.totalLiabilitiesSar)}${debt.stress ? ` · Stress ${esc(debt.stress.label)} (${fmt(debt.stress.score)})` : ''}</p>
-     ${debtBars}`,
+     ${debtBars}
+     <h3>Credit card activity (period)</h3>
+     <table><thead><tr><th>Card</th><th class="num">Purchases</th><th class="num">Refunds</th><th class="num">Payments in</th><th class="num">Interest/fees</th></tr></thead>
+     <tbody>${
+       debt.creditCards.length
+         ? debt.creditCards
+             .map(
+               (c) =>
+                 `<tr><td>${esc(c.name)}</td><td class="num">${fmt(c.purchaseFlow)}</td><td class="num">${fmt(c.refundFlow)}</td><td class="num">${fmt(c.paymentPrincipalIn)}</td><td class="num">${fmt(c.interestAndFees)}</td></tr>`,
+             )
+             .join('')
+         : '<tr><td colspan="5" class="muted">No credit accounts.</td></tr>'
+     }</tbody></table>
+     ${
+       debt.installmentNotes.length
+         ? `<h3>Installments & subscriptions</h3><ul>${debt.installmentNotes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`
+         : ''
+     }`,
   )}
 
   ${section(
@@ -326,7 +477,20 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
            `<tr><td>${esc(g.name)}</td><td class="num">${pct(g.progressPct)}</td><td class="num">${fmt(g.fundedSar)}</td><td class="num">${fmt(g.targetSar)}</td><td class="num">${fmt(g.gapSar)}</td><td>${esc(g.timeline)}</td></tr>`,
        )
        .join('')}</tbody></table>
-     <p>Plan rows: ${fmt(goalsPlan.planRowCount)} · Conflicts: ${goalsPlan.conflicts.length ? esc(goalsPlan.conflicts.join('; ')) : 'none'}</p>`,
+     <p>Plan rows: ${fmt(goalsPlan.planRowCount)} · Conflicts: ${goalsPlan.conflicts.length ? esc(goalsPlan.conflicts.join('; ')) : 'none'}</p>
+     <h3>Household planned vs actual</h3>
+     <p>Planned net ${money(goalsPlan.householdPlannedNet)} · Actual net ${money(goalsPlan.householdActualNet)}</p>
+     <h3>Forecast (${fmt(goalsPlan.forecastHorizonYears)} yr)</h3>
+     <p>Projected ending NW ${money(goalsPlan.forecastFinalNw)}</p>
+     ${forecastBars}
+     ${
+       goalsPlan.crossEngineActions.length
+         ? `<h3>Cross-engine actions</h3><ul>${goalsPlan.crossEngineActions
+             .slice(0, 20)
+             .map((a) => `<li>${esc(a)}</li>`)
+             .join('')}</ul>`
+         : '<p class="muted">No cross-engine actions queued.</p>'
+     }`,
   )}
 
   ${section(
@@ -342,7 +506,13 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
     '11. Data quality',
     `${dataQuality.snapshotWarning ? `<p class="warn">${esc(dataQuality.snapshotWarning)}</p>` : ''}
      <p>Stale quotes: ${dataQuality.staleQuotes ? 'yes' : 'no'}</p>
-     <ul>${dataQuality.integrityIssues.length ? dataQuality.integrityIssues.map((i) => `<li>${esc(i)}</li>`).join('') : '<li class="muted">No integrity issues reported.</li>'}</ul>`,
+     <ul>${dataQuality.integrityIssues.length ? dataQuality.integrityIssues.map((i) => `<li>${esc(i)}</li>`).join('') : '<li class="muted">No integrity issues reported.</li>'}</ul>
+     <h3>Reconciliation</h3>
+     <ul>${
+       dataQuality.reconNotes.length
+         ? dataQuality.reconNotes.map((n) => `<li>${esc(n)}</li>`).join('')
+         : '<li class="muted">No reconciliation notes.</li>'
+     }</ul>`,
   )}
 
   ${section(
@@ -356,23 +526,6 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
           )
           .join('')
       : '<p class="muted">No recommendations for this period.</p>',
-  )}
-
-  ${section(
-    'report-transactions',
-    '4. Transactions',
-    `<p>${fmt(transactions.count)} transactions · category summary below; full appendix follows.</p>
-     <table><thead><tr><th>Category</th><th class="num">Amount</th><th class="num">Count</th></tr></thead>
-     <tbody>${transactions.byCategory
-       .slice(0, 40)
-       .map(
-         (c) =>
-           `<tr><td>${esc(c.category)}</td><td class="num">${fmt(c.amountSar)}</td><td class="num">${fmt(c.count)}</td></tr>`,
-       )
-       .join('')}</tbody></table>
-     <h3>Transaction appendix</h3>
-     <table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th class="num">Amount</th></tr></thead>
-     <tbody>${txAppendix || '<tr><td colspan="5" class="muted">No transactions in period.</td></tr>'}</tbody></table>`,
   )}
 </div>
 </body>

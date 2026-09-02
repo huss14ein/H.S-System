@@ -103,10 +103,19 @@ describe('periodFinancialReportCompletion', () => {
 
     expect(model.cover.periodLabel.length).toBeGreaterThan(0);
     expect(model.wealth.endNwSar).toBeGreaterThan(0);
+    expect(Array.isArray(model.wealth.waterfall)).toBe(true);
+    expect(Array.isArray(model.wealth.snapshotTrend)).toBe(true);
     expect(model.cashflow.months.length).toBeGreaterThan(0);
+    expect(typeof model.cashflow.subscriptionsCount).toBe('number');
     expect(model.transactions.count).toBeGreaterThanOrEqual(0);
     expect(model.investments.totalExposureSar).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(model.investments.topHoldings)).toBe(true);
+    expect(Array.isArray(model.debt.creditCards)).toBe(true);
+    expect(Array.isArray(model.debt.installmentNotes)).toBe(true);
     expect(model.goalsPlan.goals.length).toBe(1);
+    expect(Array.isArray(model.goalsPlan.crossEngineActions)).toBe(true);
+    expect(Array.isArray(model.goalsPlan.forecastSeries)).toBe(true);
+    expect(Array.isArray(model.dataQuality.reconNotes)).toBe(true);
     expect(Array.isArray(model.recommendations)).toBe(true);
 
     const html = generatePeriodFinancialReportHtml(model);
@@ -126,6 +135,19 @@ describe('periodFinancialReportCompletion', () => {
     ]) {
       expect(html).toContain(`id="${id}"`);
     }
+    // Section order: transactions before investments; recommendations last.
+    const txIdx = html.indexOf('id="report-transactions"');
+    const invIdx = html.indexOf('id="report-investments"');
+    const recIdx = html.indexOf('id="report-recommendations"');
+    expect(txIdx).toBeGreaterThan(0);
+    expect(txIdx).toBeLessThan(invIdx);
+    expect(invIdx).toBeLessThan(recIdx);
+    expect(html).toContain('Contents');
+    expect(html).toContain('Wealth change waterfall');
+    expect(html).toContain('Top holdings by |G/L|');
+    expect(html).toContain('Credit card activity');
+    expect(html).toContain('Household planned vs actual');
+    expect(html).toContain('Reconciliation');
     expect(html).toContain('<svg');
   });
 
@@ -140,6 +162,12 @@ describe('periodFinancialReportCompletion', () => {
     expect(src).toContain('personalMonthlyInflowOutflowByFinancialMonthSar');
     expect(src).toContain('computeEmergencyFundMetrics');
     expect(src).toContain('buildEnhancementSignals');
+    expect(src).toContain('buildWealthChangeWaterfallSteps');
+    expect(src).toContain('buildPersonalInvestmentTreemapRows');
+    expect(src).toContain('aggregateCreditCardStatementActivity');
+    expect(src).toContain('projectForecastSeries');
+    expect(src).toContain('reconcileDashboardVsSummaryKpis');
+    expect(src).toContain('computeFinancialEnginesIntegration');
   });
 
   it('portfolio window P/L API is exported from portfolioPeriodPnL', () => {
