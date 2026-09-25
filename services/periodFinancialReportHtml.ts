@@ -248,11 +248,25 @@ function renderSectionBody(s: SoftSection<unknown>): string {
       ${chart.length ? `<h3>Purchase flow</h3>${svgBarChart(chart)}` : ''}`;
     }
     case '8-installments': {
+      const plans = ((d.plans as Array<Record<string, unknown>>) ?? [])
+        .map(
+          (p) =>
+            `<tr><td>${esc(p.name)}</td><td>${esc(p.status)}</td><td class="num">${esc(p.count)}</td><td class="num">${money(p.totalSar)}</td><td>${esc(p.category)}</td></tr>`,
+        )
+        .join('');
       const rows = ((d.rows as Array<Record<string, unknown>>) ?? [])
         .map((r) => `<tr><td>${esc(r.name)}</td><td class="num">${money(r.amountSar)}</td><td>${esc(r.note)}</td></tr>`)
         .join('');
-      return `${d.note ? `<p class="muted">${esc(d.note)}</p>` : ''}
-        <p class="muted">Linked installment payments in window: ${esc(d.linkedPaymentsInWindow ?? 0)}</p>
+      return `${d.fetchError ? `<p class="err-msg">${esc(d.fetchError)}</p>` : ''}
+        ${d.note ? `<p class="muted">${esc(d.note)}</p>` : ''}
+        <div class="grid">
+          <div class="card"><div class="k">Due in window</div><div class="v">${money(d.dueInWindowSar)}</div></div>
+          <div class="card"><div class="k">Paid in window</div><div class="v">${money(d.paidInWindowSar)}</div></div>
+          <div class="card"><div class="k">Linked payments</div><div class="v">${esc(d.linkedPaymentsInWindow ?? 0)}</div></div>
+        </div>
+        <h3>Plans</h3>
+        <table><thead><tr><th>Plan</th><th>Status</th><th>Count</th><th>Total</th><th>Category</th></tr></thead><tbody>${plans || '<tr><td colspan="5">No plans loaded</td></tr>'}</tbody></table>
+        <h3>Window schedule / notes</h3>
         <table><thead><tr><th>Name</th><th>Amount</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="3">None</td></tr>'}</tbody></table>`;
     }
     case '9-household': {
@@ -376,6 +390,43 @@ function renderSectionBody(s: SoftSection<unknown>): string {
         <div class="card"><div class="k">Invested from salary</div><div class="v">${money(d.investedFromSalarySarMonth)}</div></div>
         <div class="card"><div class="k">Funded not deployed</div><div class="v">${money(d.fundedNotDeployedSar)}</div></div>
       </div>`;
+    case 'appendix-inventory': {
+      const platforms = ((d.platforms as Array<Record<string, unknown>>) ?? [])
+        .map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${money(p.cashTotalSar ?? p.cashSar)}</td></tr>`)
+        .join('');
+      const holdings = ((d.holdings as Array<Record<string, unknown>>) ?? [])
+        .slice(0, 25)
+        .map(
+          (h) =>
+            `<tr><td>${esc(h.symbol)}</td><td>${esc(h.name)}</td><td class="num">${money(h.currentValueSar ?? h.currentValue)}</td><td class="num">${money(h.gainLoss)}</td></tr>`,
+        )
+        .join('');
+      const assets = ((d.assets as Array<Record<string, unknown>>) ?? [])
+        .map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.type)}</td><td class="num">${money(a.value)}</td></tr>`)
+        .join('');
+      const liabs = ((d.liabilities as Array<Record<string, unknown>>) ?? [])
+        .map(
+          (l) =>
+            `<tr><td>${esc(l.name)}</td><td>${esc(l.type)}</td><td class="num">${money(l.amount)}</td><td>${esc(l.status)}</td></tr>`,
+        )
+        .join('');
+      const inv = d.investmentSummary ?? {};
+      return `<p class="muted">As-of-today inventory appendix.</p>
+        <div class="grid">
+          <div class="card"><div class="k">Platforms</div><div class="v">${esc(inv.platformCount ?? '—')}</div></div>
+          <div class="card"><div class="k">Portfolios</div><div class="v">${esc(inv.portfolioCount ?? '—')}</div></div>
+          <div class="card"><div class="k">Holdings</div><div class="v">${esc(inv.holdingCount ?? '—')}</div></div>
+          <div class="card"><div class="k">Holdings value</div><div class="v">${money(inv.holdingsValueSar)}</div></div>
+        </div>
+        <h3>Platforms</h3>
+        <table><thead><tr><th>Name</th><th>Cash</th></tr></thead><tbody>${platforms || '<tr><td colspan="2">None</td></tr>'}</tbody></table>
+        <h3>Holdings</h3>
+        <table><thead><tr><th>Symbol</th><th>Name</th><th>Value</th><th>G/L</th></tr></thead><tbody>${holdings || '<tr><td colspan="4">None</td></tr>'}</tbody></table>
+        <h3>Assets</h3>
+        <table><thead><tr><th>Name</th><th>Type</th><th>Value</th></tr></thead><tbody>${assets || '<tr><td colspan="3">None</td></tr>'}</tbody></table>
+        <h3>Liabilities</h3>
+        <table><thead><tr><th>Name</th><th>Type</th><th>Amount</th><th>Status</th></tr></thead><tbody>${liabs || '<tr><td colspan="4">None</td></tr>'}</tbody></table>`;
+    }
     default:
       return `<pre class="json">${esc(JSON.stringify(d, null, 2).slice(0, 4000))}</pre>`;
   }

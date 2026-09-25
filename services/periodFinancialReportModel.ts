@@ -9,7 +9,7 @@ import {
   financialMonthLookbackRange,
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
-import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalAssets, getPersonalInvestments, getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
 import { toSAR } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fxMapForKpiCompute, getSarPerUsdForCalendarDay } from './fxDailySeries';
@@ -47,6 +47,8 @@ import { reconcileDashboardVsSummaryKpis } from './kpiReconciliation';
 import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
 import { decodeInstallmentPaymentNote } from './installments/installmentLinkNote';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import type { PeriodReportInstallmentSnapshot } from './periodReportInstallments';
+import { filterInstallmentsInWindow } from './periodReportInstallments';
 
 export type PeriodReportSectionStatus = 'ok' | 'empty' | 'error';
 
@@ -227,6 +229,10 @@ export function buildPeriodFinancialReportModel(args: {
   customStartIso?: string;
   customEndIso?: string;
   now?: Date;
+  /** Optional Supabase installment plans/rows (Installments page data). */
+  installmentSnapshot?: PeriodReportInstallmentSnapshot | null;
+  /** When set, only these section ids are kept (plus liveActions always on the model). */
+  includeSectionIds?: string[] | null;
 }): PeriodFinancialReportModel {
   const monthStartDay = resolveMonthStartDayFromData(args.data);
   const twin = resolvePeriodReportTwinWindows({
@@ -433,13 +439,24 @@ export function buildPeriodFinancialReportModel(args: {
     }),
 
     soft('8-installments', '8. Installments', () => {
-      const rows: Array<{ name: string; note: string; amountSar: number }> = [];
+      const snap = args.installmentSnapshot;
+      const windowRows = snap
+        ? filterInstallmentsInWindow(snap.installments, current.startIso, current.endIso)
+        : [];
+      const scheduleRows = windowRows.slice(0, 40).map((r) => ({
+        name: `${r.planName} #${r.sequence}`,
+        note: `${r.status}${r.paidAt ? ` · paid ${r.paidAt.slice(0, 10)}` : ` · due ${r.dueDate}`}`,
+        amountSar: r.currency === 'USD' ? r.amount * sarPerUsd : r.amount,
+        dueDate: r.dueDate,
+        status: r.status,
+      }));
+      const liabilityRows: Array<{ name: string; note: string; amountSar: number }> = [];
       for (const l of (args.data.liabilities ?? []) as Liability[]) {
         const typ = String(l.type || '').toLowerCase();
         if (/install|instal|bnpl|murabaha|loan/.test(typ) || /install|instal|bnpl/i.test(l.name || '')) {
-          rows.push({
+          liabilityRows.push({
             name: l.name,
-            note: `Outstanding ${Number(l.amount || 0).toFixed(2)} (${l.status ?? 'Active'})`,
+            note: `Liability outstanding ${Number(l.amount || 0).toFixed(2)} (${l.status ?? 'Active'})`,
             amountSar: Math.abs(Number(l.amount) || 0),
           });
         }
@@ -452,7 +469,7 @@ export function buildPeriodFinancialReportModel(args: {
         sarPerUsd,
       );
       for (const b of bnpl.slice(0, 8)) {
-        rows.push({
+        liabilityRows.push({
           name: b.description.slice(0, 64),
           note: `BNPL mention ${b.date}`,
           amountSar: b.amount,
@@ -463,15 +480,32 @@ export function buildPeriodFinancialReportModel(args: {
         if (!dateInRange(t.date, current.start, current.end)) continue;
         if (decodeInstallmentPaymentNote(t.note)) linkedPayments += 1;
       }
+      const rows = [...scheduleRows, ...liabilityRows].slice(0, 40);
+      const dueSar = scheduleRows
+        .filter((r) => String(r.status).toUpperCase() !== 'PAID')
+        .reduce((s, r) => s + r.amountSar, 0);
+      const paidSar = scheduleRows
+        .filter((r) => String(r.status).toUpperCase() === 'PAID')
+        .reduce((s, r) => s + r.amountSar, 0);
       return {
-        rows: rows.slice(0, 20),
+        plans: (snap?.plans ?? []).slice(0, 20).map((p) => ({
+          name: p.description,
+          status: p.status,
+          count: p.installmentCount,
+          totalSar: p.currency === 'USD' ? p.totalAmount * sarPerUsd : p.totalAmount,
+          category: p.budgetCategory,
+        })),
+        rows,
+        dueInWindowSar: dueSar,
+        paidInWindowSar: paidSar,
         linkedPaymentsInWindow: linkedPayments,
+        fetchError: snap?.error ?? null,
         note:
           rows.length === 0
-            ? 'No installment-like liabilities or BNPL mentions in this window. Installment plans on the Installments page are separate from FinancialData — open that page for schedule detail.'
-            : linkedPayments > 0
-              ? `${linkedPayments} ledger payment(s) linked to installment IDs in this window.`
-              : null,
+            ? snap?.error
+              ? `Installment fetch: ${snap.error}`
+              : 'No installment schedule rows or BNPL/liability matches in this window.'
+            : null,
       };
     }),
 
@@ -750,15 +784,51 @@ export function buildPeriodFinancialReportModel(args: {
         fundedNotDeployedSar: kpis?.fundedNotDeployedSar ?? null,
       };
     }),
+
+    soft('appendix-inventory', 'Appendix — balance sheet inventory', () => {
+      const wealth = computeWealthSummaryReportModel(
+        args.data,
+        args.uiExchangeRate,
+        cash,
+        args.simulatedPrices,
+      );
+      const payload = wealth.wealthSummaryReportPayload;
+      const platforms = (payload?.platforms ?? []).slice(0, 20);
+      const holdings = (payload?.holdings ?? []).slice(0, 40);
+      const assets = getPersonalAssets(args.data)
+        .slice(0, 25)
+        .map((a) => ({ name: a.name, type: a.type, value: Number(a.value) || 0 }));
+      const liabilities = getPersonalLiabilities(args.data)
+        .slice(0, 25)
+        .map((l) => ({
+          name: l.name,
+          type: l.type,
+          amount: Number(l.amount) || 0,
+          status: l.status ?? 'Active',
+        }));
+      return {
+        asOfToday: true,
+        investmentSummary: payload?.investmentSummary ?? null,
+        platforms,
+        holdings,
+        assets,
+        liabilities,
+      };
+    }),
   ];
 
+  const include = args.includeSectionIds?.length
+    ? new Set(args.includeSectionIds)
+    : null;
+  const filtered = include ? sections.filter((s) => include.has(s.id)) : sections;
+
   const byId: Record<string, SoftSection<unknown>> = {};
-  for (const s of sections) byId[s.id] = s;
+  for (const s of filtered) byId[s.id] = s;
 
   return {
     generatedAtIso: new Date().toISOString(),
     twin,
-    sections,
+    sections: filtered,
     byId,
     liveActions: [
       { id: 'open-summary', label: 'Open Summary', page: 'Summary' },
@@ -777,5 +847,26 @@ export function buildPeriodFinancialReportModel(args: {
     ],
   };
 }
+
+export const PERIOD_REPORT_SECTION_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: '1-executive', label: '1. Executive snapshot' },
+  { id: '2-cashflow', label: '2. Period cashflow' },
+  { id: '3-budget', label: '3. Budget vs actual' },
+  { id: '4-portfolio-pnl', label: '4. Portfolio P/L' },
+  { id: '5-holdings-gl', label: '5. Top holdings G/L' },
+  { id: '6-subscriptions', label: '6. Subscriptions' },
+  { id: '7-credit-cards', label: '7. Credit cards' },
+  { id: '8-installments', label: '8. Installments' },
+  { id: '9-household', label: '9. Household' },
+  { id: '10-forecast', label: '10. Forecast' },
+  { id: '11-transfers-recon', label: '11. Transfers & recon' },
+  { id: '12-investment-roi', label: '12. Investment ROI' },
+  { id: 'orphan-budget-insights', label: 'Budget drift & insights' },
+  { id: 'orphan-live-nw', label: 'Live net worth' },
+  { id: 'orphan-ef', label: 'Emergency fund' },
+  { id: 'orphan-pti-payoff', label: 'Payoff & PTI' },
+  { id: 'orphan-salary', label: 'Salary detail' },
+  { id: 'appendix-inventory', label: 'Appendix inventory' },
+];
 
 export type { PeriodReportPreset };

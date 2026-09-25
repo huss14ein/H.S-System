@@ -174,18 +174,69 @@ export function resolvePeriodReportTwinWindows(args: {
 export function validateCustomPeriodRange(
   startIso: string,
   endIso: string,
+  opts?: { now?: Date; allowFutureDays?: number },
 ): { ok: true } | { ok: false; message: string } {
   const s = String(startIso || '').trim();
   const e = String(endIso || '').trim();
+  if (!s || !e) {
+    return { ok: false, message: 'Enter both start and end dates for a custom range.' };
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(e)) {
     return { ok: false, message: 'Enter valid start and end dates (YYYY-MM-DD).' };
+  }
+  const startMs = new Date(`${s}T12:00:00`).getTime();
+  const endMs = new Date(`${e}T12:00:00`).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    return { ok: false, message: 'Dates could not be parsed. Use YYYY-MM-DD.' };
   }
   if (s > e) {
     return { ok: false, message: 'Start date must be on or before end date.' };
   }
-  const span = (new Date(`${e}T12:00:00`).getTime() - new Date(`${s}T12:00:00`).getTime()) / 86400000;
-  if (span > 366 * 5) {
+  const spanDays = (endMs - startMs) / 86400000;
+  if (spanDays > 366 * 5) {
     return { ok: false, message: 'Custom range cannot exceed 5 years.' };
+  }
+  if (spanDays < 0) {
+    return { ok: false, message: 'Start date must be on or before end date.' };
+  }
+  const now = opts?.now ?? new Date();
+  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const allowFuture = opts?.allowFutureDays ?? 1;
+  const maxEnd = new Date(`${todayIso}T12:00:00`);
+  maxEnd.setDate(maxEnd.getDate() + allowFuture);
+  const maxEndIso = `${maxEnd.getFullYear()}-${String(maxEnd.getMonth() + 1).padStart(2, '0')}-${String(maxEnd.getDate()).padStart(2, '0')}`;
+  if (e > maxEndIso) {
+    return { ok: false, message: 'End date cannot be far in the future.' };
+  }
+  const minYear = now.getFullYear() - 20;
+  if (Number(s.slice(0, 4)) < minYear) {
+    return { ok: false, message: 'Start date cannot be more than 20 years ago.' };
+  }
+  return { ok: true };
+}
+
+export type PeriodReportRequestValidation =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/** Full request validation before building / printing the period report. */
+export function validatePeriodReportRequest(args: {
+  hasData: boolean;
+  preset: PeriodReportPreset;
+  customStartIso?: string;
+  customEndIso?: string;
+  now?: Date;
+}): PeriodReportRequestValidation {
+  if (!args.hasData) {
+    return { ok: false, message: 'Load your accounts and transactions before generating a period report.' };
+  }
+  if (!['FY', 'CY', 'YTD', '12M', 'custom'].includes(args.preset)) {
+    return { ok: false, message: 'Choose a valid period preset.' };
+  }
+  if (args.preset === 'custom') {
+    return validateCustomPeriodRange(String(args.customStartIso || ''), String(args.customEndIso || ''), {
+      now: args.now,
+    });
   }
   return { ok: true };
 }

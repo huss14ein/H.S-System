@@ -67,12 +67,14 @@ describe('Period Financial Report completion (E2E)', () => {
     expect(read('services/periodReportWindow.ts')).toContain('resolvePeriodReportTwinWindows');
     expect(read('services/periodReportWindow.ts')).toContain('financialMonthKeysCoveringRange');
     expect(read('services/periodReportWindow.ts')).toContain('periodReportToAnalyticsPreset');
-    expect(read('services/periodReportWindow.ts')).toMatch(/'FY' \| 'CY' \| 'YTD' \| '12M' \| 'custom'/);
+    expect(read('services/periodReportWindow.ts')).toContain('validatePeriodReportRequest');
+    expect(read('services/periodReportInstallments.ts')).toContain('fetchPeriodReportInstallmentSnapshot');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('computePortfolioPnLForWindow');
     expect(read('services/periodFinancialReportModel.ts')).toContain('reconcileDashboardVsSummaryKpis');
-    expect(read('services/periodFinancialReportModel.ts')).toContain('effectiveHoldingValueInBookCurrency');
-    expect(read('services/periodFinancialReportModel.ts')).toContain('debtPayoffPlan');
+    expect(read('services/periodFinancialReportModel.ts')).toContain('PERIOD_REPORT_SECTION_OPTIONS');
+    expect(read('services/periodFinancialReportModel.ts')).toContain('appendix-inventory');
     expect(read('services/periodFinancialReportHtml.ts')).toContain('svgWaterfall');
+    expect(read('services/periodFinancialReportHtml.ts')).toContain('appendix-inventory');
     expect(read('services/periodFinancialReportHtml.ts')).not.toMatch(/jspdf|pdfkit|pdf-lib/i);
   });
 
@@ -176,6 +178,7 @@ describe('Period Financial Report completion (E2E)', () => {
         'orphan-ef',
         'orphan-pti-payoff',
         'orphan-salary',
+        'appendix-inventory',
       ]),
     );
     expect(model.byId['1-executive']?.data).toMatchObject({
@@ -200,9 +203,9 @@ describe('Period Financial Report completion (E2E)', () => {
     expect(pos('orphan-salary')).toBeGreaterThan(pos('12-investment-roi'));
   });
 
-  it('modal: light preview twin + liveActions + stay open if print blocked', () => {
+  it('modal: light preview twin + liveActions + validations + section picker + JSON + stay open if blocked', () => {
     const modal = read('components/reports/PeriodFinancialReportModal.tsx');
-    expect(modal).toContain('validateCustomPeriodRange');
+    expect(modal).toContain('validatePeriodReportRequest');
     expect(modal).toContain('resolvePeriodReportTwinWindows');
     expect(modal).toMatch(
       /const previewLabel = useMemo\(\(\) => \{\s*try \{\s*const twin = resolvePeriodReportTwinWindows/,
@@ -211,6 +214,12 @@ describe('Period Financial Report completion (E2E)', () => {
     expect(modal).toContain('This dialog stays open');
     expect(modal).toContain('Cross-engine actions');
     expect(modal).toContain('onNavigate(a.page, a.action)');
+    expect(modal).toContain('PERIOD_REPORT_SECTION_OPTIONS');
+    expect(modal).toContain('Export JSON');
+    expect(modal).toContain('fetchPeriodReportInstallmentSnapshot');
+    expect(modal).toContain('yieldToMain');
+    expect(modal).toContain('busyRef');
+    expect(modal).toContain('Select at least one report section');
     expect(modal).not.toMatch(/jspdf|pdfkit|pdf-lib/i);
     const layout = read('components/Layout.tsx');
     expect(layout).toContain('PeriodFinancialReportModal');

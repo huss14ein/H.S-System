@@ -16,8 +16,8 @@ Use after `npm run test` (lint + typecheck + unit tests) and optionally `npm run
 7. **Budgets** — page renders; derived / emergency copy if applicable.
 8. **Summary** — net worth card; exports dropdown does not throw (optional).
 9. **Investments** — hub tabs switch without blank screen.
-10. **Settings** — Reports & export: **Period Financial Report** (open modal → Print / Save as PDF for FY/YTD/custom); wealth summary + monthly JSON if data exists.
-10b. **Period Financial Report** — also from Dashboard button, Summary actions, Wealth Analytics export, and Command palette; custom dates validate; if the print popup is blocked the modal stays open.
+10. **Settings** — Reports & export: **Period Financial Report** (open modal → choose sections → Print / Save as PDF or Export JSON for FY/YTD/custom); wealth summary + monthly JSON if data exists.
+10b. **Period Financial Report** — also from Dashboard button, Summary actions, Wealth Analytics export, and Command palette; custom dates + section selection validate; if the print popup is blocked the modal stays open; installment schedules load in the background when the modal opens.
 
 ## Cross-browser / device (spot check)
 
