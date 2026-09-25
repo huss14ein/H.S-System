@@ -101,9 +101,9 @@ const DICT: Dict = {
   monthMarketShort: { en: 'Month · market est.', ar: 'شهر · سوق' },
   openInvestmentsHub: { en: 'Open Investments hub', ar: 'فتح مركز الاستثمار' },
   weekPnLTrendTitle: { en: 'Week P/L trend', ar: 'اتجاه الربح/الخسارة الأسبوعي' },
-  weekPnLTrendSubtitle: { en: 'Cumulative last 7 days — mark-to-market from period start', ar: 'تراكمي آخر 7 أيام — تقييم السوق من بداية الفترة' },
+  weekPnLTrendSubtitle: { en: 'Cumulative last 7 days — portfolio mark-to-market from week open', ar: 'تراكمي آخر 7 أيام — تقييم السوق من بداية الأسبوع' },
   monthPnLTrendTitle: { en: 'Month P/L trend', ar: 'اتجاه الربح/الخسارة الشهري' },
-  monthPnLTrendSubtitle: { en: 'Cumulative financial month — same mark-to-market rules as Investments', ar: 'تراكمي للشهر المالي — نفس قواعد تقييم السوق في الاستثمار' },
+  monthPnLTrendSubtitle: { en: 'Cumulative financial month — mark-to-market from month open', ar: 'تراكمي للشهر المالي — تقييم السوق من بداية الشهر' },
   executiveKpiGridTitle: { en: 'Executive KPIs', ar: 'مؤشرات تنفيذية' },
   executiveKpiGridSubtitle: {
     en: 'Net worth, monthly & weekly P/L, ROI, budget, emergency fund — same canonical engine as Dashboard.',

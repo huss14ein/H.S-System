@@ -20,6 +20,7 @@ describe('Investments hub completion (E2E)', () => {
   it('Investments UI shows week/month P/L with ready gate', () => {
     const page = read('pages/Investments.tsx');
     expect(page).toContain('periodPnLReady');
+    expect(page).toContain('!portfolioOpen');
     expect(page).toContain('periodPnLSparklinesReady');
     expect(page).toContain('usePortfolioPeriodPnLSnapshot');
     expect(page).toContain('aria-busy={!periodPnLReady}');
@@ -76,7 +77,7 @@ describe('Investments hub completion (E2E)', () => {
   });
 
   it('period P/L uses cost at start and live at end for quote-backed holdings', () => {
-    expect(read('services/portfolioPeriodPnL.ts')).toContain('useLiveMark: false');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('periodStartPrices');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('holdingUsesLiveQuote');
   });
 

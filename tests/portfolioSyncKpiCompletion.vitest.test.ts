@@ -57,7 +57,7 @@ describe('portfolio sync + KPI completion', () => {
     expect(syms).toEqual(['REITF.SR']);
   });
 
-  it('week P/L uses cost at period start and live at end (imported holdings, no ledger txs)', () => {
+  it('week P/L uses period-open mark and live at end (imported holdings, no ledger txs)', () => {
     const portfolios: InvestmentPortfolio[] = [
       {
         id: 'p1',
@@ -103,6 +103,7 @@ describe('portfolio sync + KPI completion', () => {
       data,
       sarPerUsd: 3.75,
       simulatedPrices: { '2222.SR': { price: 32, change: 0.5, changePercent: 1 } },
+      periodStartPrices: { '2222.SR': { price: 30 } },
     });
 
     expect(period.totalSar).toBeCloseTo(100, 0);

@@ -45,9 +45,9 @@ export const SECTION_HINT_KEYS: Record<string, string> = {
   'key.recovery.positionRecycling':
     'Pick recycling OR buy ladder (not both). Recycling: core shares stay, sell/rebuy tranches on rebounds with sale proceeds only.',
   'key.investments.platformPeriodPnL':
-    'Portfolio mark-to-market P/L from period start (7 days or current financial month). Includes ledger realized P/L and price-change estimate. Not the same as Dashboard cashflow monthly P/L.',
+    'Portfolio mark-to-market P/L from period open (last 7 days or current financial month): end value − open mark − deposits/withdrawals. Not lifetime unrealized vs cost, and not Dashboard cashflow monthly P/L.',
   'key.investments.portfolioPeriodPnL':
-    'Sum of personal portfolio week/month P/L — same engine as Wealth Analytics executive KPIs. FIFO lots used when available.',
+    'Sum of personal portfolio week/month P/L — same engine as Wealth Analytics executive KPIs. Uses historical closes at period open when available.',
   'key.metricPassport.explain':
     'Metric passport: formula, inputs, freshness, and caveats for this KPI. Educational context only—not financial advice.',
 };
