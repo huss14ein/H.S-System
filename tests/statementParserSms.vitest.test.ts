@@ -279,6 +279,42 @@ SAR مبلغ:50.00
     expect(res.transactions.every((t) => Math.abs(t.amount) < 1000)).toBe(true);
   });
 
+  it('uses اجمالي المبلغ المستحق (no hamza) for Cursor SAR purchase with fees — not pre-fee مبلغ', async () => {
+    const sms = `شراء انترنت
+بطاقة:5280 ;فيزا-ابل باي
+مبلغ: 89.71 SAR
+لدى:CURSOR, A
+رسوم وضريبة: 2.06 SAR
+اجمالي المبلغ المستحق: 91.77 SAR
+دولة:USA
+رصيد:46947.60 SAR
+في:2/9/26 20:46`;
+    const res = await parseSMSTransactions(sms, 'acc-cursor');
+    expect(res.transactions.length).toBe(1);
+    expect(res.transactions[0].amount).toBeCloseTo(-91.77, 2);
+    expect(res.transactions[0].type).toBe('expense');
+    expect(res.transactions[0].description.toUpperCase()).toContain('CURSOR');
+    expect(res.transactions.every((t) => Math.abs(Math.abs(t.amount) - 89.71) > 0.01)).toBe(true);
+    expect(res.transactions.every((t) => Math.abs(Math.abs(t.amount) - 2.06) > 0.01)).toBe(true);
+  });
+
+  it('uses اجمالي المبلغ المستحق (no hamza) for Netlify USD paste with fees', async () => {
+    const sms = `شراء انترنت 
+بطاقة: 5280 ;فيزا
+مبلغ: 9 USD (33.81 ريال) 
+لدى: NETLIFY
+رسوم وضريبة: 0.78 SAR
+سعر الصرف~ 3.756667
+اجمالي المبلغ المستحق: 34.59 SAR
+دولة: USA
+رصيد: 45993.85 SAR
+؜ 12/9/26 4:27`;
+    const res = await parseSMSTransactions(sms, 'acc-netlify-alef');
+    expect(res.transactions.length).toBe(1);
+    expect(res.transactions[0].amount).toBeCloseTo(-34.59, 2);
+    expect(res.transactions[0].description.toUpperCase()).toContain('NETLIFY');
+  });
+
   it('parses a multi-SMS paste of POS, internet, refund, and transfer as one row each', async () => {
     const sms = `شراء عبر نقاط البيع
 بطاقة:7365 ;فيزا
