@@ -463,6 +463,15 @@ const SMS_CREDIT_RE =
 const SMS_SECONDARY_AMOUNT_RE =
   /رسوم|ضريبة|سعر\s*الصرف|exchange\s*rate|\bfee\b|\bvat\b|\btax\b|fx\s*rate/i;
 
+/**
+ * Bank SMS "total amount due" label — accept both إجمالـي (with hamza) and اجمالـي (plain alef).
+ * Many Al Rajhi / Visa templates omit the hamza; without this, مبلغ (pre-fee) is booked instead.
+ */
+const SMS_TOTAL_DUE_LABEL = String.raw`(?:إ|ا)جمالي\s*المبلغ\s*المستحق`;
+const SMS_TOTAL_DUE_LABEL_RE = new RegExp(SMS_TOTAL_DUE_LABEL, 'i');
+/** Any إجمالي / اجمالي word (exclude matching مبلغ lines that are actually totals). */
+const SMS_IJMALI_WORD_RE = /(?:إ|ا)جمالي/i;
+
 /** Credit keywords win (e.g. استرداد) so refunds never book as expenses. */
 function classifySmsIsDebit(text: string): boolean {
   const sample = String(text || '');
@@ -486,7 +495,7 @@ function isSmsBalanceOnlyLine(line: string): boolean {
 function isSmsSecondaryAmountLine(line: string): boolean {
   const t = String(line || '').trim();
   if (!t) return false;
-  if (SMS_SECONDARY_AMOUNT_RE.test(t) && !/إجمالي\s*المبلغ\s*المستحق/i.test(t)) return true;
+  if (SMS_SECONDARY_AMOUNT_RE.test(t) && !SMS_TOTAL_DUE_LABEL_RE.test(t)) return true;
   if (isSmsBalanceOnlyLine(t)) return true;
   if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(t) && !/(amount|مبلغ|شراء|purchase|حوالة)/i.test(t)) return true;
   return false;
@@ -494,7 +503,7 @@ function isSmsSecondaryAmountLine(line: string): boolean {
 
 /**
  * Build one signed SMS transaction from a text block (one SMS ≈ one ledger row).
- * Amount rules: إجمالي المبلغ المستحق > بـSR/بـSAR principal (+ same-block رسوم) > labeled مبلغ (prefer SAR parenthetical).
+ * Amount rules: إجمالي/اجمالي المبلغ المستحق > بـSR/بـSAR principal (+ same-block رسوم) > labeled مبلغ (prefer SAR parenthetical).
  */
 function buildSmsTransactionFromBlock(
   block: string,
@@ -630,11 +639,11 @@ function pruneSmsSatelliteTransactions(transactions: Transaction[], sourceText: 
         drop.add(tx.id);
         continue;
       }
-      // USD operation amount when إجمالي / larger SAR sibling exists same day
+      // USD operation amount when إجمالي/اجمالي / larger SAR sibling exists same day
       if (
         mag < primaryMag - 0.001 &&
         /USD|\$/i.test(line) &&
-        /إجمالي\s*المبلغ\s*المستحق/i.test(text)
+        SMS_TOTAL_DUE_LABEL_RE.test(text)
       ) {
         drop.add(tx.id);
       }
@@ -690,17 +699,17 @@ function extractSmsAmount(block: string): number {
   const compact = String(block || '').replace(/\s+/g, ' ').trim();
   const amountToken = SMS_AMOUNT_TOKEN;
 
-  // 1) Total amount due (SAR) — authoritative for FX / fee SMS.
+  // 1) Total amount due (SAR) — authoritative for FX / fee SMS (إجمالي or اجمالي).
   const totalDue =
     compact.match(
       new RegExp(
-        String.raw`إجمالي\s*المبلغ\s*المستحق\s*[:\-]?\s*(?:SAR|SR|ر\.?س|ريال)?\s*${amountToken}`,
+        String.raw`${SMS_TOTAL_DUE_LABEL}\s*[:\-]?\s*(?:SAR|SR|ر\.?س|ريال)?\s*${amountToken}`,
         'i',
       ),
     ) ??
     compact.match(
       new RegExp(
-        String.raw`إجمالي\s*المبلغ\s*المستحق\s*[:\-]?\s*${amountToken}\s*(?:SAR|SR|ر\.?س|ريال)?`,
+        String.raw`${SMS_TOTAL_DUE_LABEL}\s*[:\-]?\s*${amountToken}\s*(?:SAR|SR|ر\.?س|ريال)?`,
         'i',
       ),
     );
@@ -776,15 +785,31 @@ function extractSmsAmount(block: string): number {
 
   // 3) Labeled مبلغ — prefer SAR / parenthetical ريال over foreign ops amount.
   const withAmountLabel = lines.find(
-    (line) => /(amount|مبلغ)/i.test(line) && !isSmsSecondaryAmountLine(line) && !/إجمالي/i.test(line),
+    (line) => /(amount|مبلغ)/i.test(line) && !isSmsSecondaryAmountLine(line) && !SMS_IJMALI_WORD_RE.test(line),
   );
+  const sameBlockFeeSar = (() => {
+    const feeMatch = compact.match(
+      new RegExp(
+        String.raw`(?:رسوم(?:\s*و?\s*ضريبة)?|fee(?:\s*&?\s*tax)?|vat|ضريبة)[^\d]{0,32}(?:SAR|SR|ر\.?س)?\s*[:\-]?\s*${amountToken}`,
+        'i',
+      ),
+    );
+    const fee = feeMatch ? parseNum(feeMatch[1]) : 0;
+    return Number.isFinite(fee) && fee > 0 ? fee : 0;
+  })();
+  const withOptionalFee = (base: number): number => {
+    if (!(base > 0)) return base;
+    // When total-due line is missing, SAR principal + same-SMS رسوم is the cash out.
+    if (sameBlockFeeSar > 0 && sameBlockFeeSar < base) return base + sameBlockFeeSar;
+    return base;
+  };
   if (withAmountLabel) {
     const parenSar = withAmountLabel.match(
       new RegExp(String.raw`\(${amountToken}\s*(?:ريال|SAR|SR)\)`, 'i'),
     );
     if (parenSar) {
       const n = parseNum(parenSar[1]);
-      if (Number.isFinite(n) && n > 0) return n;
+      if (Number.isFinite(n) && n > 0) return withOptionalFee(n);
     }
     const hasForeign = /\b(?:USD|EUR|\$)\b/i.test(withAmountLabel);
     const hasSar = /\b(?:SAR|SR|ريال|ر\.?س)\b/i.test(withAmountLabel);
@@ -793,21 +818,32 @@ function extractSmsAmount(block: string): number {
         withAmountLabel.match(moneyAfterCurrency) ??
         withAmountLabel.match(moneyBeforeCurrency) ??
         withAmountLabel.match(kdPattern);
-      if (labelMatch) return parseNum(labelMatch[1]);
+      if (labelMatch) {
+        const n = parseNum(labelMatch[1]);
+        if (Number.isFinite(n) && n > 0) return withOptionalFee(n);
+      }
     } else {
-      // USD-only مبلغ without إجمالي (already checked) — still take it as last resort below.
+      // USD-only مبلغ without إجمالي/اجمالي (already checked) — still take it as last resort below.
       const foreignAmt = withAmountLabel.match(moneyAfterCurrency) ?? withAmountLabel.match(moneyBeforeCurrency);
       if (foreignAmt) {
         const n = parseNum(foreignAmt[1]);
         if (Number.isFinite(n) && n > 0) {
-          // Prefer later SAR total lines if any slipped past إجمالي wording variants.
+          // Prefer later SAR total lines if any slipped past إجمالي/اجمالي wording variants.
           for (const line of lines) {
-            if (/مستحق|total\s*due|total\s*amount/i.test(line)) {
+            if (/مستحق|total\s*due|total\s*amount/i.test(line) || SMS_IJMALI_WORD_RE.test(line)) {
               const sar =
                 line.match(new RegExp(String.raw`${amountToken}\s*(?:SAR|SR|ريال)`, 'i')) ??
                 line.match(new RegExp(String.raw`(?:SAR|SR|ريال)\s*${amountToken}`, 'i'));
               if (sar) return parseNum(sar[1]);
             }
+          }
+          // Parenthetical SAR ops amount + fee when total-due omitted.
+          const paren = withAmountLabel.match(
+            new RegExp(String.raw`\(${amountToken}\s*(?:ريال|SAR|SR)\)`, 'i'),
+          );
+          if (paren) {
+            const sarN = parseNum(paren[1]);
+            if (Number.isFinite(sarN) && sarN > 0) return withOptionalFee(sarN);
           }
           return n;
         }
@@ -940,7 +976,7 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
       idx++;
       continue;
     }
-    if (/إجمالي\s*المبلغ\s*المستحق/i.test(segment)) {
+    if (SMS_TOTAL_DUE_LABEL_RE.test(segment)) {
       const total = extractSmsAmount(segment);
       if (Number.isFinite(total) && total > 0 && Math.abs(total - amount) > 0.02) {
         idx++;
@@ -999,7 +1035,7 @@ function extractSmsDescription(segment: string, idx: number): string {
       (line) =>
         /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
         !/^\s*رصيد\s*:/i.test(line) &&
-        !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|إجمالي|دولة|بطاقة|^\d{1,2}:\d{2}/i.test(line) &&
+        !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|(?:إ|ا)جمالي|دولة|بطاقة|^\d{1,2}:\d{2}/i.test(line) &&
         !/^\s*شراء\b/u.test(line) &&
         !/^\s*حوالة/u.test(line) &&
         !/^\s*استرداد/u.test(line),
