@@ -88,10 +88,16 @@ export function isEquityDailyPnLSessionOpen(symbol: string | null | undefined, n
 
 /** Daily P/L change per share — provider day move vs prior close (broker-style). */
 export function quoteChangeForDailyPnL(
-  _symbol: string | null | undefined,
+  symbol: string | null | undefined,
   change: number | undefined,
-  _now: Date = new Date(),
+  now: Date = new Date(),
+  opts?: { zeroOutsideSession?: boolean },
 ): number {
   if (!Number.isFinite(change)) return 0;
+  if (opts?.zeroOutsideSession) {
+    const exchange = resolveEquityListingExchange(symbol);
+    // Only gate known US/Tadawul listings — commodities / unknown symbols keep provider change.
+    if (exchange != null && !isEquityListingRegularSessionOpen(exchange, now)) return 0;
+  }
   return change as number;
 }

@@ -742,6 +742,11 @@ export interface Settings {
         driftSarFp: number;
         at: string;
       };
+      /** Investments Today / Daily P/L preferences (default off preserves open-MTM behavior). */
+      dailyPnLPrefs?: {
+        includeRealizedFromSells?: boolean;
+        zeroOutsideSession?: boolean;
+      };
     };
     /** Salary-to-investment target configuration (preferences only; historical results stay derived). */
     salaryInvestmentTargets?: SalaryInvestmentTargets;

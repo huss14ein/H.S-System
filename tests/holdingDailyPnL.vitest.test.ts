@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import type { Holding, InvestmentPortfolio, InvestmentTransaction } from '../types';
 import {
   buildSameDayTradeIndex,
+  computeCommodityDailyPnLSar,
   computeHoldingDailyPnLInBookCurrency,
   lookupSameDayTradeSummary,
   resolveHoldingDailyPnLQuantityBreakdown,
@@ -47,6 +48,7 @@ describe('holding daily P/L quantity breakdown', () => {
       boughtQty: 0,
       soldQty: 40,
       buys: [],
+      sells: [],
     });
     expect(b.startOfDayQty).toBe(100);
     expect(b.overnightStillHeld).toBe(60);
@@ -58,6 +60,7 @@ describe('holding daily P/L quantity breakdown', () => {
       boughtQty: 50,
       soldQty: 40,
       buys: [{ quantity: 50, price: 100, dateYmd: '2026-09-25' }],
+      sells: [],
     });
     expect(b.startOfDayQty).toBe(10);
     expect(b.overnightStillHeld).toBe(0);
@@ -65,7 +68,7 @@ describe('holding daily P/L quantity breakdown', () => {
   });
 
   it('no same-day trades → full current qty is overnight', () => {
-    const b = resolveHoldingDailyPnLQuantityBreakdown(15, { boughtQty: 0, soldQty: 0, buys: [] });
+    const b = resolveHoldingDailyPnLQuantityBreakdown(15, { boughtQty: 0, soldQty: 0, buys: [], sells: [] });
     expect(b.overnightStillHeld).toBe(15);
     expect(b.boughtStillHeld).toBe(0);
   });
@@ -75,6 +78,7 @@ describe('holding daily P/L quantity breakdown', () => {
       boughtQty: 10,
       soldQty: 100,
       buys: [{ quantity: 10, price: 50, dateYmd: '2026-09-25' }],
+      sells: [],
     });
     expect(b.overnightStillHeld).toBe(0);
     expect(b.boughtStillHeld).toBe(5);
@@ -376,6 +380,42 @@ describe('platform Daily P/L uses trade-aware holding helper', () => {
     });
     expect(metrics.dailyPnLSAR).toBeCloseTo(12 * 3.75, 4);
   });
+
+  it('full exit (qty 0) still contributes realized Today when the pref is on', () => {
+    const asOf = new Date('2026-09-25T15:00:00+03:00');
+    const portfolio: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'Main',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [holding({ symbol: 'AAPL', quantity: 0, currentValue: 0 })],
+    };
+    const live = { AAPL: { price: 110, change: 2 } };
+    const transactions = [tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 4, price: 109, accountId: 'acc1' })];
+    const base = {
+      portfolios: [portfolio],
+      transactions,
+      accounts: [{ id: 'acc1', name: 'Broker', type: 'Investment' as const, balance: 0 }],
+      allInvestments: [portfolio],
+      sarPerUsd: 3.75,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices: live,
+      dailyPnLPrices: live,
+      platformCurrency: 'USD' as const,
+      asOf,
+    };
+    const off = computePlatformCardMetrics({
+      ...base,
+      dailyPnLPrefs: { includeRealizedFromSells: false },
+    });
+    const on = computePlatformCardMetrics({
+      ...base,
+      dailyPnLPrefs: { includeRealizedFromSells: true },
+    });
+    expect(off.dailyPnL).toBeCloseTo(0, 4);
+    // prior close 108, sell 109 × 4
+    expect(on.dailyPnL).toBeCloseTo(4, 4);
+  });
 });
 
 describe('Tadawul day change scales with price normalization', () => {
@@ -391,11 +431,13 @@ describe('Tadawul day change scales with price normalization', () => {
 });
 
 describe('Today column wiring E2E', () => {
-  it('Investments holdings table uses computeHoldingDailyPnLInBookCurrency', () => {
+  it('Investments holdings table uses breakdown helper + tooltip', () => {
     const page = read('pages/Investments.tsx');
-    expect(page).toContain('computeHoldingDailyPnLInBookCurrency');
+    expect(page).toContain('computeHoldingDailyPnLBreakdown');
+    expect(page).toContain('formatHoldingDailyPnLBreakdownTitle');
     expect(page).toContain('buildSameDayTradeIndex');
     expect(page).toContain('sameDayTradeIndex');
+    expect(page).toContain('dailyPnLPrefs');
     expect(page).not.toMatch(/quoteDailyPnLInBookCurrency\(\s*liveQuoteRow\.change/);
   });
 
@@ -403,5 +445,202 @@ describe('Today column wiring E2E', () => {
     const src = read('services/investmentPlatformCardMetrics.ts');
     expect(src).toContain('computeHoldingDailyPnLInBookCurrency');
     expect(src).toContain('buildSameDayTradeIndex');
+    expect(src).toContain('computeCommodityDailyPnLSar');
+  });
+
+  it('Settings exposes Today P/L preference toggles', () => {
+    const page = read('pages/Settings.tsx');
+    expect(page).toContain('includeRealizedFromSells');
+    expect(page).toContain('zeroOutsideSession');
+  });
+
+  it('Overview surfaces Today movers', () => {
+    const page = read('pages/InvestmentOverview.tsx');
+    expect(page).toContain('todayMovers');
+    expect(page).toContain('computeHoldingDailyPnLBreakdown');
+  });
+});
+
+describe('enhancement scenarios', () => {
+  const asOf = new Date('2026-09-25T15:00:00+03:00');
+  const asOfYmd = '2026-09-25';
+
+  it('includeRealizedFromSells adds overnight sell day P/L', () => {
+    const open = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 6 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 4, price: 109 })],
+      asOf,
+      asOfYmd,
+      includeRealizedFromSells: false,
+    });
+    const withRealized = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 6 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 4, price: 109 })],
+      asOf,
+      asOfYmd,
+      includeRealizedFromSells: true,
+    });
+    // open: 6×2=12; realized: 4×(109−108)=4 → 16
+    expect(open).toBeCloseTo(12, 6);
+    expect(withRealized).toBeCloseTo(16, 6);
+  });
+
+  it('stock_dividend same-day adds qty marked from prior close', () => {
+    const idx = buildSameDayTradeIndex([], asOfYmd, {
+      corporateActionEvents: [
+        {
+          id: 'ca1',
+          portfolioId: 'p1',
+          actionType: 'stock_dividend',
+          symbol: 'AAPL',
+          executionDate: asOfYmd,
+          ratioNumerator: 11,
+          ratioDenominator: 10,
+          idempotencyKey: 'ca1',
+          status: 'applied',
+        },
+      ],
+      holdingsForCa: [{ portfolioId: 'p1', symbol: 'AAPL', quantity: 110 }],
+    });
+    const row = lookupSameDayTradeSummary(idx, 'p1', 'AAPL');
+    expect(row.boughtQty).toBeCloseTo(10, 6);
+    expect(row.buys[0]?.source).toBe('ca_stock_dividend');
+  });
+
+  it('stock_dividend slice uses the pre-trade book when there are same-day trades', () => {
+    const ca = {
+      id: 'ca1',
+      portfolioId: 'p1',
+      actionType: 'stock_dividend' as const,
+      symbol: 'AAPL',
+      executionDate: asOfYmd,
+      ratioNumerator: 11,
+      ratioDenominator: 10,
+      idempotencyKey: 'ca1',
+      status: 'applied' as const,
+    };
+    const withBuy = buildSameDayTradeIndex(
+      [tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 20, price: 100 })],
+      asOfYmd,
+      {
+        corporateActionEvents: [ca],
+        holdingsForCa: [{ portfolioId: 'p1', symbol: 'AAPL', quantity: 130 }],
+      },
+    );
+    const buyRow = lookupSameDayTradeSummary(withBuy, 'p1', 'AAPL');
+    expect(buyRow.boughtQty).toBeCloseTo(30, 6);
+    expect(buyRow.buys.find((b) => b.source === 'ca_stock_dividend')?.quantity).toBeCloseTo(10, 6);
+    expect(resolveHoldingDailyPnLQuantityBreakdown(130, buyRow).startOfDayQty).toBeCloseTo(100, 6);
+
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 25 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [
+        tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 20, price: 100 }),
+        tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 105, price: 110 }),
+      ],
+      corporateActionEvents: [ca],
+      asOf,
+      asOfYmd,
+    });
+    // start 100; sell 105 → 5 of the 20 @ 100 sold; 15×(110−100) + 10×(110−108) = 170
+    expect(pnl).toBeCloseTo(170, 4);
+  });
+
+  it('zeroOutsideSession makes equity Today 0 after hours, including buys and realized sells', () => {
+    const closed = new Date('2026-06-06T18:00:00Z');
+    const open = new Date('2026-06-03T15:00:00Z');
+    const prices = { AAPL: { price: 110, change: 2 } };
+
+    expect(
+      computeHoldingDailyPnLInBookCurrency({
+        holding: holding({ symbol: 'AAPL', quantity: 10 }),
+        portfolioId: 'p1',
+        bookCurrency: 'USD',
+        sarPerUsd: 3.75,
+        simulatedPrices: prices,
+        transactions: [tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 10, price: 100, date: '2026-06-06' })],
+        asOf: closed,
+        asOfYmd: '2026-06-06',
+        zeroOutsideSession: true,
+      }),
+    ).toBe(0);
+
+    expect(
+      computeHoldingDailyPnLInBookCurrency({
+        holding: holding({ symbol: 'AAPL', quantity: 6 }),
+        portfolioId: 'p1',
+        bookCurrency: 'USD',
+        sarPerUsd: 3.75,
+        simulatedPrices: prices,
+        transactions: [tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 4, price: 109, date: '2026-06-06' })],
+        asOf: closed,
+        asOfYmd: '2026-06-06',
+        includeRealizedFromSells: true,
+        zeroOutsideSession: true,
+      }),
+    ).toBe(0);
+
+    expect(
+      computeHoldingDailyPnLInBookCurrency({
+        holding: holding({ symbol: 'AAPL', quantity: 10 }),
+        portfolioId: 'p1',
+        bookCurrency: 'USD',
+        sarPerUsd: 3.75,
+        simulatedPrices: prices,
+        transactions: [tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 10, price: 100, date: '2026-06-03' })],
+        asOf: open,
+        asOfYmd: '2026-06-03',
+        zeroOutsideSession: true,
+      }),
+    ).toBeCloseTo(100, 6);
+
+    expect(
+      computeHoldingDailyPnLInBookCurrency({
+        holding: holding({ symbol: 'AAPL', quantity: 6 }),
+        portfolioId: 'p1',
+        bookCurrency: 'USD',
+        sarPerUsd: 3.75,
+        simulatedPrices: prices,
+        transactions: [tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 4, price: 109, date: '2026-06-03' })],
+        asOf: open,
+        asOfYmd: '2026-06-03',
+        includeRealizedFromSells: true,
+        zeroOutsideSession: true,
+      }),
+    ).toBeCloseTo(16, 6);
+  });
+
+  it('computeCommodityDailyPnLSar uses changePercent; non-listed symbols ignore session gate', () => {
+    const openSat = new Date('2026-06-06T18:00:00Z');
+    expect(
+      computeCommodityDailyPnLSar({
+        symbol: 'XAU-LOCAL',
+        quantity: 2,
+        quote: { price: 2000, change: 0, changePercent: 1 },
+        asOf: openSat,
+        zeroOutsideSession: false,
+      }),
+    ).toBeCloseTo(40, 6);
+    expect(
+      computeCommodityDailyPnLSar({
+        symbol: 'XAU-LOCAL',
+        quantity: 2,
+        quote: { price: 2000, change: 5 },
+        asOf: openSat,
+        zeroOutsideSession: true,
+      }),
+    ).toBeCloseTo(10, 6);
   });
 });

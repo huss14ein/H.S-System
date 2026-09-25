@@ -9,11 +9,11 @@ import {
   toSAR,
   tradableCashBucketToSAR,
 } from '../utils/currencyMath';
-import { quoteChangeForDailyPnL, resolveEquityListingExchange } from './marketSessionLocal';
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
-import { computeHoldingDailyPnLInBookCurrency, buildSameDayTradeIndex } from './holdingDailyPnL';
+import { computeHoldingDailyPnLInBookCurrency, buildSameDayTradeIndex, computeCommodityDailyPnLSar, type DailyPnLPrefs } from './holdingDailyPnL';
 import { appCalendarTodayYmd } from './reconciliation/constants';
+import type { CorporateActionEvent } from '../types';
 import {
   inferInvestmentTransactionCurrency,
   portfolioBelongsToAccount,
@@ -111,6 +111,10 @@ export interface ComputePlatformCardMetricsArgs {
    * Spot `sarPerUsd` remains for holdings marks and display conversion.
    */
   datedFxData?: FinancialData | null;
+  /** Today P/L prefs (realized-on-sells / session gate). Defaults preserve open-MTM broker style. */
+  dailyPnLPrefs?: DailyPnLPrefs | null;
+  /** Same-day stock-dividend / DRIP CA slices for Today P/L. */
+  corporateActionEvents?: CorporateActionEvent[] | null;
 }
 
 /**
@@ -157,6 +161,8 @@ function computePlatformCardMetricsFromPortfolioBundle(
     dailyPnLPrices,
     accountAvailableCashByCurrency: availableCashByCurrency,
     datedFxData,
+    dailyPnLPrefs: args.dailyPnLPrefs,
+    corporateActionEvents: args.corporateActionEvents,
   });
 
   let totalValueInSAR = 0;
@@ -489,13 +495,26 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
   let dailySar = 0;
   let dailyUsd = 0;
   const asOfYmd = appCalendarTodayYmd(asOf);
-  const sameDayIndex = buildSameDayTradeIndex(transactions, asOfYmd);
+  const holdingsForCa = portfolios.flatMap((p) =>
+    (p.holdings || []).map((h) => ({
+      portfolioId: p.id,
+      symbol: String(h.symbol ?? ''),
+      quantity: Number(h.quantity) || 0,
+    })),
+  );
+  const sameDayIndex = buildSameDayTradeIndex(transactions, asOfYmd, {
+    corporateActionEvents: args.corporateActionEvents,
+    holdingsForCa,
+  });
+  const includeRealized = args.dailyPnLPrefs?.includeRealizedFromSells === true;
+  const zeroOutsideSession = args.dailyPnLPrefs?.zeroOutsideSession === true;
   portfolios.forEach((p) => {
     const cur = resolveInvestmentPortfolioCurrency(p);
     (p.holdings || []).forEach((h: Holding) => {
       if (!holdingUsesLiveQuote(h)) return;
       const qty = h.quantity ?? 0;
-      if (qty <= 0) return;
+      // Full exits stay on the book at qty 0 so realized day P/L can still be included.
+      if (qty <= 0 && !includeRealized) return;
       const d = computeHoldingDailyPnLInBookCurrency({
         holding: h,
         portfolioId: p.id,
@@ -505,6 +524,8 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
         sameDayIndex,
         asOf,
         asOfYmd,
+        includeRealizedFromSells: includeRealized,
+        zeroOutsideSession,
       });
       if (cur === 'SAR') dailySar += d;
       else dailyUsd += d;
@@ -759,6 +780,8 @@ export function computePortfolioMetricsBundle(args: {
   accountAvailableCashByCurrency: { SAR: number; USD: number };
   /** Same dated FX path as platform cards / headline ROI capital. */
   datedFxData?: FinancialData | null;
+  dailyPnLPrefs?: DailyPnLPrefs | null;
+  corporateActionEvents?: CorporateActionEvent[] | null;
 }): PortfolioMetricsBundle {
   const {
     siblingPortfolios,
@@ -770,6 +793,8 @@ export function computePortfolioMetricsBundle(args: {
     dailyPnLPrices,
     accountAvailableCashByCurrency,
     datedFxData = null,
+    dailyPnLPrefs = null,
+    corporateActionEvents = null,
   } = args;
 
   const metricsByPortfolioId = new Map<string, PlatformCardMetrics>();
@@ -797,6 +822,8 @@ export function computePortfolioMetricsBundle(args: {
         platformCurrency: pc,
         unrealizedPnLBasis: 'net_capital',
         datedFxData,
+        dailyPnLPrefs,
+        corporateActionEvents,
       }),
     );
     return { metricsByPortfolioId, allocatedCashByPortfolioId };
@@ -832,6 +859,8 @@ export function computePortfolioMetricsBundle(args: {
         platformCurrency: pc,
         unrealizedPnLBasis: 'net_capital',
         datedFxData,
+        dailyPnLPrefs,
+        corporateActionEvents,
       }),
     );
   }
@@ -1042,6 +1071,11 @@ export function computePersonalPlatformCardRow(
     simulatedPrices: options.simulatedPrices,
     platformCurrency,
     datedFxData: data,
+    dailyPnLPrefs: {
+      includeRealizedFromSells: data.settings?.uiAcks?.dailyPnLPrefs?.includeRealizedFromSells === true,
+      zeroOutsideSession: data.settings?.uiAcks?.dailyPnLPrefs?.zeroOutsideSession === true,
+    },
+    corporateActionEvents: data.corporateActionEvents ?? null,
   });
 }
 
@@ -1049,6 +1083,7 @@ export function computePersonalCommoditiesContributionSAR(
   data: FinancialData,
   _sarPerUsd: number,
   simulatedPrices: SimulatedPriceMap,
+  opts?: { asOf?: Date; zeroOutsideSession?: boolean },
 ): { valueSAR: number; dailyDeltaSAR: number } {
   const commodities = getPersonalCommodityHoldings(data);
   let valueSAR = 0;
@@ -1063,14 +1098,13 @@ export function computePersonalCommoditiesContributionSAR(
     const rawSar =
       px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
     valueSAR += Number.isFinite(rawSar) ? rawSar : 0;
-    const changePerShare =
-      px && (px.change != null || px.changePercent != null)
-        ? resolveEquityListingExchange(sym) != null
-          ? quoteChangeForDailyPnL(sym, resolveQuoteChangePerShare(px))
-          : resolveQuoteChangePerShare(px)
-        : 0;
-    const chg = changePerShare * (ch.quantity ?? 0);
-    dailyDeltaSAR += Number.isFinite(chg) ? chg : 0;
+    dailyDeltaSAR += computeCommodityDailyPnLSar({
+      symbol: sym,
+      quantity: ch.quantity ?? 0,
+      quote: px,
+      asOf: opts?.asOf,
+      zeroOutsideSession: opts?.zeroOutsideSession,
+    });
   }
   return { valueSAR, dailyDeltaSAR };
 }
@@ -1138,6 +1172,11 @@ export function computeAllScopePlatformCardRow(
     simulatedPrices: options.simulatedPrices,
     platformCurrency,
     datedFxData: data,
+    dailyPnLPrefs: {
+      includeRealizedFromSells: data.settings?.uiAcks?.dailyPnLPrefs?.includeRealizedFromSells === true,
+      zeroOutsideSession: data.settings?.uiAcks?.dailyPnLPrefs?.zeroOutsideSession === true,
+    },
+    corporateActionEvents: data.corporateActionEvents ?? null,
   });
 }
 
@@ -1168,6 +1207,7 @@ export function computeAllCommoditiesContributionSAR(
   data: FinancialData,
   _sarPerUsd: number,
   simulatedPrices: SimulatedPriceMap,
+  opts?: { asOf?: Date; zeroOutsideSession?: boolean },
 ): { valueSAR: number; dailyDeltaSAR: number } {
   const commodities = data.commodityHoldings ?? [];
   let valueSAR = 0;
@@ -1178,14 +1218,13 @@ export function computeAllCommoditiesContributionSAR(
     const rawSar =
       px && Number.isFinite(px.price) ? px.price * (ch.quantity ?? 0) : (ch.currentValue ?? 0);
     valueSAR += Number.isFinite(rawSar) ? rawSar : 0;
-    const changePerShare =
-      px && (px.change != null || px.changePercent != null)
-        ? resolveEquityListingExchange(sym) != null
-          ? quoteChangeForDailyPnL(sym, resolveQuoteChangePerShare(px))
-          : resolveQuoteChangePerShare(px)
-        : 0;
-    const chg = changePerShare * (ch.quantity ?? 0);
-    dailyDeltaSAR += Number.isFinite(chg) ? chg : 0;
+    dailyDeltaSAR += computeCommodityDailyPnLSar({
+      symbol: sym,
+      quantity: ch.quantity ?? 0,
+      quote: px,
+      asOf: opts?.asOf,
+      zeroOutsideSession: opts?.zeroOutsideSession,
+    });
   }
   return { valueSAR, dailyDeltaSAR };
 }
