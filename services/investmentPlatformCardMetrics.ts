@@ -513,7 +513,8 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
     (p.holdings || []).forEach((h: Holding) => {
       if (!holdingUsesLiveQuote(h)) return;
       const qty = h.quantity ?? 0;
-      if (qty <= 0) return;
+      // Full exits stay on the book at qty 0 so realized day P/L can still be included.
+      if (qty <= 0 && !includeRealized) return;
       const d = computeHoldingDailyPnLInBookCurrency({
         holding: h,
         portfolioId: p.id,

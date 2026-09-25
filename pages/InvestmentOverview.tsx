@@ -109,8 +109,21 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             corporateActionEvents: data?.corporateActionEvents,
             holdingsForCa,
         });
-        const rows = allHoldingsWithGains
-            .filter((h) => holdingUsesLiveQuote(h) && Number(h.quantity) > 0)
+        const includeClosedRealized = dailyPnLPrefs.includeRealizedFromSells;
+        const closedHoldings = includeClosedRealized
+            ? investments.flatMap((p) =>
+                  (p.holdings || [])
+                      .filter((h) => holdingUsesLiveQuote(h) && !(Number(h.quantity) > 0))
+                      .map((h) => ({
+                          ...h,
+                          portfolioCurrency: resolveInvestmentPortfolioCurrency(p),
+                          portfolioId: p.id,
+                          portfolioName: p.name,
+                      })),
+              )
+            : [];
+        const rows = [...allHoldingsWithGains, ...closedHoldings]
+            .filter((h) => holdingUsesLiveQuote(h) && (Number(h.quantity) > 0 || includeClosedRealized))
             .map((h) => {
                 const book = (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR';
                 const breakdown = computeHoldingDailyPnLBreakdown({

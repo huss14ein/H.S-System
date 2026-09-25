@@ -24,7 +24,11 @@ import { canonicalQuoteLookupKey, lookupLiveQuoteForSymbol, type LiveQuoteRow } 
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { appCalendarTodayYmd } from './reconciliation/constants';
 import { splitRatio } from './corporateActions';
-import { quoteChangeForDailyPnL } from './marketSessionLocal';
+import {
+  isEquityListingRegularSessionOpen,
+  quoteChangeForDailyPnL,
+  resolveEquityListingExchange,
+} from './marketSessionLocal';
 
 export type DailyPnLPrefs = {
   /** When true, Today includes realized day P/L on shares sold today. Default false. */
@@ -258,7 +262,15 @@ export function applySameDayCorporateActionSlices(
     if (actionType === 'dividend_drip' && row.buys.some((b) => b.source === 'trade')) continue;
 
     const postQty = holdingMap.get(key) ?? 0;
-    if (!(postQty > 0)) continue;
+    // Issued shares apply to the book before today's trades. Live quantity already
+    // includes those buys and sells, so back them out before applying the ratio.
+    const tradedBought = row.buys.reduce((sum, lot) => {
+      if (lot.source === 'ca_stock_dividend' || lot.source === 'ca_drip') return sum;
+      const q = Number(lot.quantity);
+      return sum + (Number.isFinite(q) && q > 0 ? q : 0);
+    }, 0);
+    const qtyAtDistribution = Math.max(0, postQty - tradedBought + row.soldQty);
+    if (!(qtyAtDistribution > 0)) continue;
 
     let added = 0;
     if (actionType === 'stock_dividend') {
@@ -268,8 +280,8 @@ export function applySameDayCorporateActionSlices(
         ratioDenominator: ev.ratioDenominator ?? undefined,
       });
       if (!(ratio > 1)) continue;
-      const preQty = postQty / ratio;
-      added = Math.max(0, postQty - preQty);
+      const preQty = qtyAtDistribution / ratio;
+      added = Math.max(0, qtyAtDistribution - preQty);
     } else {
       // dividend_drip without a matching buy: best-effort — no reliable qty on event; skip.
       continue;
@@ -356,6 +368,14 @@ function dailyPnLOpts(zeroOutsideSession: boolean | undefined) {
   return zeroOutsideSession ? { zeroOutsideSession: true as const } : undefined;
 }
 
+/** Equity Today is flat when the pref is on and that listing's regular session is closed. */
+function equityTodayFlatOutsideSession(symbol: string, asOf: Date, zeroOutsideSession: boolean): boolean {
+  if (!zeroOutsideSession) return false;
+  const exchange = resolveEquityListingExchange(symbol);
+  if (exchange == null) return false;
+  return !isEquityListingRegularSessionOpen(exchange, asOf);
+}
+
 /**
  * Full Today breakdown in book currency. Prefer this for UI tooltips / detail.
  */
@@ -436,13 +456,12 @@ export function computeHoldingDailyPnLBreakdown(args: ComputeHoldingDailyPnLArgs
 
   const inst = resolveInstrumentCurrencyForQuote(sym, bookCurrency, quoteMap);
   const lastBook = convertBetweenTradeCurrencies(live.price, inst, bookCurrency, rate);
-  const changeBook = convertBetweenTradeCurrencies(
-    sanitizeFinite(quoteChangeForDailyPnL(symU, changePerShare, asOf, sessionOpts)),
-    inst,
-    bookCurrency,
-    rate,
-  );
-  const priorCloseBook = lastBook - changeBook;
+  // Prior close is last minus the provider day change. The session gate zeros that
+  // change after hours; subtracting the gated value would set prior close equal to last.
+  const priorCloseBook =
+    lastBook -
+    convertBetweenTradeCurrencies(sanitizeFinite(changePerShare), inst, bookCurrency, rate);
+  const sessionFlat = equityTodayFlatOutsideSession(symU, asOf, zeroOutsideSession);
 
   let boughtTodayBook = 0;
   let covered = 0;
@@ -547,13 +566,19 @@ export function computeHoldingDailyPnLBreakdown(args: ComputeHoldingDailyPnLArgs
     realizedSoldBook = sanitizeFinite(realizedSoldBook);
   }
 
-  const totalBook = sanitizeFinite(openBook + (includeRealizedFromSells ? realizedSoldBook : 0));
+  const totalBookRaw = sanitizeFinite(openBook + (includeRealizedFromSells ? realizedSoldBook : 0));
+  // Closed session: equity Today is 0, including same-day buys, CA lots, and realized sells.
+  const openBookOut = sessionFlat ? 0 : openBook;
+  const overnightBookOut = sessionFlat ? 0 : overnightBook;
+  const boughtTodayBookOut = sessionFlat ? 0 : boughtTodayBook;
+  const realizedSoldBookOut = sessionFlat ? 0 : realizedSoldBook;
+  const totalBook = sessionFlat ? 0 : totalBookRaw;
 
   return {
-    openBook,
-    overnightBook,
-    boughtTodayBook,
-    realizedSoldBook,
+    openBook: openBookOut,
+    overnightBook: overnightBookOut,
+    boughtTodayBook: boughtTodayBookOut,
+    realizedSoldBook: realizedSoldBookOut,
     totalBook,
     overnightStillHeld: qty.overnightStillHeld,
     boughtStillHeld: qty.boughtStillHeld,
