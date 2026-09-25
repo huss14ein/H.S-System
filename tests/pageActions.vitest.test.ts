@@ -12,8 +12,12 @@ describe('isSupportedPageAction', () => {
     expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard')).toBe(true);
     expect(isSupportedPageAction('Dashboard', 'focus-salary-invest')).toBe(true);
     expect(isSupportedPageAction('Dashboard', 'focus-investment-roi')).toBe(true);
+    expect(isSupportedPageAction('Dashboard', 'open-period-financial-report')).toBe(true);
     expect(isSupportedPageAction('Dashboard', 'plan-compare-dashboard-extra')).toBe(false);
     expect(isSupportedPageAction('Settings', 'focus-salary-investing')).toBe(true);
+    expect(isSupportedPageAction('Settings', 'open-period-financial-report')).toBe(true);
+    expect(isSupportedPageAction('Summary', 'open-period-financial-report')).toBe(true);
+    expect(isSupportedPageAction('Wealth Analytics', 'open-period-financial-report')).toBe(true);
     expect(isSupportedPageAction('Investments', 'focus-salary-invest')).toBe(true);
   });
 

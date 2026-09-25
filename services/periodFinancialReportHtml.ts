@@ -45,10 +45,47 @@ function svgBarChart(
       const y = height - 20 - h;
       const fill = it.value >= 0 ? '#0f766e' : '#be123c';
       return `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${fill}" rx="2"/>
-        <text x="${x + barW / 2}" y="${height - 6}" text-anchor="middle" class="tick">${esc(it.label).slice(0, 8)}</text>`;
+        <text x="${x + barW / 2}" y="${height - 6}" text-anchor="middle" class="tick">${esc(it.label).slice(0, 10)}</text>`;
     })
     .join('');
   return `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img">${bars}</svg>`;
+}
+
+/** Floating waterfall: each step sits on the prior cumulative baseline. */
+function svgWaterfall(
+  items: Array<{ label: string; sar: number; cumulative: number }>,
+): string {
+  if (!items.length) return '<p class="muted">No waterfall data</p>';
+  const width = 520;
+  const height = 180;
+  const values = items.flatMap((it, i) => {
+    if (i === items.length - 1) return [it.sar];
+    return [it.cumulative, it.cumulative + it.sar];
+  });
+  const min = Math.min(0, ...values);
+  const max = Math.max(0, ...values);
+  const span = Math.max(max - min, 1);
+  const yScale = (v: number) => height - 28 - ((v - min) / span) * (height - 48);
+  const barW = Math.max(18, Math.floor((width - 40) / items.length) - 10);
+  const zeroY = yScale(0);
+  const bars = items
+    .map((it, idx) => {
+      const x = 24 + idx * (barW + 10);
+      const isTotal = idx === items.length - 1;
+      const top = isTotal ? Math.max(it.sar, 0) : Math.max(it.cumulative, it.cumulative + it.sar);
+      const bot = isTotal ? Math.min(it.sar, 0) : Math.min(it.cumulative, it.cumulative + it.sar);
+      const y1 = yScale(top);
+      const y2 = yScale(bot);
+      const h = Math.max(2, Math.abs(y2 - y1));
+      const fill = isTotal ? '#1d4ed8' : it.sar >= 0 ? '#0f766e' : '#be123c';
+      return `<rect x="${x}" y="${Math.min(y1, y2)}" width="${barW}" height="${h}" fill="${fill}" rx="2"/>
+        <text x="${x + barW / 2}" y="${height - 8}" text-anchor="middle" class="tick">${esc(it.label).slice(0, 10)}</text>`;
+    })
+    .join('');
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img">
+    <line x1="16" y1="${zeroY}" x2="${width - 8}" y2="${zeroY}" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    ${bars}
+  </svg>`;
 }
 
 function svgSparkline(values: number[]): string {
@@ -86,17 +123,21 @@ function renderSectionBody(s: SoftSection<unknown>): string {
   switch (s.id) {
     case '1-executive': {
       const trend = (d.snapshotTrend as Array<{ at: string; netWorthSar: number }>) ?? [];
-      return `<div class="grid">
-        <div class="card"><div class="k">Net worth</div><div class="v">${money(d.netWorthSar)}</div></div>
+      return `<p class="muted">Balance-sheet KPIs are <strong>as of today</strong>; period cashflow below is window-scoped. Snapshot trend source: ${esc(d.snapshotSource)}.</p>
+      <div class="grid">
+        <div class="card"><div class="k">Net worth (today)</div><div class="v">${money(d.netWorthSar)}</div></div>
         <div class="card"><div class="k">Liquid cash</div><div class="v">${money(d.liquidCashSar)}</div></div>
-        <div class="card"><div class="k">Monthly P&amp;L</div><div class="v">${money(d.monthlyPnLSar)}</div></div>
+        <div class="card"><div class="k">This month P&amp;L</div><div class="v">${money(d.monthlyPnLSar)}</div></div>
+        <div class="card"><div class="k">Period net cashflow</div><div class="v">${money(d.periodNetCashflowSar)}</div></div>
+        <div class="card"><div class="k">Period income</div><div class="v">${money(d.periodIncomeSar)}</div></div>
+        <div class="card"><div class="k">Period expenses</div><div class="v">${money(d.periodExpensesSar)}</div></div>
         <div class="card"><div class="k">Investment ROI</div><div class="v">${pct(d.investmentRoi)}</div></div>
         <div class="card"><div class="k">EF months</div><div class="v">${esc(d.emergencyFundMonths ?? '—')}</div></div>
         <div class="card"><div class="k">Window</div><div class="v small">${esc(d.windowLabel)}</div></div>
         <div class="card"><div class="k">Snapshot Δ</div><div class="v">${money(d.snapshotDeltaSar)}</div></div>
       </div>
       <h3>Snapshot trend</h3>
-      ${svgSparkline(trend.map((x) => Number(x.netWorthSar) || 0)) || '<p class="muted">No device snapshots in this window.</p>'}
+      ${svgSparkline(trend.map((x) => Number(x.netWorthSar) || 0)) || '<p class="muted">No trend points.</p>'}
       ${
         trend.length
           ? `<table><thead><tr><th>Date</th><th>Net worth</th></tr></thead><tbody>${trend
@@ -107,14 +148,14 @@ function renderSectionBody(s: SoftSection<unknown>): string {
     }
     case '2-cashflow': {
       const cur = d.current ?? {};
-      const wf = (d.waterfall as Array<{ label: string; sar: number }>) ?? [];
+      const wf = (d.waterfall as Array<{ label: string; sar: number; cumulative: number }>) ?? [];
       return `<div class="grid">
         <div class="card"><div class="k">Income</div><div class="v">${money(cur.incomeSar)}</div></div>
         <div class="card"><div class="k">Expenses</div><div class="v">${money(cur.expensesSar)}</div></div>
         <div class="card"><div class="k">Net</div><div class="v">${money(cur.netSar)}</div></div>
         <div class="card"><div class="k">Δ vs prior</div><div class="v">${money(d.deltaNetSar)}</div></div>
       </div>
-      <h3>Waterfall</h3>${svgBarChart(wf.map((x) => ({ label: x.label, value: x.sar })))}
+      <h3>Cashflow waterfall</h3>${svgWaterfall(wf)}
       <p class="muted">Transfers out ${money(cur.transfersOutSar)} · in ${money(cur.transfersInSar)} · ${esc(cur.txCount)} txs</p>`;
     }
     case '3-budget': {
@@ -123,7 +164,7 @@ function renderSectionBody(s: SoftSection<unknown>): string {
         .slice(0, 15)
         .map(
           (c) =>
-            `<tr><td>${esc(c.category)}</td><td class="num">${money(c.spentSar)}</td><td class="num">${money(c.limitSar)}</td><td class="num">${esc(c.utilizationPct ?? '')}%</td></tr>`,
+            `<tr><td>${esc(c.category)}</td><td class="num">${money(c.spentSar)}</td><td class="num">${money(c.limitSar)}</td><td class="num">${esc(typeof c.utilizationPct === 'number' ? Number(c.utilizationPct).toFixed(0) : c.utilizationPct ?? '')}%</td></tr>`,
         )
         .join('');
       const drift = (d.driftRows as Array<Record<string, unknown>>) ?? [];
@@ -139,7 +180,8 @@ function renderSectionBody(s: SoftSection<unknown>): string {
         .slice(0, 8)
         .map((i) => `<li><strong>${esc(i.title)}</strong> — ${esc(i.detail)}</li>`)
         .join('');
-      return `<table><thead><tr><th>Category</th><th>Spent</th><th>Limit</th><th>Util %</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No categories</td></tr>'}</tbody></table>
+      return `<p class="muted">Budget engine preset: ${esc(d.analyticsPreset)} · ${esc(d.periodLabel)}</p>
+        <table><thead><tr><th>Category</th><th>Spent</th><th>Limit</th><th>Util %</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No categories</td></tr>'}</tbody></table>
         <h3>Budget drift</h3>
         <table><thead><tr><th>Category</th><th>Baseline</th><th>Current</th><th>Drift</th></tr></thead><tbody>${driftRows || '<tr><td colspan="4">No drift rows</td></tr>'}</tbody></table>
         ${insightList ? `<h3>Insights</h3><ul>${insightList}</ul>` : ''}`;
@@ -152,60 +194,93 @@ function renderSectionBody(s: SoftSection<unknown>): string {
             `<tr><td>${esc(r.portfolioName)}</td><td class="num">${money(r.window?.totalSar)}</td><td class="num">${money(r.window?.ledgerSar)}</td><td class="num">${money(r.window?.marketEstimateSar)}</td></tr>`,
         )
         .join('');
+      const spark = (d.sparkValues as number[]) ?? [];
       return `<div class="grid">
         <div class="card"><div class="k">Total P/L</div><div class="v">${money(cur.totalSar)}</div></div>
         <div class="card"><div class="k">Ledger</div><div class="v">${money(cur.ledgerSar)}</div></div>
         <div class="card"><div class="k">Market est.</div><div class="v">${money(cur.marketEstimateSar)}</div></div>
         <div class="card"><div class="k">Prior total</div><div class="v">${money(d.prior?.totalSar)}</div></div>
       </div>
+      ${spark.length >= 2 ? `<h3>Portfolio P/L mix</h3>${svgBarChart(spark.map((v, i) => ({ label: `P${i + 1}`, value: v })))}` : ''}
       <table><thead><tr><th>Portfolio</th><th>Total</th><th>Ledger</th><th>Market</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No portfolios</td></tr>'}</tbody></table>`;
     }
     case '5-holdings-gl': {
-      const rows = ((d as unknown as Array<Record<string, unknown>>) ?? [])
+      const list = (d as unknown as Array<Record<string, unknown>>) ?? [];
+      const rows = list
         .map(
           (h) =>
-            `<tr><td>${esc(h.name)}</td><td>${esc(h.symbol)}</td><td class="num">${money(h.valueSar)}</td><td class="num">${money(h.gainSar)}</td></tr>`,
+            `<tr><td>${esc(h.name)}</td><td>${esc(h.symbol)}</td><td class="num">${money(h.valueSar)}</td><td class="num">${money(h.costSar)}</td><td class="num">${money(h.gainSar)}</td></tr>`,
         )
         .join('');
-      return `<table><thead><tr><th>Holding</th><th>Symbol</th><th>Value</th><th>G/L</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No holdings</td></tr>'}</tbody></table>
-      ${svgBarChart(((d as unknown as Array<{ name: string; gainSar: number }>) ?? []).slice(0, 8).map((h) => ({ label: String(h.name).slice(0, 8), value: Number(h.gainSar) || 0 })))}`;
+      return `<table><thead><tr><th>Holding</th><th>Symbol</th><th>Value</th><th>Cost</th><th>G/L</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No holdings</td></tr>'}</tbody></table>
+      ${svgBarChart(list.slice(0, 8).map((h) => ({ label: String(h.name).slice(0, 8), value: Number(h.gainSar) || 0 })))}`;
     }
-    case '6-subscriptions':
+    case '6-subscriptions': {
+      const plans = (d.plans as Array<Record<string, unknown>>) ?? [];
+      const planRows = plans
+        .map(
+          (p) =>
+            `<tr><td>${esc(p.name)}</td><td>${esc(p.status)}</td><td>${esc(p.cadence)}</td><td class="num">${money(p.monthlySar)}</td><td>${esc(p.nextRenewalDate ?? '—')}</td></tr>`,
+        )
+        .join('');
       return `<div class="grid">
-        <div class="card"><div class="k">Est. monthly</div><div class="v">${money(d.estimatedMonthlySar)}</div></div>
+        <div class="card"><div class="k">Heuristic monthly</div><div class="v">${money(d.estimatedMonthlySar)}</div></div>
+        <div class="card"><div class="k">Planned monthly (records)</div><div class="v">${money(d.plannedMonthlySar)}</div></div>
         <div class="card"><div class="k">Est. window</div><div class="v">${money(d.estimatedWindowSar)}</div></div>
         <div class="card"><div class="k">Tagged txs</div><div class="v">${esc(d.subscriptionTxCount)}</div></div>
-      </div>`;
+      </div>
+      <h3>Subscription records</h3>
+      <table><thead><tr><th>Name</th><th>Status</th><th>Cadence</th><th>Monthly</th><th>Next</th></tr></thead><tbody>${planRows || '<tr><td colspan="5">No subscription records</td></tr>'}</tbody></table>`;
+    }
     case '7-credit-cards': {
       const cards = (d as unknown as Array<Record<string, unknown>>) ?? [];
       const rows = cards
         .map(
           (c) =>
-            `<tr><td>${esc(c.name)}</td><td class="num">${money(c.amountDue)}</td><td class="num">${money(c.purchaseFlow)}</td><td class="num">${money(c.payments)}</td><td class="num">${money(c.refundFlow)}</td></tr>`,
+            `<tr><td>${esc(c.name)}</td><td class="num">${money(c.amountDue)}</td><td class="num">${money(c.purchaseFlow)}</td><td class="num">${money(c.payments)}</td><td class="num">${money(c.refundFlow)}</td><td class="num">${money(c.interestAndFees)}</td></tr>`,
         )
         .join('');
-      return `<table><thead><tr><th>Card</th><th>Due</th><th>Purchases</th><th>Payments</th><th>Refunds</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No credit cards</td></tr>'}</tbody></table>`;
+      const chart = cards.slice(0, 6).map((c) => ({
+        label: String(c.name).slice(0, 8),
+        value: Math.abs(Number(c.purchaseFlow) || 0),
+      }));
+      return `<table><thead><tr><th>Card</th><th>Due</th><th>Purchases</th><th>Payments</th><th>Refunds</th><th>Interest/fees</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No credit cards</td></tr>'}</tbody></table>
+      ${chart.length ? `<h3>Purchase flow</h3>${svgBarChart(chart)}` : ''}`;
     }
     case '8-installments': {
       const rows = ((d.rows as Array<Record<string, unknown>>) ?? [])
-        .map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.note)}</td></tr>`)
+        .map((r) => `<tr><td>${esc(r.name)}</td><td class="num">${money(r.amountSar)}</td><td>${esc(r.note)}</td></tr>`)
         .join('');
       return `${d.note ? `<p class="muted">${esc(d.note)}</p>` : ''}
-        <table><thead><tr><th>Name</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="2">None</td></tr>'}</tbody></table>`;
+        <p class="muted">Linked installment payments in window: ${esc(d.linkedPaymentsInWindow ?? 0)}</p>
+        <table><thead><tr><th>Name</th><th>Amount</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="3">None</td></tr>'}</tbody></table>`;
     }
-    case '9-household':
+    case '9-household': {
+      const months = (d.monthRows as Array<Record<string, unknown>>) ?? [];
+      const monthTable = months
+        .map(
+          (m) =>
+            `<tr><td>${esc(m.monthIndex)}</td><td class="num">${money(m.plannedNet)}</td><td class="num">${money(m.incomeActual)}</td><td class="num">${money(m.expenseActual)}</td></tr>`,
+        )
+        .join('');
       return `<div class="grid">
         <div class="card"><div class="k">Planned net</div><div class="v">${money(d.plannedNetSar)}</div></div>
         <div class="card"><div class="k">Actual net</div><div class="v">${money(d.actualNetSar)}</div></div>
         <div class="card"><div class="k">Δ actual − planned</div><div class="v">${money(d.deltaSar)}</div></div>
+        <div class="card"><div class="k">Stress</div><div class="v small">${esc(d.householdStress?.level ?? '—')}</div></div>
+        <div class="card"><div class="k">Discipline</div><div class="v">${esc(d.discipline?.score ?? '—')} ${esc(d.discipline?.label ?? '')}</div></div>
       </div>
       <p>${esc(d.managedNote)}</p>
-      <pre class="json">${esc(JSON.stringify({ householdStress: d.householdStress, discipline: d.discipline }, null, 2))}</pre>`;
+      <h3>Month breakdown</h3>
+      <table><thead><tr><th>Month</th><th>Planned net</th><th>Income actual</th><th>Expense actual</th></tr></thead><tbody>${monthTable || '<tr><td colspan="4">No months</td></tr>'}</tbody></table>`;
+    }
     case '10-forecast': {
       const vals = ((d.rows as Array<Record<string, number>>) ?? []).map(
         (r) => Number(r['Net Worth'] ?? r.netWorth) || 0,
       );
-      return `<div class="grid">
+      const a = d.assumptions ?? {};
+      return `<p class="muted">Assumptions: monthly savings ${money(a.monthlySavingsSar)}, growth ${esc(a.investmentGrowthAnnualPct)}%/yr, ${esc(a.horizonYears)}y · ${esc(a.source)}</p>
+      <div class="grid">
         <div class="card"><div class="k">Final NW (12M)</div><div class="v">${money(d.finalNetWorth)}</div></div>
         <div class="card"><div class="k">Final investments</div><div class="v">${money(d.finalInvestmentValue)}</div></div>
       </div>${svgSparkline(vals)}
@@ -219,16 +294,29 @@ function renderSectionBody(s: SoftSection<unknown>): string {
           .join('') || '<tr><td colspan="3">No forecast rows</td></tr>'
       }</tbody></table>`;
     }
-    case '11-transfers-recon':
-      return `<div class="grid">
+    case '11-transfers-recon': {
+      const reconRows = ((d.reconRows as Array<Record<string, unknown>>) ?? [])
+        .map((r) => {
+          const key = String(r.key || '');
+          const fmt = (v: unknown) =>
+            key === 'investmentRoi' || key === 'emergencyFundMonths'
+              ? Number(v).toFixed(key === 'investmentRoi' ? 4 : 2)
+              : money(v);
+          return `<tr><td>${esc(r.label)}</td><td class="num">${fmt(r.dashboardValue)}</td><td class="num">${fmt(r.summaryValue)}</td><td>${r.withinThreshold ? 'OK' : 'Check'}</td></tr>`;
+        })
+        .join('');
+      return `<p class="muted">Transfer flows are window-scoped; Dashboard↔Summary recon is <strong>as of today</strong> (same engine as Wealth Analytics).</p>
+      <div class="grid">
         <div class="card"><div class="k">Transfers out</div><div class="v">${money(d.transferOutSar)}</div></div>
         <div class="card"><div class="k">Transfers in</div><div class="v">${money(d.transferInSar)}</div></div>
-        <div class="card"><div class="k">Dashboard monthly P&amp;L</div><div class="v">${money(d.dashboardMonthlyPnL)}</div></div>
-        <div class="card"><div class="k">Summary monthly P&amp;L</div><div class="v">${money(d.summaryMonthlyPnL)}</div></div>
-        <div class="card"><div class="k">Aligned</div><div class="v">${d.aligned ? 'Yes' : 'Check'}</div></div>
-      </div>`;
+        <div class="card"><div class="k">Transfer net</div><div class="v">${money(d.transferNetSar)}</div></div>
+        <div class="card"><div class="k">Recon</div><div class="v">${d.reconOk ? 'Aligned' : `${esc(d.mismatchCount)} mismatch(es)`}</div></div>
+      </div>
+      <h3>KPI reconciliation</h3>
+      <table><thead><tr><th>Metric</th><th>Dashboard</th><th>Summary</th><th>Status</th></tr></thead><tbody>${reconRows || '<tr><td colspan="4">No recon rows</td></tr>'}</tbody></table>`;
+    }
     case '12-investment-roi':
-      return `<div class="grid">
+      return `<p class="muted">As of today (live quotes).</p><div class="grid">
         <div class="card"><div class="k">ROI</div><div class="v">${pct(d.roi)}</div></div>
         <div class="card"><div class="k">Exposure</div><div class="v">${money(d.totalExposureSar)}</div></div>
         <div class="card"><div class="k">Net capital</div><div class="v">${money(d.netCapitalSar)}</div></div>
@@ -237,7 +325,8 @@ function renderSectionBody(s: SoftSection<unknown>): string {
     case 'orphan-budget-insights': {
       const drift = (d.drift as Array<Record<string, unknown>>) ?? [];
       const insights = (d.insights as Array<{ title?: string; detail?: string }>) ?? [];
-      return `<table><thead><tr><th>Category</th><th>Baseline</th><th>Current</th><th>Drift</th></tr></thead><tbody>${
+      return `<p class="muted">Preset ${esc(d.analyticsPreset)}</p>
+        <table><thead><tr><th>Category</th><th>Baseline</th><th>Current</th><th>Drift</th></tr></thead><tbody>${
         drift
           .map(
             (r) =>
@@ -265,21 +354,27 @@ function renderSectionBody(s: SoftSection<unknown>): string {
       const rows = ((d.payoffOrder as Array<Record<string, unknown>>) ?? [])
         .map(
           (r) =>
-            `<tr><td>${esc(r.name)}</td><td>${esc(r.type)}</td><td class="num">${money(r.amount)}</td><td class="num">${esc(r.interestRate ?? '—')}</td></tr>`,
+            `<tr><td>${esc(r.name)}</td><td>${esc(r.type)}</td><td class="num">${money(r.amount)}</td><td class="num">${esc(r.interestRate ?? '—')}</td><td class="num">${money(r.monthlyPaymentEst)}</td></tr>`,
         )
         .join('');
       return `<div class="grid">
-        <div class="card"><div class="k">PTI (est.)</div><div class="v">${d.ptiPct == null ? '—' : `${Number(d.ptiPct).toFixed(1)}%`}</div></div>
+        <div class="card"><div class="k">PTI</div><div class="v">${d.ptiPct == null ? '—' : `${Number(d.ptiPct).toFixed(1)}%`}</div></div>
+        <div class="card"><div class="k">Stress</div><div class="v">${esc(d.stressLabel)} (${esc(d.stressScore)})</div></div>
         <div class="card"><div class="k">Avg monthly income</div><div class="v">${money(d.avgMonthlyIncomeSar)}</div></div>
+        <div class="card"><div class="k">Salary detected</div><div class="v">${d.salaryDetected ? money(d.salaryEstimateSar) : 'No'}</div></div>
       </div>
       <p class="muted">${esc(d.note)}</p>
-      <table><thead><tr><th>Liability</th><th>Type</th><th>Amount</th><th>Rate</th></tr></thead><tbody>${rows || '<tr><td colspan="4">None</td></tr>'}</tbody></table>`;
+      <table><thead><tr><th>Liability</th><th>Type</th><th>Amount</th><th>Rate</th><th>Est. payment</th></tr></thead><tbody>${rows || '<tr><td colspan="5">None</td></tr>'}</tbody></table>`;
     }
     case 'orphan-salary':
       return `<div class="grid">
         <div class="card"><div class="k">Monthly income</div><div class="v">${money(d.monthlyIncome)}</div></div>
         <div class="card"><div class="k">Monthly P&amp;L</div><div class="v">${money(d.monthlyPnL)}</div></div>
-        <div class="card"><div class="k">Savings rate</div><div class="v">${pct(d.savingsRate)}</div></div>
+        <div class="card"><div class="k">Savings rate</div><div class="v">${pct(Number(d.savingsRate) > 2 ? Number(d.savingsRate) / 100 : d.savingsRate)}</div></div>
+        <div class="card"><div class="k">Salary detect</div><div class="v small">${d.salaryDetected ? money(d.salaryEstimateSar) : esc(d.salaryLabel)}</div></div>
+        <div class="card"><div class="k">Salary→invest rate</div><div class="v">${d.salaryInvestRatePct == null ? '—' : `${Number(d.salaryInvestRatePct).toFixed(1)}%`}</div></div>
+        <div class="card"><div class="k">Invested from salary</div><div class="v">${money(d.investedFromSalarySarMonth)}</div></div>
+        <div class="card"><div class="k">Funded not deployed</div><div class="v">${money(d.fundedNotDeployedSar)}</div></div>
       </div>`;
     default:
       return `<pre class="json">${esc(JSON.stringify(d, null, 2).slice(0, 4000))}</pre>`;
@@ -340,6 +435,7 @@ export function generatePeriodFinancialReportHtml(model: PeriodFinancialReportMo
   <h1>Period Financial Report</h1>
   <p class="meta">
     ${esc(model.twin.current.label)} · Prior twin: ${esc(model.twin.prior.label)} · Generated ${esc(model.generatedAtIso)}
+    · FM keys: ${esc(model.twin.current.finKeys.length)}
   </p>
   <nav class="toc" aria-label="Table of contents"><strong>Contents</strong><br/>${toc}</nav>
   ${body}

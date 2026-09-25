@@ -10,8 +10,10 @@ import {
 import { generatePeriodFinancialReportHtml } from '../../services/periodFinancialReportHtml';
 import {
   type PeriodReportPreset,
+  resolvePeriodReportTwinWindows,
   validateCustomPeriodRange,
 } from '../../services/periodReportWindow';
+import { resolveMonthStartDayFromData } from '../../utils/financialMonth';
 import { openHtmlForPrint } from '../../services/reportingEngine';
 
 const PRESETS: Array<{ id: PeriodReportPreset; label: string }> = [
@@ -20,6 +22,17 @@ const PRESETS: Array<{ id: PeriodReportPreset; label: string }> = [
   { id: 'YTD', label: 'Year to date' },
   { id: '12M', label: 'Last 12 months' },
   { id: 'custom', label: 'Custom range' },
+];
+
+const LIVE_ACTIONS: Array<{ id: string; label: string; page: string; action?: string }> = [
+  { id: 'open-summary', label: 'Summary', page: 'Summary' },
+  { id: 'open-wealth-analytics', label: 'Wealth Analytics', page: 'Wealth Analytics' },
+  { id: 'open-budgets', label: 'Budgets', page: 'Budgets' },
+  { id: 'open-investments', label: 'Investments', page: 'Investments' },
+  { id: 'open-subscriptions', label: 'Subscriptions', page: 'Subscriptions' },
+  { id: 'open-installments', label: 'Installments', page: 'Installments' },
+  { id: 'open-liabilities', label: 'Liabilities', page: 'Liabilities' },
+  { id: 'open-settings-reports', label: 'Settings → Reports', page: 'Settings', action: 'open-period-financial-report' },
 ];
 
 export type PeriodFinancialReportModalProps = {
@@ -45,20 +58,17 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
 
   const previewLabel = useMemo(() => {
     try {
-      const model = buildPeriodFinancialReportModel({
-        data: data!,
-        uiExchangeRate: sarPerUsd,
-        getAvailableCashForAccount,
-        simulatedPrices: simulatedPrices ?? {},
+      const twin = resolvePeriodReportTwinWindows({
         preset,
+        monthStartDay: resolveMonthStartDayFromData(data),
         customStartIso: customStart,
         customEndIso: customEnd,
       });
-      return model.twin.current.label;
+      return `${twin.current.label} · prior ${twin.prior.label}`;
     } catch {
       return '—';
     }
-  }, [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices, preset, customStart, customEnd]);
+  }, [data, preset, customStart, customEnd]);
 
   const runPrint = useCallback(() => {
     if (!data) {
@@ -117,6 +127,7 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
         <p className="text-sm text-slate-600">
           Full-period extract across net worth, cashflow, budgets, portfolio P/L, cards, and more.
           Delivery is browser <strong>Print → Save as PDF</strong> (no binary PDF library).
+          Balance-sheet KPIs are labeled as-of-today; cashflow, cards, and portfolio P/L follow the selected window.
         </p>
 
         <div>
@@ -178,19 +189,28 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
           </div>
         )}
 
+        {onNavigate && (
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Cross-engine actions</p>
+            <div className="flex flex-wrap gap-2">
+              {LIVE_ACTIONS.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="btn-outline text-xs"
+                  onClick={() => onNavigate(a.page, a.action)}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2 justify-end pt-2">
           <button type="button" className="btn-outline text-sm" onClick={onClose}>
             Close
           </button>
-          {onNavigate && (
-            <button
-              type="button"
-              className="btn-outline text-sm"
-              onClick={() => onNavigate('Wealth Analytics')}
-            >
-              Wealth Analytics
-            </button>
-          )}
           <button
             type="button"
             className="btn-primary text-sm disabled:opacity-50"

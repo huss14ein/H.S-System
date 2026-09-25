@@ -9,8 +9,9 @@ import {
   financialMonthLookbackRange,
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
-import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import { toSAR } from '../utils/currencyMath';
+import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fxMapForKpiCompute, getSarPerUsdForCalendarDay } from './fxDailySeries';
 import {
   countsAsExpenseForCashflowKpi,
@@ -23,20 +24,29 @@ import { computeWealthSummaryReportModel } from './wealthSummaryReportModel';
 import { computePortfolioPnLForWindow } from './portfolioPeriodPnL';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import {
+  periodReportToAnalyticsPreset,
   resolvePeriodReportTwinWindows,
   type PeriodReportPreset,
   type PeriodReportTwinWindows,
 } from './periodReportWindow';
 import { detectBudgetDrift } from './budgetDrift';
 import { computeExpenseBudgetAnalysisModel } from './expenseBudgetAnalysisModel';
-import { subscriptionSpendMonthlySar } from './transactionIntelligence';
+import {
+  detectBnplMentionsSar,
+  detectSalaryIncomeSar,
+  subscriptionSpendMonthlySar,
+} from './transactionIntelligence';
 import { aggregateCreditCardStatementActivity, resolveCreditCardAmountDue } from './creditCardLedger';
 import { projectForecastSeries } from './forecastProjection';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 import { findCreditCardLiabilityForAccount } from './creditCardLinking';
 import { listNetWorthSnapshots } from './netWorthSnapshot';
 import { buildHouseholdPlanFromFinancialData } from './householdEngineFromData';
-import { debtServiceRatio } from './liabilityMetrics';
+import { debtPayoffPlan, debtStressScore } from './debtEngines';
+import { reconcileDashboardVsSummaryKpis } from './kpiReconciliation';
+import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
+import { decodeInstallmentPaymentNote } from './installments/installmentLinkNote';
+import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 
 export type PeriodReportSectionStatus = 'ok' | 'empty' | 'error';
 
@@ -88,7 +98,9 @@ function soft<T>(id: string, title: string, fn: () => T): SoftSection<T> {
         ((data as { rows?: unknown[] }).rows?.length ?? 0) === 0 &&
         !(data as { note?: unknown }).note &&
         !((data as { insights?: unknown[] }).insights?.length) &&
-        !((data as { categories?: unknown[] }).categories?.length));
+        !((data as { categories?: unknown[] }).categories?.length) &&
+        !((data as { plans?: unknown[] }).plans?.length) &&
+        !((data as { reconRows?: unknown[] }).reconRows?.length));
     return { id, title, status: empty ? 'empty' : 'ok', data };
   } catch (e) {
     return {
@@ -150,31 +162,60 @@ function cashflowInWindow(
   };
 }
 
+function buildWaterfall(cur: PeriodCashflowSlice): Array<{ label: string; sar: number; cumulative: number }> {
+  const transferNet = cur.transfersInSar - cur.transfersOutSar;
+  const steps = [
+    { label: 'Income', sar: cur.incomeSar },
+    { label: 'Expenses', sar: -cur.expensesSar },
+    { label: 'Transfers net', sar: transferNet },
+    { label: 'Net', sar: cur.netSar },
+  ];
+  let running = 0;
+  return steps.map((s, i) => {
+    if (i === steps.length - 1) {
+      return { ...s, cumulative: cur.netSar };
+    }
+    const base = running;
+    running += s.sar;
+    return { ...s, cumulative: base };
+  });
+}
+
 function topHoldingsGainLoss(
   data: FinancialData,
   sarPerUsd: number,
+  simulatedPrices: SimulatedPriceMap,
   limit = 12,
-): Array<{ name: string; symbol: string; gainSar: number; valueSar: number }> {
-  const rows: Array<{ name: string; symbol: string; gainSar: number; valueSar: number }> = [];
-  for (const p of data.investments ?? []) {
+): Array<{ name: string; symbol: string; gainSar: number; valueSar: number; costSar: number }> {
+  const rows: Array<{ name: string; symbol: string; gainSar: number; valueSar: number; costSar: number }> = [];
+  for (const p of getPersonalInvestments(data)) {
+    const book = resolveInvestmentPortfolioCurrency(p);
     for (const h of (p.holdings ?? []) as Holding[]) {
       const qty = Number(h.quantity) || 0;
       const avg = Number(h.avgCost) || 0;
-      const live = Number(h.currentValue) || 0;
-      const book = String((p as { currency?: string }).currency || 'SAR').toUpperCase() === 'USD' ? 'USD' : 'SAR';
-      const cost = qty * avg;
-      const value = live > 0 ? live : cost;
-      const gain = value - cost;
+      const costBook = qty * avg;
+      const valueBook = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, sarPerUsd);
+      const value = valueBook > 0 ? valueBook : costBook;
+      const gain = value - costBook;
       const toSarN = (n: number) => (book === 'USD' ? n * sarPerUsd : n);
       rows.push({
         name: String(h.name || h.symbol || 'Holding'),
         symbol: String(h.symbol || ''),
         gainSar: toSarN(gain),
         valueSar: toSarN(value),
+        costSar: toSarN(costBook),
       });
     }
   }
   return rows.sort((a, b) => Math.abs(b.gainSar) - Math.abs(a.gainSar)).slice(0, limit);
+}
+
+function monthlyEquivalentSubSar(amount: number, cadence: string, currency: string, sarPerUsd: number): number {
+  const book = currency === 'USD' ? 'USD' : 'SAR';
+  const sar = book === 'USD' ? amount * sarPerUsd : amount;
+  if (cadence === 'yearly') return sar / 12;
+  if (cadence === 'weekly') return sar * (52 / 12);
+  return sar;
 }
 
 export function buildPeriodFinancialReportModel(args: {
@@ -199,6 +240,8 @@ export function buildPeriodFinancialReportModel(args: {
   const sarPerUsd = args.uiExchangeRate > 0 ? args.uiExchangeRate : 3.75;
   const cash = asCashFn(args.getAvailableCashForAccount);
   const accounts = getPersonalAccounts(args.data) as Account[];
+  const analyticsPreset = periodReportToAnalyticsPreset(args.preset, current);
+  const budgetRef = current.end;
 
   const sections: SoftSection<unknown>[] = [
     soft('1-executive', '1. Executive snapshot', () => {
@@ -218,6 +261,7 @@ export function buildPeriodFinancialReportModel(args: {
         cash,
         args.simulatedPrices,
       );
+      const periodCf = cashflowInWindow(args.data, args.uiExchangeRate, current.start, current.end);
       const snaps = listNetWorthSnapshots()
         .filter((s) => {
           const t = new Date(s.at).getTime();
@@ -228,16 +272,29 @@ export function buildPeriodFinancialReportModel(args: {
         at: s.at.slice(0, 10),
         netWorthSar: Number(s.netWorth) || 0,
       }));
-      const firstSnap = snapshotTrend[0]?.netWorthSar;
-      const lastSnap = snapshotTrend[snapshotTrend.length - 1]?.netWorthSar;
+      // Fallback when device snapshots are sparse: bookend live NW with period cashflow delta.
+      const trendForChart =
+        snapshotTrend.length >= 2
+          ? snapshotTrend
+          : [
+              { at: current.startIso, netWorthSar: headline.netWorth - periodCf.netSar },
+              { at: current.endIso, netWorthSar: headline.netWorth },
+            ];
+      const firstSnap = trendForChart[0]?.netWorthSar;
+      const lastSnap = trendForChart[trendForChart.length - 1]?.netWorthSar;
       return {
+        asOfToday: true,
         netWorthSar: headline.netWorth,
         liquidCashSar: kpi?.liquidCashSar ?? 0,
         monthlyPnLSar: kpi?.monthlyPnL ?? 0,
+        periodNetCashflowSar: periodCf.netSar,
+        periodIncomeSar: periodCf.incomeSar,
+        periodExpensesSar: periodCf.expensesSar,
         investmentRoi: kpi?.roi ?? 0,
         emergencyFundMonths: wealth.emergencyFund?.monthsCovered ?? null,
         windowLabel: current.label,
-        snapshotTrend,
+        snapshotTrend: trendForChart,
+        snapshotSource: snapshotTrend.length >= 2 ? 'device' : 'synthetic',
         snapshotDeltaSar:
           firstSnap != null && lastSnap != null ? lastSnap - firstSnap : null,
       };
@@ -250,18 +307,22 @@ export function buildPeriodFinancialReportModel(args: {
         current: cur,
         prior: prev,
         deltaNetSar: cur.netSar - prev.netSar,
-        waterfall: [
-          { label: 'Income', sar: cur.incomeSar },
-          { label: 'Expenses', sar: -cur.expensesSar },
-          { label: 'Net', sar: cur.netSar },
-        ],
+        waterfall: buildWaterfall(cur),
       };
     }),
 
     soft('3-budget', '3. Budget vs actual', () => {
-      const analysis = computeExpenseBudgetAnalysisModel(args.data, args.uiExchangeRate, new Date());
-      const drift = detectBudgetDrift(args.data, args.uiExchangeRate);
+      const analysis = computeExpenseBudgetAnalysisModel(
+        args.data,
+        args.uiExchangeRate,
+        budgetRef,
+        'personal',
+        analyticsPreset,
+      );
+      const drift = detectBudgetDrift(args.data, args.uiExchangeRate, budgetRef);
       return {
+        analyticsPreset,
+        periodLabel: analysis?.periodLabel ?? current.label,
         categories: (analysis?.categories ?? []).slice(0, 20),
         driftRows: drift.slice(0, 20),
         insights: (analysis?.insights ?? []).slice(0, 8),
@@ -270,7 +331,7 @@ export function buildPeriodFinancialReportModel(args: {
     }),
 
     soft('4-portfolio-pnl', '4. Portfolio P/L (window)', () => {
-      const personalPortfolios = (args.data.investments ?? []).filter((p) => !p.owner);
+      const personalPortfolios = getPersonalInvestments(args.data);
       const windowPnL = computePortfolioPnLForWindow({
         data: args.data,
         portfolios: personalPortfolios,
@@ -291,14 +352,20 @@ export function buildPeriodFinancialReportModel(args: {
         endMs: prior.end.getTime(),
         getAvailableCashForAccount: cash,
       });
-      return { current: windowPnL, prior: priorPnL };
+      return {
+        current: windowPnL,
+        prior: priorPnL,
+        sparkValues: windowPnL.rows.map((r) => r.window.totalSar),
+      };
     }),
 
-    soft('5-holdings-gl', '5. Top holdings gain/loss', () => topHoldingsGainLoss(args.data, sarPerUsd)),
+    soft('5-holdings-gl', '5. Top holdings gain/loss', () =>
+      topHoldingsGainLoss(args.data, sarPerUsd, args.simulatedPrices),
+    ),
 
     soft('6-subscriptions', '6. Subscriptions & recurring spend', () => {
       const sub = subscriptionSpendMonthlySar(
-        args.data.transactions ?? [],
+        getPersonalTransactions(args.data),
         accounts,
         sarPerUsd,
         3,
@@ -308,11 +375,33 @@ export function buildPeriodFinancialReportModel(args: {
         1,
         (current.end.getTime() - current.start.getTime()) / (30.4375 * 86400000),
       );
+      const plans = (args.data.subscriptions ?? [])
+        .filter((s) => s.status === 'active' || s.status === 'paused')
+        .map((s) => ({
+          name: s.name,
+          status: s.status,
+          cadence: s.cadence,
+          amount: Number(s.amount) || 0,
+          currency: s.currency ?? 'SAR',
+          monthlySar: monthlyEquivalentSubSar(
+            Number(s.amount) || 0,
+            s.cadence,
+            s.currency ?? 'SAR',
+            sarPerUsd,
+          ),
+          nextRenewalDate: s.nextRenewalDate ?? null,
+        }))
+        .sort((a, b) => b.monthlySar - a.monthlySar);
+      const plannedMonthly = plans
+        .filter((p) => p.status === 'active')
+        .reduce((s, p) => s + p.monthlySar, 0);
       return {
         estimatedMonthlySar: sub.monthlyEstimate,
         subscriptionTxCount: sub.count,
         estimatedWindowSar: sub.monthlyEstimate * windowMonths,
         windowMonths,
+        plannedMonthlySar: plannedMonthly,
+        plans: plans.slice(0, 25),
       };
     }),
 
@@ -344,23 +433,46 @@ export function buildPeriodFinancialReportModel(args: {
     }),
 
     soft('8-installments', '8. Installments', () => {
-      const notes: Array<{ name: string; note: string }> = [];
+      const rows: Array<{ name: string; note: string; amountSar: number }> = [];
       for (const l of (args.data.liabilities ?? []) as Liability[]) {
         const typ = String(l.type || '').toLowerCase();
         if (/install|instal|bnpl|murabaha|loan/.test(typ) || /install|instal|bnpl/i.test(l.name || '')) {
-          notes.push({
+          rows.push({
             name: l.name,
             note: `Outstanding ${Number(l.amount || 0).toFixed(2)} (${l.status ?? 'Active'})`,
+            amountSar: Math.abs(Number(l.amount) || 0),
           });
         }
       }
-      if (!notes.length) {
-        return {
-          rows: [],
-          note: 'No installment-like liabilities tagged. Track BNPL/loans under Liabilities for this section.',
-        };
+      const bnpl = detectBnplMentionsSar(
+        getPersonalTransactions(args.data).filter((t) =>
+          dateInRange(t.date, current.start, current.end),
+        ),
+        accounts,
+        sarPerUsd,
+      );
+      for (const b of bnpl.slice(0, 8)) {
+        rows.push({
+          name: b.description.slice(0, 64),
+          note: `BNPL mention ${b.date}`,
+          amountSar: b.amount,
+        });
       }
-      return { rows: notes, note: null };
+      let linkedPayments = 0;
+      for (const t of getPersonalTransactions(args.data)) {
+        if (!dateInRange(t.date, current.start, current.end)) continue;
+        if (decodeInstallmentPaymentNote(t.note)) linkedPayments += 1;
+      }
+      return {
+        rows: rows.slice(0, 20),
+        linkedPaymentsInWindow: linkedPayments,
+        note:
+          rows.length === 0
+            ? 'No installment-like liabilities or BNPL mentions in this window. Installment plans on the Installments page are separate from FinancialData — open that page for schedule detail.'
+            : linkedPayments > 0
+              ? `${linkedPayments} ledger payment(s) linked to installment IDs in this window.`
+              : null,
+      };
     }),
 
     soft('9-household', '9. Household planned vs actual', () => {
@@ -372,15 +484,36 @@ export function buildPeriodFinancialReportModel(args: {
       );
       const plan = buildHouseholdPlanFromFinancialData(args.data, {
         uiExchangeRate: args.uiExchangeRate,
+        ref: budgetRef,
       });
       const pva = plan?.plannedVsActual ?? null;
+      const monthRows = (plan?.months ?? [])
+        .slice(0, 12)
+        .map((m, i) => ({
+          monthIndex: i + 1,
+          plannedNet: Number((m as { plannedNet?: number }).plannedNet) || 0,
+          incomeActual: Number((m as { incomeActual?: number }).incomeActual) || 0,
+          expenseActual: Number((m as { expenseActual?: number }).expenseActual) || 0,
+        }));
       return {
         plannedNetSar: pva?.plannedNet ?? null,
         actualNetSar: pva?.actualNet ?? null,
-        deltaSar:
-          pva != null ? Number(pva.actualNet) - Number(pva.plannedNet) : null,
-        householdStress: wealth.householdStress ?? null,
-        discipline: wealth.discipline ?? null,
+        deltaSar: pva != null ? Number(pva.actualNet) - Number(pva.plannedNet) : null,
+        monthRows,
+        householdStress: wealth.householdStress
+          ? {
+              level: (wealth.householdStress as { level?: string }).level ?? null,
+              affordabilityPressureMonths:
+                (wealth.householdStress as { affordabilityPressureMonths?: number })
+                  .affordabilityPressureMonths ?? null,
+            }
+          : null,
+        discipline: wealth.discipline
+          ? {
+              score: (wealth.discipline as { score?: number }).score ?? null,
+              label: (wealth.discipline as { label?: string }).label ?? null,
+            }
+          : null,
         managedNote: wealth.managedWealthTotal
           ? `Managed wealth excluded from personal NW: ${Number(wealth.managedWealthTotal).toFixed(2)} SAR`
           : 'No managed-wealth carve-out in this period.',
@@ -398,16 +531,32 @@ export function buildPeriodFinancialReportModel(args: {
         getAvailableCashForAccount: cash,
         simulatedPrices: args.simulatedPrices,
       });
+      const salary = computeSalaryInvestmentKpis(args.data, args.uiExchangeRate);
       const inv = headline.buckets?.investments ?? 0;
+      const monthlySavings = Math.max(
+        0,
+        Number(wealth.wealthSummaryReportPayload?.monthlyPnL) ||
+          Number(salary?.investedFromSalarySarMonth) ||
+          0,
+      );
+      const growthPct = 5;
       const series = projectForecastSeries({
         initialNetWorth: headline.netWorth,
         initialInvestmentValue: inv,
-        monthlySavings: Math.max(0, Number(wealth.wealthSummaryReportPayload?.monthlyPnL) || 0),
+        monthlySavings,
         horizonYears: 1,
-        investmentGrowthAnnualPct: 5,
+        investmentGrowthAnnualPct: growthPct,
         savingsGrowthAnnualPct: 0,
       });
       return {
+        assumptions: {
+          monthlySavingsSar: monthlySavings,
+          investmentGrowthAnnualPct: growthPct,
+          horizonYears: 1,
+          source: salary?.investedFromSalarySarMonth
+            ? 'salary-invest / wealth monthly P&L'
+            : 'wealth monthly P&L (floored at 0)',
+        },
         finalNetWorth: series.finalNetWorth,
         finalInvestmentValue: series.finalInvestmentValue,
         rows: series.rows.slice(0, 12),
@@ -428,14 +577,25 @@ export function buildPeriodFinancialReportModel(args: {
         cash,
         args.simulatedPrices,
       );
-      const summaryMonthly = wealth.wealthSummaryReportPayload?.monthlyPnL ?? null;
-      const dash = kpi?.monthlyPnL ?? 0;
+      const recon = reconcileDashboardVsSummaryKpis({
+        dashboard: {
+          netWorth: Number(kpi?.netWorth ?? 0),
+          monthlyPnL: Number(kpi?.monthlyPnL ?? 0),
+          budgetVariance: Number(kpi?.budgetVariance ?? 0),
+          roi: Number(kpi?.roi ?? 0),
+          emergencyFundMonths: Number(wealth.emergencyFund?.monthsCovered ?? 0),
+        },
+        summaryMetrics: wealth.financialMetricsWithEf,
+        summaryMonthlyExtras: wealth.monthlyReportFinancialKpis,
+      });
       return {
+        asOfToday: true,
         transferOutSar: cur.transfersOutSar,
         transferInSar: cur.transfersInSar,
-        dashboardMonthlyPnL: dash,
-        summaryMonthlyPnL: summaryMonthly,
-        aligned: summaryMonthly == null || Math.abs(Number(summaryMonthly) - Number(dash)) < 0.05,
+        transferNetSar: cur.transfersInSar - cur.transfersOutSar,
+        reconOk: recon.ok,
+        mismatchCount: recon.mismatchCount,
+        reconRows: recon.rows,
       };
     }),
 
@@ -447,6 +607,7 @@ export function buildPeriodFinancialReportModel(args: {
         args.simulatedPrices,
       );
       return {
+        asOfToday: true,
         roi: roi.roi,
         totalExposureSar: roi.totalExposureSar,
         netCapitalSar: roi.netCapitalSar,
@@ -455,19 +616,27 @@ export function buildPeriodFinancialReportModel(args: {
     }),
 
     soft('orphan-budget-insights', 'Budget drift & insights', () => {
-      const analysis = computeExpenseBudgetAnalysisModel(args.data, args.uiExchangeRate, new Date());
+      const analysis = computeExpenseBudgetAnalysisModel(
+        args.data,
+        args.uiExchangeRate,
+        budgetRef,
+        'personal',
+        analyticsPreset,
+      );
       return {
-        drift: detectBudgetDrift(args.data, args.uiExchangeRate).slice(0, 15),
+        analyticsPreset,
+        drift: detectBudgetDrift(args.data, args.uiExchangeRate, budgetRef).slice(0, 15),
         insights: analysis?.insights ?? [],
       };
     }),
 
-    soft('orphan-live-nw', 'Live net worth', () =>
-      computePersonalHeadlineNetWorthSar(args.data, args.uiExchangeRate, {
+    soft('orphan-live-nw', 'Live net worth (as of today)', () => {
+      const headline = computePersonalHeadlineNetWorthSar(args.data, args.uiExchangeRate, {
         getAvailableCashForAccount: cash,
         simulatedPrices: args.simulatedPrices,
-      }),
-    ),
+      });
+      return { asOfToday: true, ...headline };
+    }),
 
     soft('orphan-ef', 'Emergency fund target months', () => {
       const wealth = computeWealthSummaryReportModel(
@@ -480,39 +649,77 @@ export function buildPeriodFinancialReportModel(args: {
     }),
 
     soft('orphan-pti-payoff', 'Payoff order & PTI notes', () => {
-      const liabs = ((args.data.liabilities ?? []) as Liability[])
-        .filter((l) => (l.status ?? 'Active') === 'Active')
-        .map((l) => ({
-          name: l.name,
-          type: l.type,
-          amount: Number(l.amount) || 0,
-          interestRate: Number((l as { interestRate?: number }).interestRate) || null,
-        }))
-        .sort((a, b) => (b.interestRate ?? 0) - (a.interestRate ?? 0));
-      const totalDebt = liabs.reduce((s, l) => s + Math.max(0, l.amount), 0);
+      const active = ((args.data.liabilities ?? []) as Liability[]).filter(
+        (l) => (l.status ?? 'Active') === 'Active',
+      );
+      const debtItems = active.map((l) => ({
+        id: l.id,
+        name: l.name,
+        type: l.type,
+        balance: Math.abs(Number(l.amount) || 0),
+        annualRatePct: Number((l as { interestRate?: number }).interestRate) || 12,
+        monthlyPayment: Math.abs(Number(l.amount) || 0) * 0.02,
+      }));
+      const orderIds = debtPayoffPlan(
+        debtItems.map((d) => ({
+          id: d.id,
+          balance: d.balance,
+          annualRatePct: d.annualRatePct,
+          monthlyPayment: d.monthlyPayment,
+        })),
+        'avalanche',
+      );
+      const byId = new Map(debtItems.map((d) => [d.id, d]));
+      const payoffOrder = orderIds
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .slice(0, 12)
+        .map((d) => ({
+          name: d!.name,
+          type: d!.type,
+          amount: d!.balance,
+          interestRate: d!.annualRatePct,
+          monthlyPaymentEst: d!.monthlyPayment,
+        }));
+      const totalDebt = debtItems.reduce((s, d) => s + d.balance, 0);
+      const monthlyPaymentsEst = totalDebt * 0.02;
+      const salary = detectSalaryIncomeSar(
+        getPersonalTransactions(args.data),
+        accounts,
+        sarPerUsd,
+        6,
+        args.data,
+      );
       const lookback = financialMonthLookbackRange(args.now ?? new Date(), 6, monthStartDay);
+      const fxMap = fxMapForKpiCompute(args.data, args.uiExchangeRate);
+      const accountsById = new Map(accounts.map((a) => [a.id, a]));
       const incomeByMonth = new Map<string, number>();
       for (const t of getPersonalTransactions(args.data)) {
         if (!countsAsIncomeForCashflowKpi(t)) continue;
         if (!dateInRange(t.date, lookback.start, lookback.end)) continue;
         const k = financialMonthIsoKey(financialMonthKeyFromTransactionDate(t.date, monthStartDay));
-        incomeByMonth.set(k, (incomeByMonth.get(k) ?? 0) + Math.abs(Number(t.amount) || 0));
+        incomeByMonth.set(
+          k,
+          (incomeByMonth.get(k) ?? 0) + txSar(t, accountsById, args.data, args.uiExchangeRate, fxMap),
+        );
       }
       const avgMonthlyIncome =
         incomeByMonth.size > 0
           ? Array.from(incomeByMonth.values()).reduce((a, b) => a + b, 0) / incomeByMonth.size
-          : 0;
-      const annualDebtGuess = totalDebt * 0.12;
-      const ptiPct =
-        avgMonthlyIncome > 0 ? debtServiceRatio(annualDebtGuess, avgMonthlyIncome) * 100 : null;
+          : salary.estimatedMonthly;
+      const liquid = accounts
+        .filter((a) => a.type === 'Checking' || a.type === 'Savings')
+        .reduce((s, a) => s + toSAR(Math.max(0, Number(a.balance) || 0), a.currency === 'USD' ? 'USD' : 'SAR', sarPerUsd), 0);
+      const stress = debtStressScore(monthlyPaymentsEst, Math.max(1, avgMonthlyIncome), liquid);
       return {
-        payoffOrder: liabs.slice(0, 12),
-        ptiPct,
+        payoffOrder,
+        ptiPct: stress.paymentToIncomeRatio * 100,
+        stressLabel: stress.label,
+        stressScore: stress.score,
         avgMonthlyIncomeSar: avgMonthlyIncome,
-        note:
-          ptiPct == null
-            ? 'Ordered by stated interest rate when available (highest first). Add income history for PTI.'
-            : `Debt service estimate ~${ptiPct.toFixed(1)}% of income (12% of outstanding / annualized income). Ordered by interest rate.`,
+        salaryDetected: salary.detected,
+        salaryEstimateSar: salary.estimatedMonthly,
+        note: `Avalanche payoff order (Liabilities engine). PTI from estimated monthly payments (2% of outstanding) ÷ income. ${salary.label}`,
       };
     }),
 
@@ -523,10 +730,24 @@ export function buildPeriodFinancialReportModel(args: {
         cash,
         args.simulatedPrices,
       );
+      const salary = detectSalaryIncomeSar(
+        getPersonalTransactions(args.data),
+        accounts,
+        sarPerUsd,
+        6,
+        args.data,
+      );
+      const kpis = computeSalaryInvestmentKpis(args.data, args.uiExchangeRate);
       return {
         monthlyIncome: wealth.wealthSummaryReportPayload?.monthlyIncome ?? null,
         monthlyPnL: wealth.wealthSummaryReportPayload?.monthlyPnL ?? null,
         savingsRate: wealth.wealthSummaryReportPayload?.savingsRatePct ?? null,
+        salaryDetected: salary.detected,
+        salaryEstimateSar: salary.estimatedMonthly,
+        salaryLabel: salary.label,
+        salaryInvestRatePct: kpis?.salaryInvestRatePct ?? null,
+        investedFromSalarySarMonth: kpis?.investedFromSalarySarMonth ?? null,
+        fundedNotDeployedSar: kpis?.fundedNotDeployedSar ?? null,
       };
     }),
   ];
@@ -544,7 +765,15 @@ export function buildPeriodFinancialReportModel(args: {
       { id: 'open-wealth-analytics', label: 'Open Wealth Analytics', page: 'Wealth Analytics' },
       { id: 'open-budgets', label: 'Review Budgets', page: 'Budgets' },
       { id: 'open-investments', label: 'Investments hub', page: 'Investments' },
-      { id: 'open-settings-reports', label: 'Settings → Reports', page: 'Settings', action: 'open-period-financial-report' },
+      { id: 'open-subscriptions', label: 'Subscriptions', page: 'Subscriptions' },
+      { id: 'open-installments', label: 'Installments', page: 'Installments' },
+      { id: 'open-liabilities', label: 'Liabilities / payoff', page: 'Liabilities' },
+      {
+        id: 'open-settings-reports',
+        label: 'Settings → Reports',
+        page: 'Settings',
+        action: 'open-period-financial-report',
+      },
     ],
   };
 }

@@ -3,6 +3,7 @@
  */
 import {
   addMonthsToKey,
+  financialMonthKey,
   financialMonthKeysEndingAt,
   financialMonthRange,
   financialMonthRangeFromKey,
@@ -18,7 +19,7 @@ export type PeriodReportWindow = {
   end: Date;
   startIso: string;
   endIso: string;
-  /** Financial-month keys covered (empty for pure calendar custom when msd unused). */
+  /** Financial-month keys covering [start, end] (oldest → newest). */
   finKeys: FinancialMonthKey[];
   monthStartDay: number;
 };
@@ -51,6 +52,24 @@ function formatRangeLabel(start: Date, end: Date, preset: PeriodReportPreset): s
   return `${preset} · ${a} – ${b}`;
 }
 
+/** Financial-month keys that overlap [start, end] inclusive. */
+export function financialMonthKeysCoveringRange(
+  start: Date,
+  end: Date,
+  monthStartDay: number,
+): FinancialMonthKey[] {
+  const msd = Number(monthStartDay) || 1;
+  const keys: FinancialMonthKey[] = [];
+  let key = financialMonthKey(start, msd);
+  const endKey = financialMonthKey(end, msd);
+  for (let i = 0; i < 120; i++) {
+    keys.push(key);
+    if (key.year === endKey.year && key.month === endKey.month) break;
+    key = addMonthsToKey(key, 1);
+  }
+  return keys;
+}
+
 function windowFromRange(
   preset: PeriodReportPreset,
   start: Date,
@@ -60,6 +79,7 @@ function windowFromRange(
 ): PeriodReportWindow {
   const s = startOfLocalDay(start);
   const e = endOfLocalDay(end);
+  const keys = finKeys.length > 0 ? finKeys : financialMonthKeysCoveringRange(s, e, monthStartDay);
   return {
     preset,
     label: formatRangeLabel(s, e, preset),
@@ -67,7 +87,7 @@ function windowFromRange(
     end: e,
     startIso: toIsoDay(s),
     endIso: toIsoDay(e),
-    finKeys,
+    finKeys: keys,
     monthStartDay,
   };
 }
@@ -115,7 +135,6 @@ export function resolvePeriodReportWindow(args: {
   }
 
   // FY and YTD: financial year from column 1 of current FY through today
-  // When msd===1, YTD aligns with calendar YTD months; still use FM keys for budget columns.
   if (args.preset === 'YTD' && msd === 1) {
     const start = new Date(today.getFullYear(), 0, 1);
     const finKeys: FinancialMonthKey[] = Array.from({ length: currentFm.key.month }, (_, i) => ({
@@ -138,24 +157,7 @@ export function resolvePeriodReportPriorTwin(current: PeriodReportWindow): Perio
   const durationMs = Math.max(0, current.end.getTime() - current.start.getTime());
   const priorEnd = new Date(current.start.getTime() - 1);
   const priorStart = new Date(priorEnd.getTime() - durationMs);
-  const finKeys =
-    current.finKeys.length > 0
-      ? (() => {
-          const anchorKey = addMonthsToKey(current.finKeys[0]!, -1);
-          return financialMonthKeysEndingAt(
-            financialMonthRangeFromKey(anchorKey, current.monthStartDay).end,
-            current.finKeys.length,
-            current.monthStartDay,
-          );
-        })()
-      : [];
-  return windowFromRange(
-    current.preset,
-    priorStart,
-    priorEnd,
-    finKeys,
-    current.monthStartDay,
-  );
+  return windowFromRange(current.preset, priorStart, priorEnd, [], current.monthStartDay);
 }
 
 export function resolvePeriodReportTwinWindows(args: {
@@ -186,4 +188,24 @@ export function validateCustomPeriodRange(
     return { ok: false, message: 'Custom range cannot exceed 5 years.' };
   }
   return { ok: true };
+}
+
+/** Map report preset → analytics spend preset for budget engines. */
+export function periodReportToAnalyticsPreset(
+  preset: PeriodReportPreset,
+  current: PeriodReportWindow,
+): 'MTD' | '3M' | '6M' | '12M' | 'YTD' {
+  if (preset === '12M') return '12M';
+  if (preset === 'FY' || preset === 'YTD' || preset === 'CY') return 'YTD';
+  const months = Math.max(
+    1,
+    Math.round(
+      current.finKeys.length ||
+        (current.end.getTime() - current.start.getTime()) / (30.4375 * 86400000),
+    ),
+  );
+  if (months >= 10) return '12M';
+  if (months >= 5) return '6M';
+  if (months >= 2) return '3M';
+  return 'MTD';
 }
