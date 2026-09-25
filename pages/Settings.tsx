@@ -17,6 +17,7 @@ import { useExtendedCanonicalMetrics, pickWealthSummary } from '../hooks/useCano
 import { ExtendedMetricGate } from '../components/shared/ExtendedMetricGate';
 import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { normalizeSalaryInvestmentTargets } from '../services/salaryInvestmentSettings';
+import { mergeUiAcks, normalizeUiAcks } from '../services/uiAcks';
 import { loadTradingPolicy, saveTradingPolicy, type TradingPolicy, DEFAULT_TRADING_POLICY, TRADING_POLICY_PRESETS } from '../services/tradingPolicy';
 import { usePrivacyMask } from '../context/PrivacyContext';
 import {
@@ -875,6 +876,56 @@ const Settings: React.FC<{
                                     const v = e.target.checked;
                                     setLocalSettings((prev) => ({ ...prev, includeRewardsInNetWorth: v }));
                                     updateSettings({ includeRewardsInNetWorth: v });
+                                }}
+                            />
+                        </label>
+                        <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3 cursor-pointer md:col-span-2">
+                            <span className="text-sm text-slate-700">
+                                <span className="font-medium">Today P/L includes realized from sells</span>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Off (default): Today counts only shares you still hold. On: also add day P/L realized on shares sold today.
+                                </p>
+                            </span>
+                            <input
+                                type="checkbox"
+                                className="h-5 w-5 rounded border-slate-300 text-primary"
+                                checked={localSettings?.uiAcks?.dailyPnLPrefs?.includeRealizedFromSells === true}
+                                onChange={(e) => {
+                                    const v = e.target.checked;
+                                    const latest = normalizeUiAcks(localSettings?.uiAcks);
+                                    const next = mergeUiAcks(latest, {
+                                        dailyPnLPrefs: {
+                                            ...latest.dailyPnLPrefs,
+                                            includeRealizedFromSells: v,
+                                        },
+                                    });
+                                    setLocalSettings((prev) => ({ ...prev, uiAcks: next }));
+                                    updateSettings({ uiAcks: next });
+                                }}
+                            />
+                        </label>
+                        <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-3 cursor-pointer md:col-span-2">
+                            <span className="text-sm text-slate-700">
+                                <span className="font-medium">Zero Today P/L outside market hours</span>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Off (default): shows the provider’s day move vs prior close anytime. On: equity Today is 0 when the listing’s regular session is closed.
+                                </p>
+                            </span>
+                            <input
+                                type="checkbox"
+                                className="h-5 w-5 rounded border-slate-300 text-primary"
+                                checked={localSettings?.uiAcks?.dailyPnLPrefs?.zeroOutsideSession === true}
+                                onChange={(e) => {
+                                    const v = e.target.checked;
+                                    const latest = normalizeUiAcks(localSettings?.uiAcks);
+                                    const next = mergeUiAcks(latest, {
+                                        dailyPnLPrefs: {
+                                            ...latest.dailyPnLPrefs,
+                                            zeroOutsideSession: v,
+                                        },
+                                    });
+                                    setLocalSettings((prev) => ({ ...prev, uiAcks: next }));
+                                    updateSettings({ uiAcks: next });
                                 }}
                             />
                         </label>

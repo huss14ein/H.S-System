@@ -38,6 +38,11 @@ export type UiAcks = {
   cashBalanceDrift?: CashBalanceDriftAckMap;
   /** Broker cash vs ledger-flows KPI warning on System Health. */
   investmentCashLedgerDrift?: InvestmentCashLedgerAck;
+  /** Investments Today / Daily P/L display preferences (defaults off = current behavior). */
+  dailyPnLPrefs?: {
+    includeRealizedFromSells?: boolean;
+    zeroOutsideSession?: boolean;
+  };
 };
 
 /** Prevent unbounded settings.ui_acks growth from long-lived workspaces. */
@@ -163,10 +168,21 @@ export function normalizeUiAcks(raw: unknown): UiAcks {
       };
     }
   }
+  let dailyPnLPrefs: UiAcks['dailyPnLPrefs'];
+  if (isPlainObject(o.dailyPnLPrefs)) {
+    dailyPnLPrefs = {
+      ...(o.dailyPnLPrefs.includeRealizedFromSells === true ? { includeRealizedFromSells: true } : {}),
+      ...(o.dailyPnLPrefs.zeroOutsideSession === true ? { zeroOutsideSession: true } : {}),
+    };
+    if (!dailyPnLPrefs.includeRealizedFromSells && !dailyPnLPrefs.zeroOutsideSession) {
+      dailyPnLPrefs = undefined;
+    }
+  }
   return {
     ...(Object.keys(holdings).length ? { holdingsQtyIntegrity: holdings } : {}),
     ...(Object.keys(cash).length ? { cashBalanceDrift: cash } : {}),
     ...(inv ? { investmentCashLedgerDrift: inv } : {}),
+    ...(dailyPnLPrefs ? { dailyPnLPrefs } : {}),
   };
 }
 
@@ -188,6 +204,8 @@ export function mergeUiAcks(previous: UiAcks | null | undefined, incoming: UiAck
       incoming && 'investmentCashLedgerDrift' in incoming
         ? next.investmentCashLedgerDrift
         : prev.investmentCashLedgerDrift,
+    dailyPnLPrefs:
+      incoming && 'dailyPnLPrefs' in incoming ? next.dailyPnLPrefs : prev.dailyPnLPrefs,
   };
   return normalizeUiAcks(merged);
 }

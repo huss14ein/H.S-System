@@ -12,7 +12,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { useExtendedCanonicalMetrics } from '../hooks/useCanonicalFinancialMetrics';
 import { toSAR } from '../utils/currencyMath';
-import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
+import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { getPersonalInvestments } from '../utils/wealthScope';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import type { InvestmentPortfolio } from '../types';
@@ -24,6 +24,15 @@ import {
 } from '../components/SymbolWithCompanyName';
 import MultiStockAnalysisPanel from '../components/investments/MultiStockAnalysisPanel';
 import { SectionLoadingPlaceholder } from '../components/shared/SectionLoadingPlaceholder';
+import {
+    buildSameDayTradeIndex,
+    computeHoldingDailyPnLBreakdown,
+    formatHoldingDailyPnLBreakdownTitle,
+    resolveDailyPnLPrefs,
+} from '../services/holdingDailyPnL';
+import { appCalendarTodayYmd } from '../services/reconciliation/constants';
+import { useFormatCurrency } from '../hooks/useFormatCurrency';
+import CurrencyDualDisplay from '../components/CurrencyDualDisplay';
 
 type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recovery Plan' | 'Watchlist' | 'AI Rebalancer' | 'Dividend Tracker' | 'Execution History';
 
@@ -47,13 +56,15 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
 
     const allHoldingsWithGains = useMemo(() => {
         const investments = getPersonalInvestments(data);
-        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR' })[] = investments.flatMap(
-            (p: InvestmentPortfolio) =>
+        const allHoldings: (Holding & { portfolioCurrency?: 'USD' | 'SAR'; portfolioId?: string; portfolioName?: string })[] =
+            investments.flatMap((p: InvestmentPortfolio) =>
                 (p.holdings || []).map((h: Holding) => ({
                     ...h,
                     portfolioCurrency: resolveInvestmentPortfolioCurrency(p),
+                    portfolioId: p.id,
+                    portfolioName: p.name,
                 })),
-        );
+            );
 
         const allHoldingsWithGains = allHoldings
             .map((h) => {
@@ -79,6 +90,54 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
             .filter((h) => Number.isFinite(h.currentValue) && h.currentValue > 0);
         return allHoldingsWithGains;
     }, [data, simulatedPrices, sarPerUsd]);
+
+    const dailyPnLPrefs = useMemo(() => resolveDailyPnLPrefs(data?.settings), [data?.settings]);
+    const { formatCurrencyString } = useFormatCurrency();
+
+    /** Top Today movers — same helper as holdings table; one shared same-day index (cheap). */
+    const todayMovers = useMemo(() => {
+        const investments = getPersonalInvestments(data);
+        const asOfYmd = appCalendarTodayYmd();
+        const holdingsForCa = investments.flatMap((p) =>
+            (p.holdings || []).map((h) => ({
+                portfolioId: p.id,
+                symbol: String(h.symbol ?? ''),
+                quantity: Number(h.quantity) || 0,
+            })),
+        );
+        const sameDayIndex = buildSameDayTradeIndex(data?.investmentTransactions, asOfYmd, {
+            corporateActionEvents: data?.corporateActionEvents,
+            holdingsForCa,
+        });
+        const rows = allHoldingsWithGains
+            .filter((h) => holdingUsesLiveQuote(h) && Number(h.quantity) > 0)
+            .map((h) => {
+                const book = (h.portfolioCurrency ?? 'USD') as 'USD' | 'SAR';
+                const breakdown = computeHoldingDailyPnLBreakdown({
+                    holding: h,
+                    portfolioId: h.portfolioId,
+                    bookCurrency: book,
+                    sarPerUsd,
+                    simulatedPrices,
+                    sameDayIndex,
+                    includeRealizedFromSells: dailyPnLPrefs.includeRealizedFromSells,
+                    zeroOutsideSession: dailyPnLPrefs.zeroOutsideSession,
+                    asOfYmd,
+                });
+                return {
+                    symbol: h.symbol,
+                    name: h.name,
+                    portfolioName: h.portfolioName,
+                    book,
+                    breakdown,
+                    todaySar: toSAR(breakdown.totalBook, book, sarPerUsd),
+                };
+            })
+            .filter((r) => Math.abs(r.todaySar) > 0.005)
+            .sort((a, b) => Math.abs(b.todaySar) - Math.abs(a.todaySar))
+            .slice(0, 8);
+        return rows;
+    }, [allHoldingsWithGains, data, simulatedPrices, sarPerUsd, dailyPnLPrefs]);
 
     const holdingSymbolsForNames = useMemo(() => symbolsNeedingCompanyName(allHoldingsWithGains), [allHoldingsWithGains]);
     const { names: companyNameMap } = useCompanyNames(holdingSymbolsForNames);
@@ -251,6 +310,55 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                 <p className="mt-2 text-sm text-emerald-700">Allocation concentration is within recommended guardrails.</p>
               )}
             </div>
+
+            {todayMovers.length > 0 ? (
+              <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <p className="text-sm font-semibold text-slate-800">Today’s movers</p>
+                  <p className="text-xs text-slate-500">
+                    Same Today math as Portfolios
+                    {dailyPnLPrefs.includeRealizedFromSells ? ' · incl. realized sells' : ''}
+                    {dailyPnLPrefs.zeroOutsideSession ? ' · session-gated' : ''}
+                  </p>
+                </div>
+                <ul className="divide-y divide-sky-100/80">
+                  {todayMovers.map((row) => {
+                    const tip = formatHoldingDailyPnLBreakdownTitle(row.breakdown, (n) =>
+                      formatCurrencyString(n, { inCurrency: row.book, digits: 2 }),
+                    );
+                    return (
+                      <li
+                        key={`${row.portfolioName ?? ''}:${row.symbol}`}
+                        className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0"
+                        title={tip}
+                      >
+                        <div className="min-w-0">
+                          <ResolvedSymbolLabel
+                            symbol={row.symbol}
+                            storedName={row.name}
+                            names={companyNameMap}
+                            layout="inline"
+                            symbolClassName="text-sm font-semibold text-slate-900"
+                            companyClassName="text-xs text-slate-500"
+                          />
+                          {row.portfolioName ? (
+                            <p className="text-[11px] text-slate-500 mt-0.5">{row.portfolioName}</p>
+                          ) : null}
+                        </div>
+                        <CurrencyDualDisplay
+                          value={row.breakdown.totalBook}
+                          inCurrency={row.book}
+                          digits={0}
+                          size="base"
+                          colorize
+                          weight="bold"
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                 <div className="rounded-xl border border-cyan-200 bg-cyan-50/40 p-4 border-l-4 border-l-cyan-500">

@@ -101,7 +101,9 @@ import {
 } from '../utils/currencyMath';
 import {
     buildSameDayTradeIndex,
-    computeHoldingDailyPnLInBookCurrency,
+    computeHoldingDailyPnLBreakdown,
+    formatHoldingDailyPnLBreakdownTitle,
+    resolveDailyPnLPrefs,
 } from '../services/holdingDailyPnL';
 import { appCalendarTodayYmd } from '../services/reconciliation/constants';
 import { effectiveHoldingValueInBookCurrency, effectiveHoldingUnitPriceInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
@@ -1888,6 +1890,9 @@ const HoldingDetailModal: React.FC<{
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const sarPerUsd = useCanonicalSpotFx();
+    const { data: dataCtx } = useContext(DataContext)!;
+    const { simulatedPrices: liveQuoteMap } = useMarketPrices();
+    const dailyPnLPrefs = useMemo(() => resolveDailyPnLPrefs(dataCtx?.settings), [dataCtx?.settings]);
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [analystAr, setAnalystAr] = useState<string | null>(null);
     const [analystDisplayLang, setAnalystDisplayLang] = useState<'en' | 'ar'>(() => {
@@ -2035,6 +2040,36 @@ const HoldingDetailModal: React.FC<{
 
     const displayName = holding.name || (holding as any).name || holding.symbol;
     const priceTrendPercent = holding.priceChangePercent ?? holding.gainLossPercent;
+    const todayBreakdown = (() => {
+        if (!portfolio) return null;
+        const asOfYmd = appCalendarTodayYmd();
+        const sameDayIndex = buildSameDayTradeIndex(dataCtx?.investmentTransactions, asOfYmd, {
+            corporateActionEvents: dataCtx?.corporateActionEvents,
+            holdingsForCa: [
+                {
+                    portfolioId: portfolio.id,
+                    symbol: String(holding.symbol ?? ''),
+                    quantity: Number(holding.quantity) || 0,
+                },
+            ],
+        });
+        return computeHoldingDailyPnLBreakdown({
+            holding,
+            portfolioId: portfolio.id,
+            bookCurrency: portfolioCurrency,
+            sarPerUsd,
+            simulatedPrices: liveQuoteMap,
+            sameDayIndex,
+            includeRealizedFromSells: dailyPnLPrefs.includeRealizedFromSells,
+            zeroOutsideSession: dailyPnLPrefs.zeroOutsideSession,
+            asOfYmd,
+        });
+    })();
+    const todayBreakdownTitle = todayBreakdown
+        ? formatHoldingDailyPnLBreakdownTitle(todayBreakdown, (n) =>
+              formatCurrencyString(n, { inCurrency: holdingCurrency, digits: 2 }),
+          )
+        : '';
     const currentPrice = holding.quantity > 0 ? holding.currentValue / holding.quantity : holding.avgCost ?? 0;
     const currentPriceDisplay = convertFromPortfolioToHolding(currentPrice);
     const marketValueDisplay = convertFromPortfolioToHolding(holding.currentValue);
@@ -2121,6 +2156,19 @@ const HoldingDetailModal: React.FC<{
                         <p className={`share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight ${holding.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`} title={fmt(gainLossDisplay)}>{fmtColor(gainLossDisplay)}</p>
                         <p className="share-detail-metric-value w-full text-xs text-slate-500 mt-0.5 !whitespace-normal !overflow-visible !text-clip break-words leading-tight" title={fmt(totalCostDisplay)}>on cost {fmt(totalCostDisplay)}</p>
                     </div>
+                    {todayBreakdown ? (
+                        <div className="rounded-xl border border-sky-100 bg-sky-50/40 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]" title={todayBreakdownTitle}>
+                            <p className="share-detail-metric-label w-full text-xs font-semibold text-sky-800 uppercase tracking-wide">Today</p>
+                            <p className={`share-detail-metric-value w-full mt-1 text-base sm:text-lg font-bold tabular-nums !whitespace-normal !overflow-visible !text-clip break-words leading-tight ${todayBreakdown.totalBook >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {fmtColor(todayBreakdown.totalBook)}
+                            </p>
+                            <p className="share-detail-metric-value w-full text-xs text-sky-800/80 mt-0.5 !whitespace-normal">
+                                Overnight {fmt(todayBreakdown.overnightBook)} · Bought {fmt(todayBreakdown.boughtTodayBook)}
+                                {todayBreakdown.soldQtyExcluded > 0 ? ` · Sold ${todayBreakdown.soldQtyExcluded} sh excl.` : ''}
+                                {todayBreakdown.includeRealized ? ` · Realized ${fmt(todayBreakdown.realizedSoldBook)}` : ''}
+                            </p>
+                        </div>
+                    ) : null}
                     {Math.abs(realizedPnLStored) > 0.01 ? (
                         <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4 min-w-0 flex flex-col items-start justify-start text-left min-h-[126px]">
                             <p className="share-detail-metric-label w-full text-xs font-semibold text-violet-700 uppercase tracking-wide">Realized G/L</p>
@@ -3018,6 +3066,8 @@ const PlatformCardInner: React.FC<{
     const showPersonalScopeNote = portfolios.length > portfoliosForMetrics.length;
     const { formatCurrencyString } = useFormatCurrency();
     const { data: dataCtx } = useContext(DataContext)!;
+    const dailyPnLPrefs = useMemo(() => resolveDailyPnLPrefs(dataCtx?.settings), [dataCtx?.settings]);
+    const corporateActionEvents = dataCtx?.corporateActionEvents ?? null;
     const auth = useContext(AuthContext);
     const canReconcile = String(auth?.userRole ?? '').trim().toLowerCase() !== 'restricted';
     const { openPassport } = useMetricPassport();
@@ -3053,8 +3103,10 @@ const PlatformCardInner: React.FC<{
                 platformCurrency,
                 unrealizedPnLBasis: 'net_capital',
                 datedFxData: dataCtx ?? null,
+                dailyPnLPrefs,
+                corporateActionEvents,
             }),
-        [portfoliosForMetrics, transactions, metricsTransactions, kpiQuotePrices, throttledPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx, investmentsForInfer],
+        [portfoliosForMetrics, transactions, metricsTransactions, kpiQuotePrices, throttledPrices, platformCurrency, sarPerUsd, availableCashByCurrency, dataCtx, investmentsForInfer, dailyPnLPrefs, corporateActionEvents],
     );
     const {
         totalValueInSAR,
@@ -3134,6 +3186,8 @@ const PlatformCardInner: React.FC<{
                 dailyPnLPrices: throttledPrices,
                 accountAvailableCashByCurrency: availableCashByCurrency,
                 datedFxData: dataCtx ?? null,
+                dailyPnLPrefs,
+                corporateActionEvents,
             });
             if (aborted) return;
             startTransition(() => setPortfolioKpiBundle(bundle));
@@ -3153,6 +3207,8 @@ const PlatformCardInner: React.FC<{
         kpiQuotePrices,
         throttledPrices,
         availableCashByCurrency,
+        dailyPnLPrefs,
+        corporateActionEvents,
     ]);
 
     const totalHoldings = portfolios.reduce((sum, p) => sum + (p.holdings?.length ?? 0), 0);
@@ -3164,11 +3220,21 @@ const PlatformCardInner: React.FC<{
         return holdingsOutliers.filter((o) => names.has(o.portfolioName));
     }, [holdingsOutliers, portfolios]);
 
-    /** Same-day buy/sell index so Today P/L excludes sold shares and marks new buys from purchase price. */
+    /** Same-day buy/sell (+ CA stock-dividend) index — built once per card for holdings Today cells. */
     const sameDayTradeIndex = useMemo(() => {
         const txs = metricsTransactions ?? transactions;
-        return buildSameDayTradeIndex(txs, appCalendarTodayYmd());
-    }, [metricsTransactions, transactions]);
+        const holdingsForCa = portfolios.flatMap((p) =>
+            (p.holdings || []).map((h) => ({
+                portfolioId: p.id,
+                symbol: String(h.symbol ?? ''),
+                quantity: Number(h.quantity) || 0,
+            })),
+        );
+        return buildSameDayTradeIndex(txs, appCalendarTodayYmd(), {
+            corporateActionEvents,
+            holdingsForCa,
+        });
+    }, [metricsTransactions, transactions, portfolios, corporateActionEvents]);
 
     const platformPeriodPnL = useMemo(() => {
         if (portfolioPnLSummary) {
@@ -3748,15 +3814,22 @@ const PlatformCardInner: React.FC<{
                                                     const liveQuoteRow = holdingUsesLiveQuote(h)
                                                         ? lookupLiveQuoteForSymbol(simulatedPrices, h.symbol ?? hSym)
                                                         : undefined;
-                                                    /** Today = overnight still-held × day change + bought-today still-held × (last − buy). Sold today excluded. */
-                                                    const rowDailyPnL = computeHoldingDailyPnLInBookCurrency({
+                                                    /** Today = overnight still-held × day change + bought-today still-held × (last − buy). Sold today excluded (unless Settings include realized). */
+                                                    const rowDailyBreakdown = computeHoldingDailyPnLBreakdown({
                                                         holding: h,
                                                         portfolioId: portfolio.id,
                                                         bookCurrency: portfolioCurrency,
                                                         sarPerUsd,
                                                         simulatedPrices,
                                                         sameDayIndex: sameDayTradeIndex,
+                                                        includeRealizedFromSells: dailyPnLPrefs.includeRealizedFromSells,
+                                                        zeroOutsideSession: dailyPnLPrefs.zeroOutsideSession,
                                                     });
+                                                    const rowDailyPnL = rowDailyBreakdown.totalBook;
+                                                    const rowDailyPnLTitle = formatHoldingDailyPnLBreakdownTitle(
+                                                        rowDailyBreakdown,
+                                                        (n) => formatCurrencyString(n, { inCurrency: portfolioCurrency, digits: 2 }),
+                                                    );
                                                     const hasLivePrice =
                                                         holdingUsesLiveQuote(h) &&
                                                         liveQuoteRow != null &&
@@ -3883,14 +3956,16 @@ const PlatformCardInner: React.FC<{
                                                                 </div>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
-                                                                <CurrencyDualDisplay
-                                                                    value={rowDailyPnLDisplay}
-                                                                    inCurrency={holdingDisplayCurrency}
-                                                                    digits={0}
-                                                                    size="base"
-                                                                    colorize
-                                                                    weight="bold"
-                                                                />
+                                                                <span title={rowDailyPnLTitle} className="inline-flex justify-center">
+                                                                    <CurrencyDualDisplay
+                                                                        value={rowDailyPnLDisplay}
+                                                                        inCurrency={holdingDisplayCurrency}
+                                                                        digits={0}
+                                                                        size="base"
+                                                                        colorize
+                                                                        weight="bold"
+                                                                    />
+                                                                </span>
                                                             </td>
                                                             <td className="px-3 py-3 text-center">
                                                                 <span

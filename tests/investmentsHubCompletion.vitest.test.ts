@@ -36,7 +36,7 @@ describe('Investments hub completion (E2E)', () => {
     expect(read('utils/currencyMath.ts')).toContain('quoteChangeForDailyPnL');
     expect(read('services/holdingDailyPnL.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
-    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteChangeForDailyPnL');
+    expect(read('services/marketSessionLocal.ts')).toContain('zeroOutsideSession');
   });
 
   it('live quotes: cache/DB restore only — no auto network after hydrate', () => {

@@ -242,9 +242,10 @@ export function quoteDailyPnLInBookCurrency(
   sarPerUsd: number,
   asOf: Date = new Date(),
   quoteMap?: Record<string, unknown>,
+  opts?: { zeroOutsideSession?: boolean },
 ): number {
   const inst = resolveInstrumentCurrencyForQuote(symbol, bookCurrency, quoteMap);
   const q = Number.isFinite(quantity) ? Math.max(0, quantity) : 0;
-  const c = quoteChangeForDailyPnL(symbol, changePerShare, asOf);
+  const c = quoteChangeForDailyPnL(symbol, changePerShare, asOf, opts);
   return convertBetweenTradeCurrencies(c * q, inst, bookCurrency, sarPerUsd);
 }

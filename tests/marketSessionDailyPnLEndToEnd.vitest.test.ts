@@ -15,8 +15,9 @@ describe('market session daily P/L E2E', () => {
   it('single helper gates all book-currency daily P/L math', () => {
     expect(read('utils/currencyMath.ts')).toContain('quoteChangeForDailyPnL');
     expect(read('services/holdingDailyPnL.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
+    expect(read('services/holdingDailyPnL.ts')).toContain('computeHoldingDailyPnLBreakdown');
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
-    expect(read('pages/Investments.tsx')).toContain('computeHoldingDailyPnLInBookCurrency');
+    expect(read('pages/Investments.tsx')).toContain('computeHoldingDailyPnLBreakdown');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('dailyPnLSAR');
   });
 

@@ -537,7 +537,9 @@ export function computeHeadlinePersonalInvestmentRoiDecimal(
   const {
     valueSAR: commoditiesValueSar,
     dailyDeltaSAR: commoditiesDailyPnLSar,
-  } = computePersonalCommoditiesContributionSAR(data, sarPerUsd, simulatedPrices);
+  } = computePersonalCommoditiesContributionSAR(data, sarPerUsd, simulatedPrices, {
+    zeroOutsideSession: data.settings?.uiAcks?.dailyPnLPrefs?.zeroOutsideSession === true,
+  });
 
   const allCommodities = getPersonalCommodityHoldings(data);
   const commodityCost = allCommodities.reduce(
