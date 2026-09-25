@@ -69,6 +69,8 @@ describe('Period Financial Report completion (E2E)', () => {
     expect(read('services/periodReportWindow.ts')).toContain('periodReportToAnalyticsPreset');
     expect(read('services/periodReportWindow.ts')).toContain('validatePeriodReportRequest');
     expect(read('services/periodReportInstallments.ts')).toContain('fetchPeriodReportInstallmentSnapshot');
+    expect(read('services/periodReportInstallments.ts')).toContain("PENDING_ACTIVATION");
+    expect(read('services/periodReportInstallments.ts')).not.toContain('.limit(400)');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('computePortfolioPnLForWindow');
     expect(read('services/periodFinancialReportModel.ts')).toContain('reconcileDashboardVsSummaryKpis');
     expect(read('services/periodFinancialReportModel.ts')).toContain('PERIOD_REPORT_SECTION_OPTIONS');
@@ -147,6 +149,42 @@ describe('Period Financial Report completion (E2E)', () => {
     expect(html).toContain('as of today');
   });
 
+  it('period cashflow uses account_id when camelCase accountId is empty', () => {
+    const model = buildPeriodFinancialReportModel({
+      data: {
+        accounts: [{ id: 'usd-1', name: 'USD Checking', type: 'Checking', balance: 0, currency: 'USD' }],
+        transactions: [
+          {
+            id: 'tx-usd',
+            accountId: '',
+            account_id: 'usd-1',
+            date: '2026-02-05',
+            amount: 100,
+            type: 'income',
+            category: 'Salary',
+            description: 'USD pay',
+          },
+        ],
+        investments: [],
+        liabilities: [],
+        budgets: [],
+        goals: [],
+        assets: [],
+        settings: { monthStartDay: 1 },
+      } as unknown as FinancialData,
+      uiExchangeRate: 3.75,
+      getAvailableCashForAccount: () => ({ SAR: 0, USD: 0 }),
+      simulatedPrices: {},
+      preset: 'custom',
+      customStartIso: '2026-02-01',
+      customEndIso: '2026-02-28',
+      now: new Date('2026-06-15T12:00:00'),
+      includeSectionIds: ['2-cashflow'],
+    });
+    const cf = model.byId['2-cashflow']?.data as { current: { incomeSar: number } };
+    expect(cf.current.incomeSar).toBeCloseTo(375, 5);
+  });
+
   it('model soft-fail sections 1→12 + orphans + live actions', () => {
     const model = buildPeriodFinancialReportModel({
       data: EMPTY_DATA,
@@ -217,6 +255,8 @@ describe('Period Financial Report completion (E2E)', () => {
     expect(modal).toContain('PERIOD_REPORT_SECTION_OPTIONS');
     expect(modal).toContain('Export JSON');
     expect(modal).toContain('fetchPeriodReportInstallmentSnapshot');
+    expect(modal).toContain('installmentsReady');
+    expect(modal).toContain('disabled={busy || !data || !installmentsReady}');
     expect(modal).toContain('yieldToMain');
     expect(modal).toContain('busyRef');
     expect(modal).toContain('Select at least one report section');

@@ -9,7 +9,7 @@ import {
   financialMonthLookbackRange,
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
-import { getPersonalAccounts, getPersonalAssets, getPersonalInvestments, getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalAssets, getPersonalInvestments, getPersonalLiabilities, getPersonalTransactions, resolveTransactionAccountId } from '../utils/wealthScope';
 import { toSAR } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fxMapForKpiCompute, getSarPerUsdForCalendarDay } from './fxDailySeries';
@@ -121,7 +121,7 @@ function txSar(
   uiRate: number,
   fxMap: Record<string, number>,
 ): number {
-  const acc = accountsById.get(t.accountId ?? '');
+  const acc = accountsById.get(resolveTransactionAccountId(t));
   const c = acc?.currency === 'USD' ? 'USD' : 'SAR';
   const raw = Math.abs(Number(t.amount) || 0);
   if (c === 'SAR') return raw;

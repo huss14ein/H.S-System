@@ -60,6 +60,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   const smsExtractLockRef = useRef(false);
   const fileParseLockRef = useRef(false);
   const [duplicateTransactions, setDuplicateTransactions] = useState<Set<number>>(new Set());
+  const duplicateTransactionsRef = useRef(duplicateTransactions);
+  duplicateTransactionsRef.current = duplicateTransactions;
   const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -365,9 +367,13 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       }
       setSelectedTransactions(nonDuplicates);
     } else {
+      // Account edits re-flag duplicates. Keep rows the user already chose to import anyway.
+      const knownDuplicates = duplicateTransactionsRef.current;
       setSelectedTransactions((prev) => {
         const next = new Set(prev);
-        for (const d of duplicates) next.delete(d);
+        for (const d of duplicates) {
+          if (!knownDuplicates.has(d)) next.delete(d);
+        }
         return next;
       });
     }

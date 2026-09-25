@@ -148,8 +148,16 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
     return null;
   }, [data, preset, customStart, customEnd, selectedSectionIds]);
 
+  const installmentsReady = !installmentLoading && installmentSnap != null;
+
   const runPrint = useCallback(async () => {
     if (busyRef.current) return;
+    if (installmentLoading || !installmentSnap) {
+      const msg = 'Installment schedules are still loading. Try again in a moment.';
+      setLastError(msg);
+      showToast(msg, 'error');
+      return;
+    }
     const validationError = validateBeforeRun();
     if (validationError) {
       setLastError(validationError);
@@ -180,10 +188,16 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
       busyRef.current = false;
       setBusy(false);
     }
-  }, [validateBeforeRun, buildModel, showToast]);
+  }, [validateBeforeRun, buildModel, showToast, installmentLoading, installmentSnap]);
 
   const runJsonExport = useCallback(async () => {
     if (busyRef.current) return;
+    if (installmentLoading || !installmentSnap) {
+      const msg = 'Installment schedules are still loading. Try again in a moment.';
+      setLastError(msg);
+      showToast(msg, 'error');
+      return;
+    }
     const validationError = validateBeforeRun();
     if (validationError) {
       setLastError(validationError);
@@ -240,7 +254,7 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
       busyRef.current = false;
       setBusy(false);
     }
-  }, [validateBeforeRun, buildModel, showToast]);
+  }, [validateBeforeRun, buildModel, showToast, installmentLoading, installmentSnap]);
 
   const toggleSection = (id: string) => {
     setSections((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -315,11 +329,9 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
 
         <p className="text-xs text-slate-500">
           Preview window: <span className="font-medium text-slate-700">{previewLabel}</span>
-          {installmentLoading
-            ? ' · Loading installment schedules…'
-            : installmentSnap
-              ? ` · ${installmentSnap.plans.length} installment plan(s)`
-              : ''}
+          {installmentsReady && installmentSnap
+            ? ` · ${installmentSnap.plans.length} installment plan(s)`
+            : ' · Loading installment schedules…'}
         </p>
 
         <div>
@@ -387,7 +399,7 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
           <button
             type="button"
             className="btn-outline text-sm disabled:opacity-50"
-            disabled={busy || !data}
+            disabled={busy || !data || !installmentsReady}
             onClick={() => void runJsonExport()}
           >
             Export JSON
@@ -395,7 +407,7 @@ const PeriodFinancialReportModal: React.FC<PeriodFinancialReportModalProps> = ({
           <button
             type="button"
             className="btn-primary text-sm disabled:opacity-50"
-            disabled={busy || !data}
+            disabled={busy || !data || !installmentsReady}
             onClick={() => void runPrint()}
           >
             {busy ? 'Building…' : 'Print / Save as PDF'}

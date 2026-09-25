@@ -42,6 +42,8 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('parseSmsCardLast4FromNote');
     expect(stmt).toContain('requireSameAccount: true');
     expect(stmt).toContain('import anyway');
+    expect(stmt).toContain('knownDuplicates');
+    expect(stmt).not.toContain('for (const d of duplicates) next.delete(d)');
     expect(stmt).toContain('accountId: e.target.value');
     const accounts = read('pages/Accounts.tsx');
     expect(accounts).toContain('lastFourDigits');

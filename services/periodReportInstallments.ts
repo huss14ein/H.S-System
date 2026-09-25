@@ -40,6 +40,12 @@ function minorToMajor(minor: string | number | null | undefined): number {
   return n / 100;
 }
 
+/** Newest open plans only — completed history must not crowd out current schedules. */
+const MAX_OPEN_PLANS = 40;
+/** `installment_count` is capped at 48 in schema; fetch every row for the loaded plans. */
+const MAX_INSTALLMENTS_PER_PLAN = 48;
+const INSTALLMENT_PAGE_SIZE = 1000;
+
 /**
  * Fetch active/pending plans and their installment rows for the signed-in user.
  * Soft-fails to empty snapshot (never throws to callers).
@@ -59,8 +65,9 @@ export async function fetchPeriodReportInstallmentSnapshot(
     const { data: planRows, error: planErr } = await supabase
       .from('installment_plans')
       .select('id,provider,currency,total_amount_minor,installment_count,status,metadata')
+      .in('status', ['PENDING_ACTIVATION', 'ACTIVE'])
       .order('created_at', { ascending: false })
-      .limit(40);
+      .limit(MAX_OPEN_PLANS);
     if (planErr) return { ...empty, error: planErr.message };
     const plans: PeriodReportInstallmentPlan[] = (planRows ?? []).map((r: any) => {
       const meta = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
@@ -79,14 +86,23 @@ export async function fetchPeriodReportInstallmentSnapshot(
 
     const planIds = plans.map((p) => p.id);
     const byPlan = new Map(plans.map((p) => [p.id, p]));
-    const { data: instRows, error: instErr } = await supabase
-      .from('installments')
-      .select('id,plan_id,sequence,due_date,amount_minor,status,paid_at')
-      .in('plan_id', planIds)
-      .order('due_date', { ascending: true })
-      .limit(400);
-    if (instErr) {
-      return { plans, installments: [], fetchedAtIso: new Date().toISOString(), error: instErr.message };
+    const installmentCap = Math.max(planIds.length, 1) * MAX_INSTALLMENTS_PER_PLAN;
+    const instRows: any[] = [];
+    for (let from = 0; from < installmentCap; from += INSTALLMENT_PAGE_SIZE) {
+      const to = Math.min(installmentCap, from + INSTALLMENT_PAGE_SIZE) - 1;
+      const { data, error: instErr } = await supabase
+        .from('installments')
+        .select('id,plan_id,sequence,due_date,amount_minor,status,paid_at')
+        .in('plan_id', planIds)
+        .order('due_date', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to);
+      if (instErr) {
+        return { plans, installments: [], fetchedAtIso: new Date().toISOString(), error: instErr.message };
+      }
+      const batch = data ?? [];
+      instRows.push(...batch);
+      if (batch.length < to - from + 1) break;
     }
     const installments: PeriodReportInstallmentRow[] = (instRows ?? []).map((r: any) => {
       const plan = byPlan.get(String(r.plan_id));
