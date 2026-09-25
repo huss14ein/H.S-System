@@ -1,5 +1,6 @@
 /**
  * Holding Today P/L: open qty after sells + buy-day marks from purchase price.
+ * Covers all trade-day scenarios, FX, aliases, and validation guards.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -8,6 +9,7 @@ import type { Holding, InvestmentPortfolio, InvestmentTransaction } from '../typ
 import {
   buildSameDayTradeIndex,
   computeHoldingDailyPnLInBookCurrency,
+  lookupSameDayTradeSummary,
   resolveHoldingDailyPnLQuantityBreakdown,
 } from '../services/holdingDailyPnL';
 import { computePlatformCardMetrics } from '../services/investmentPlatformCardMetrics';
@@ -27,6 +29,18 @@ const holding = (partial: Partial<Holding> & Pick<Holding, 'symbol' | 'quantity'
   holdingType: partial.holdingType,
 });
 
+const tx = (
+  partial: Partial<InvestmentTransaction> &
+    Pick<InvestmentTransaction, 'id' | 'type' | 'symbol' | 'quantity' | 'price'>,
+): InvestmentTransaction => ({
+  accountId: partial.accountId ?? 'a1',
+  portfolioId: partial.portfolioId ?? 'p1',
+  date: partial.date ?? '2026-09-25',
+  total: partial.total ?? partial.quantity * partial.price,
+  currency: partial.currency,
+  ...partial,
+});
+
 describe('holding daily P/L quantity breakdown', () => {
   it('excludes shares sold today from overnight mark quantity', () => {
     const b = resolveHoldingDailyPnLQuantityBreakdown(60, {
@@ -43,7 +57,7 @@ describe('holding daily P/L quantity breakdown', () => {
     const b = resolveHoldingDailyPnLQuantityBreakdown(20, {
       boughtQty: 50,
       soldQty: 40,
-      buys: [{ quantity: 50, priceBook: 100, dateYmd: '2026-09-25' }],
+      buys: [{ quantity: 50, price: 100, dateYmd: '2026-09-25' }],
     });
     expect(b.startOfDayQty).toBe(10);
     expect(b.overnightStillHeld).toBe(0);
@@ -55,6 +69,22 @@ describe('holding daily P/L quantity breakdown', () => {
     expect(b.overnightStillHeld).toBe(15);
     expect(b.boughtStillHeld).toBe(0);
   });
+
+  it('sell exceeds start-of-day (oversold ledger) clamps overnight to 0', () => {
+    const b = resolveHoldingDailyPnLQuantityBreakdown(5, {
+      boughtQty: 10,
+      soldQty: 100,
+      buys: [{ quantity: 10, price: 50, dateYmd: '2026-09-25' }],
+    });
+    expect(b.overnightStillHeld).toBe(0);
+    expect(b.boughtStillHeld).toBe(5);
+    expect(b.overnightStillHeld + b.boughtStillHeld).toBe(5);
+  });
+
+  it('NaN / negative current quantity → zeros', () => {
+    expect(resolveHoldingDailyPnLQuantityBreakdown(Number.NaN, null).currentQty).toBe(0);
+    expect(resolveHoldingDailyPnLQuantityBreakdown(-3, null).currentQty).toBe(0);
+  });
 });
 
 describe('computeHoldingDailyPnLInBookCurrency', () => {
@@ -62,9 +92,8 @@ describe('computeHoldingDailyPnLInBookCurrency', () => {
   const asOfYmd = '2026-09-25';
 
   it('no trades: change × current quantity', () => {
-    const h = holding({ symbol: 'AAPL', quantity: 10, avgCost: 100 });
     const pnl = computeHoldingDailyPnLInBookCurrency({
-      holding: h,
+      holding: holding({ symbol: 'AAPL', quantity: 10 }),
       portfolioId: 'p1',
       bookCurrency: 'USD',
       sarPerUsd: 3.75,
@@ -77,80 +106,127 @@ describe('computeHoldingDailyPnLInBookCurrency', () => {
   });
 
   it('sell today: only remaining shares get prior-close day move', () => {
-    const h = holding({ symbol: 'AAPL', quantity: 6, avgCost: 100 });
-    const txs: InvestmentTransaction[] = [
-      {
-        id: 's1',
-        accountId: 'a1',
-        portfolioId: 'p1',
-        date: asOfYmd,
-        type: 'sell',
-        symbol: 'AAPL',
-        quantity: 4,
-        price: 108,
-        total: 432,
-      },
-    ];
     const pnl = computeHoldingDailyPnLInBookCurrency({
-      holding: h,
+      holding: holding({ symbol: 'AAPL', quantity: 6 }),
       portfolioId: 'p1',
       bookCurrency: 'USD',
       sarPerUsd: 3.75,
-      simulatedPrices: { AAPL: { price: 110, change: 2, changePercent: 1.85 } },
-      transactions: txs,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 4, price: 108 })],
       asOf,
       asOfYmd,
     });
-    // start 10, sold 4 → overnight still 6 × $2 = $12 (not 10×2)
     expect(pnl).toBeCloseTo(12, 6);
   });
 
   it('buy today: new shares mark from buy price, not full day change', () => {
-    const h = holding({ symbol: 'AAPL', quantity: 15, avgCost: 100 });
-    const txs: InvestmentTransaction[] = [
-      {
-        id: 'b1',
-        accountId: 'a1',
-        portfolioId: 'p1',
-        date: asOfYmd,
-        type: 'buy',
-        symbol: 'AAPL',
-        quantity: 5,
-        price: 108,
-        total: 540,
-      },
-    ];
     const pnl = computeHoldingDailyPnLInBookCurrency({
-      holding: h,
+      holding: holding({ symbol: 'AAPL', quantity: 15 }),
       portfolioId: 'p1',
       bookCurrency: 'USD',
       sarPerUsd: 3.75,
-      simulatedPrices: { AAPL: { price: 110, change: 2, changePercent: 1.85 } },
-      transactions: txs,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 5, price: 109 })],
       asOf,
       asOfYmd,
     });
-    // overnight 10 × $2 = 20; bought 5 × (110−108) = 10; total 30 (not 15×2=30 by coincidence — assert structure)
-    expect(pnl).toBeCloseTo(30, 6);
-    // If wrongly applied full day change to all 15: also 30. Change buy price to prove:
-    const pnl2 = computeHoldingDailyPnLInBookCurrency({
-      holding: h,
+    // overnight 10×2=20 + bought 5×(110−109)=5 → 25 (naive 15×2=30)
+    expect(pnl).toBeCloseTo(25, 6);
+  });
+
+  it('multiple buys at different prices allocate FIFO after overnight sells', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 12 }),
       portfolioId: 'p1',
       bookCurrency: 'USD',
       sarPerUsd: 3.75,
-      simulatedPrices: { AAPL: { price: 110, change: 2, changePercent: 1.85 } },
-      transactions: [{ ...txs[0], price: 109, total: 545 }],
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [
+        tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 4, price: 108 }),
+        tx({ id: 'b2', type: 'buy', symbol: 'AAPL', quantity: 3, price: 109 }),
+        tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 5, price: 110 }),
+      ],
       asOf,
       asOfYmd,
     });
-    // overnight 20 + bought 5×(110−109)=5 → 25; naive change×qty would still be 30
-    expect(pnl2).toBeCloseTo(25, 6);
+    // start=10, sell 5 overnight → overnight still 5×2=10
+    // buys 7, none sold from buys → 4×(110−108)+3×(110−109)=8+3=11; total 21
+    expect(pnl).toBeCloseTo(21, 6);
+  });
+
+  it('partial day-trade: sell into today’s buys after overnight depleted', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 20 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [
+        tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 50, price: 108 }),
+        tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 40, price: 109 }),
+      ],
+      asOf,
+      asOfYmd,
+    });
+    // start=10, sell 40 → overnight 0; bought still 20 × (110−108)=40
+    expect(pnl).toBeCloseTo(40, 6);
+  });
+
+  it('US ticker in SAR book converts overnight day move', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 10 }),
+      portfolioId: 'p1',
+      bookCurrency: 'SAR',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [],
+      asOf,
+      asOfYmd,
+    });
+    expect(pnl).toBeCloseTo(20 * 3.75, 6);
+  });
+
+  it('buy price in USD converts into SAR book for midday buy MTM', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 5 }),
+      portfolioId: 'p1',
+      bookCurrency: 'SAR',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [
+        tx({
+          id: 'b1',
+          type: 'buy',
+          symbol: 'AAPL',
+          quantity: 5,
+          price: 108,
+          currency: 'USD',
+        }),
+      ],
+      asOf,
+      asOfYmd,
+    });
+    // all bought today: (110−108)×5 × 3.75
+    expect(pnl).toBeCloseTo(2 * 5 * 3.75, 6);
+  });
+
+  it('symbol alias: holding 1120.SR matches sell recorded as 1120', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: '1120.SR', quantity: 6, avgCost: 80 }),
+      portfolioId: 'p1',
+      bookCurrency: 'SAR',
+      sarPerUsd: 3.75,
+      simulatedPrices: { '1120.SR': { price: 90, change: 1 } },
+      transactions: [tx({ id: 's1', type: 'sell', symbol: '1120', quantity: 4, price: 89 })],
+      asOf,
+      asOfYmd,
+    });
+    expect(pnl).toBeCloseTo(6, 6);
   });
 
   it('uses changePercent when change is zero', () => {
-    const h = holding({ symbol: 'AAPL', quantity: 10, avgCost: 100 });
     const pnl = computeHoldingDailyPnLInBookCurrency({
-      holding: h,
+      holding: holding({ symbol: 'AAPL', quantity: 10 }),
       portfolioId: 'p1',
       bookCurrency: 'USD',
       sarPerUsd: 3.75,
@@ -163,9 +239,8 @@ describe('computeHoldingDailyPnLInBookCurrency', () => {
   });
 
   it('manual fund holdings → 0', () => {
-    const h = holding({ symbol: 'FUND', quantity: 10, holdingType: 'manual_fund' });
     const pnl = computeHoldingDailyPnLInBookCurrency({
-      holding: h,
+      holding: holding({ symbol: 'FUND', quantity: 10, holdingType: 'manual_fund' }),
       portfolioId: 'p1',
       bookCurrency: 'SAR',
       sarPerUsd: 3.75,
@@ -175,6 +250,104 @@ describe('computeHoldingDailyPnLInBookCurrency', () => {
       asOfYmd,
     });
     expect(pnl).toBe(0);
+  });
+
+  it('missing quote / invalid FX / zero qty → 0', () => {
+    const base = {
+      holding: holding({ symbol: 'AAPL', quantity: 10 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD' as const,
+      asOf,
+      asOfYmd,
+      transactions: [] as InvestmentTransaction[],
+    };
+    expect(
+      computeHoldingDailyPnLInBookCurrency({
+        ...base,
+        sarPerUsd: 3.75,
+        simulatedPrices: {},
+      }),
+    ).toBe(0);
+    expect(
+      computeHoldingDailyPnLInBookCurrency({
+        ...base,
+        sarPerUsd: 0,
+        simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      }),
+    ).toBe(0);
+    expect(
+      computeHoldingDailyPnLInBookCurrency({
+        ...base,
+        holding: holding({ symbol: 'AAPL', quantity: 0 }),
+        sarPerUsd: 3.75,
+        simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      }),
+    ).toBe(0);
+  });
+
+  it('ignores non-buy/sell same-day txs (dividend/deposit)', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 10 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [
+        tx({ id: 'd1', type: 'dividend', symbol: 'AAPL', quantity: 0, price: 0, total: 5 }),
+        tx({ id: 'dep', type: 'deposit', symbol: '', quantity: 0, price: 0, total: 1000 }),
+      ],
+      asOf,
+      asOfYmd,
+    });
+    expect(pnl).toBeCloseTo(20, 6);
+  });
+
+  it('does not apply another portfolio’s same-day sell', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 10 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [
+        tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 9, price: 110, portfolioId: 'p2' }),
+      ],
+      asOf,
+      asOfYmd,
+    });
+    expect(pnl).toBeCloseTo(20, 6);
+  });
+
+  it('invalid buy price falls back to prior-close day move for those shares', () => {
+    const pnl = computeHoldingDailyPnLInBookCurrency({
+      holding: holding({ symbol: 'AAPL', quantity: 5 }),
+      portfolioId: 'p1',
+      bookCurrency: 'USD',
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      transactions: [tx({ id: 'b1', type: 'buy', symbol: 'AAPL', quantity: 5, price: Number.NaN })],
+      asOf,
+      asOfYmd,
+    });
+    // All bought today, buy price invalid → 5 × $2 day change
+    expect(pnl).toBeCloseTo(10, 6);
+  });
+});
+
+describe('same-day trade index', () => {
+  it('scopes by calendar day and portfolio; aliases share a key', () => {
+    const idx = buildSameDayTradeIndex(
+      [
+        tx({ id: '1', type: 'sell', symbol: '1120.SR', quantity: 3, price: 1, date: '2026-09-25' }),
+        tx({ id: '2', type: 'sell', symbol: '1120', quantity: 2, price: 1, date: '2026-09-25' }),
+        tx({ id: '3', type: 'sell', symbol: '1120.SR', quantity: 99, price: 1, date: '2026-09-24' }),
+        tx({ id: '4', type: 'sell', symbol: '1120.SR', quantity: 7, price: 1, date: '2026-09-25', portfolioId: 'p2' }),
+      ],
+      '2026-09-25',
+    );
+    const p1 = lookupSameDayTradeSummary(idx, 'p1', '1120');
+    expect(p1.soldQty).toBe(5);
+    expect(lookupSameDayTradeSummary(idx, 'p2', '1120.SR').soldQty).toBe(7);
   });
 });
 
@@ -186,25 +359,12 @@ describe('platform Daily P/L uses trade-aware holding helper', () => {
       name: 'Main',
       accountId: 'acc1',
       currency: 'USD',
-      holdings: [holding({ symbol: 'AAPL', quantity: 6, avgCost: 100, currentValue: 660 })],
+      holdings: [holding({ symbol: 'AAPL', quantity: 6, currentValue: 660 })],
     };
-    const txs: InvestmentTransaction[] = [
-      {
-        id: 's1',
-        accountId: 'acc1',
-        portfolioId: 'p1',
-        date: '2026-09-25',
-        type: 'sell',
-        symbol: 'AAPL',
-        quantity: 4,
-        price: 108,
-        total: 432,
-      },
-    ];
     const live = { AAPL: { price: 110, change: 2 } };
     const metrics = computePlatformCardMetrics({
       portfolios: [portfolio],
-      transactions: txs,
+      transactions: [tx({ id: 's1', type: 'sell', symbol: 'AAPL', quantity: 4, price: 108, accountId: 'acc1' })],
       accounts: [{ id: 'acc1', name: 'Broker', type: 'Investment', balance: 0 }],
       allInvestments: [portfolio],
       sarPerUsd: 3.75,
@@ -220,9 +380,11 @@ describe('platform Daily P/L uses trade-aware holding helper', () => {
 
 describe('Tadawul day change scales with price normalization', () => {
   it('sanitizeLiveQuoteRow scales change when price is divided by 100', () => {
-    const row = sanitizeLiveQuoteRow('2222.SR', { price: 3200, change: -400, changePercent: -1.25 }, {
-      avgCostPerShare: 32,
-    });
+    const row = sanitizeLiveQuoteRow(
+      '2222.SR',
+      { price: 3200, change: -400, changePercent: -1.25 },
+      { avgCostPerShare: 32 },
+    );
     expect(row?.price).toBe(32);
     expect(row?.change).toBeCloseTo(-4, 6);
   });
@@ -241,48 +403,5 @@ describe('Today column wiring E2E', () => {
     const src = read('services/investmentPlatformCardMetrics.ts');
     expect(src).toContain('computeHoldingDailyPnLInBookCurrency');
     expect(src).toContain('buildSameDayTradeIndex');
-  });
-
-  it('index builder scopes by calendar day and portfolio', () => {
-    const idx = buildSameDayTradeIndex(
-      [
-        {
-          id: '1',
-          accountId: 'a',
-          portfolioId: 'p1',
-          date: '2026-09-25',
-          type: 'sell',
-          symbol: 'AAPL',
-          quantity: 3,
-          price: 1,
-          total: 3,
-        },
-        {
-          id: '2',
-          accountId: 'a',
-          portfolioId: 'p1',
-          date: '2026-09-24',
-          type: 'sell',
-          symbol: 'AAPL',
-          quantity: 99,
-          price: 1,
-          total: 99,
-        },
-        {
-          id: '3',
-          accountId: 'a',
-          portfolioId: 'p2',
-          date: '2026-09-25',
-          type: 'sell',
-          symbol: 'AAPL',
-          quantity: 7,
-          price: 1,
-          total: 7,
-        },
-      ],
-      '2026-09-25',
-    );
-    expect(idx.get('p1::AAPL')?.soldQty).toBe(3);
-    expect(idx.get('p2::AAPL')?.soldQty).toBe(7);
   });
 });
