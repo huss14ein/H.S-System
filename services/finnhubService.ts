@@ -690,26 +690,36 @@ export async function getQuote(symbol: string): Promise<QuoteWith52W | null> {
       if (!Number.isFinite(price) || price <= 0) continue;
       const prevClose = Number(data.pc);
       const safePrevClose = Number.isFinite(prevClose) && prevClose > 0 ? prevClose : price;
+      const rawPrice = price;
+      let priceScale = 1;
       if (isTadawulQuoteSymbol(symbol)) {
         const normalized = normalizeTadawulUnitPriceSAR(price, {
           storedPricePerShare: Number.isFinite(safePrevClose) && safePrevClose > 0 ? safePrevClose : undefined,
         });
         if (normalized == null) continue;
+        priceScale = rawPrice > 0 ? normalized / rawPrice : 1;
         price = normalized;
       }
       const rawDelta = Number(data.d);
-      const delta = Number.isFinite(rawDelta) ? rawDelta : price - safePrevClose;
+      const prevScaled = safePrevClose * priceScale;
+      const delta = Number.isFinite(rawDelta)
+        ? rawDelta * priceScale
+        : price - prevScaled;
       const rawDeltaPct = Number(data.dp);
-      const deltaPct = Number.isFinite(rawDeltaPct) ? rawDeltaPct : safePrevClose > 0 ? (delta / safePrevClose) * 100 : 0;
+      const deltaPct = Number.isFinite(rawDeltaPct)
+        ? rawDeltaPct
+        : prevScaled > 0
+          ? (delta / prevScaled) * 100
+          : 0;
       return {
         ...data,
         c: price,
         d: delta,
         dp: deltaPct,
-        h: Number(data.h ?? price),
-        l: Number(data.l ?? price),
-        o: Number(data.o ?? price),
-        pc: safePrevClose,
+        h: Number.isFinite(Number(data.h)) ? Number(data.h) * priceScale : price,
+        l: Number.isFinite(Number(data.l)) ? Number(data.l) * priceScale : price,
+        o: Number.isFinite(Number(data.o)) ? Number(data.o) * priceScale : price,
+        pc: prevScaled,
       };
     } catch {
       // Try next candidate symbol form.

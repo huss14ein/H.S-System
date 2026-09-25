@@ -98,8 +98,12 @@ import {
     inferInstrumentCurrencyFromSymbol,
     convertBetweenTradeCurrencies,
     quoteNotionalInBookCurrency,
-    quoteDailyPnLInBookCurrency,
 } from '../utils/currencyMath';
+import {
+    buildSameDayTradeIndex,
+    computeHoldingDailyPnLInBookCurrency,
+} from '../services/holdingDailyPnL';
+import { appCalendarTodayYmd } from '../services/reconciliation/constants';
 import { effectiveHoldingValueInBookCurrency, effectiveHoldingUnitPriceInBookCurrency, holdingUsesLiveQuote, HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import { getPersonalAccounts, getPersonalInvestments, getPersonalTransactions } from '../utils/wealthScope';
 import type { PortfolioPeriodPnLRow, PortfolioPnLDailyPoint, PortfolioPeriodPnLSummary } from '../services/portfolioPeriodPnL';
@@ -3160,6 +3164,12 @@ const PlatformCardInner: React.FC<{
         return holdingsOutliers.filter((o) => names.has(o.portfolioName));
     }, [holdingsOutliers, portfolios]);
 
+    /** Same-day buy/sell index so Today P/L excludes sold shares and marks new buys from purchase price. */
+    const sameDayTradeIndex = useMemo(() => {
+        const txs = metricsTransactions ?? transactions;
+        return buildSameDayTradeIndex(txs, appCalendarTodayYmd());
+    }, [metricsTransactions, transactions]);
+
     const platformPeriodPnL = useMemo(() => {
         if (portfolioPnLSummary) {
             const rolled = platformPeriodPnLFromSummary(portfolioPnLSummary, platform.id);
@@ -3738,18 +3748,15 @@ const PlatformCardInner: React.FC<{
                                                     const liveQuoteRow = holdingUsesLiveQuote(h)
                                                         ? lookupLiveQuoteForSymbol(simulatedPrices, h.symbol ?? hSym)
                                                         : undefined;
-                                                    const rowDailyPnL =
-                                                        holdingUsesLiveQuote(h) && liveQuoteRow
-                                                            ? quoteDailyPnLInBookCurrency(
-                                                                  liveQuoteRow.change ?? 0,
-                                                                  h.quantity || 0,
-                                                                  hSym,
-                                                                  portfolioCurrency,
-                                                                  sarPerUsd,
-                                                                  new Date(),
-                                                                  simulatedPrices as Record<string, unknown>,
-                                                              )
-                                                            : 0;
+                                                    /** Today = overnight still-held × day change + bought-today still-held × (last − buy). Sold today excluded. */
+                                                    const rowDailyPnL = computeHoldingDailyPnLInBookCurrency({
+                                                        holding: h,
+                                                        portfolioId: portfolio.id,
+                                                        bookCurrency: portfolioCurrency,
+                                                        sarPerUsd,
+                                                        simulatedPrices,
+                                                        sameDayIndex: sameDayTradeIndex,
+                                                    });
                                                     const hasLivePrice =
                                                         holdingUsesLiveQuote(h) &&
                                                         liveQuoteRow != null &&

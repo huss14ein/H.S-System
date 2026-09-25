@@ -103,14 +103,14 @@ export function sanitizeLiveQuoteRow(
 
   if (normalized === row.price) return row;
 
-  const prev = normalized - (Number.isFinite(row.change) ? row.change : 0);
-  const safePrev = prev > 0 ? prev : normalized;
-  const change = normalized - safePrev;
+  const scale = row.price > 0 ? normalized / row.price : 1;
+  const changeRaw = Number.isFinite(row.change) ? row.change : 0;
+  const change = changeRaw * scale;
   const changePercent =
     Number.isFinite(row.changePercent) && row.changePercent !== 0
       ? row.changePercent
-      : safePrev > 0
-        ? (change / safePrev) * 100
+      : normalized - change > 0
+        ? (change / (normalized - change)) * 100
         : 0;
 
   return {

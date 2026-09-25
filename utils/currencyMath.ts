@@ -219,6 +219,20 @@ export function quoteNotionalInBookCurrency(
   return convertBetweenTradeCurrencies(raw, inst, bookCurrency, sarPerUsd);
 }
 
+/** Resolve per-share day change from quote row (change or derived from changePercent). */
+export function resolveQuoteChangePerShare(
+  info: { price?: number; change?: number; changePercent?: number } | null | undefined,
+): number {
+  if (!info) return 0;
+  if (Number.isFinite(info.change) && info.change !== 0) return info.change as number;
+  const price = info.price;
+  const pct = info.changePercent;
+  if (Number.isFinite(price) && Number.isFinite(pct) && (price as number) > 0) {
+    return ((price as number) * (pct as number)) / 100;
+  }
+  return Number.isFinite(info.change) ? (info.change as number) : 0;
+}
+
 /** Today's move (change per share × qty) from instrument currency into portfolio book currency. */
 export function quoteDailyPnLInBookCurrency(
   changePerShare: number,

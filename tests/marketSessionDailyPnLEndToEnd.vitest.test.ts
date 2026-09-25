@@ -14,8 +14,9 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 describe('market session daily P/L E2E', () => {
   it('single helper gates all book-currency daily P/L math', () => {
     expect(read('utils/currencyMath.ts')).toContain('quoteChangeForDailyPnL');
-    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteDailyPnLInBookCurrency');
-    expect(read('pages/Investments.tsx')).toContain('quoteDailyPnLInBookCurrency');
+    expect(read('services/holdingDailyPnL.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
+    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
+    expect(read('pages/Investments.tsx')).toContain('computeHoldingDailyPnLInBookCurrency');
     expect(read('services/portfolioPeriodPnL.ts')).toContain('dailyPnLSAR');
   });
 
