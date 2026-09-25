@@ -116,6 +116,7 @@ Grounding notes: [`AI_GROUNDING.md`](./AI_GROUNDING.md).
 | Sensitivity analysis | `services/sensitivityEngine.ts` | sensitivityToReturn/Income/Inflation/ExpenseGrowth |
 | Planning assumptions | `services/planningAssumptionsEngine.ts` | getPlanningAssumption, validateAssumptionRanges, assumptionImpactSummary |
 | Reporting/export | `services/reportingEngine.ts` | generateMonthlyReport, generateAnnualWealthSummary, exportGoalStatus, exportPortfolioReview (wired in **Settings** Reports & export) |
+| **Period Financial Report (Print / PDF)** | `periodReportWindow.ts`, `portfolioPeriodPnL.ts` (`computePortfolioPnLForWindow`), `periodFinancialReportModel.ts`, `periodFinancialReportHtml.ts`, `PeriodFinancialReportModal` (Layout), `utils/periodFinancialReportOpen.ts` | Full-period extract (FY/CY/YTD/12M/custom + prior twin); soft-fail sections 1→12 + orphans; browser Print → Save as PDF. Entry: Settings, Dashboard, Summary, Wealth Analytics export, Command palette, pageAction `open-period-financial-report`. Tests: `tests/periodFinancialReportCompletion.vitest.test.ts` |
 | UX guardrails | `services/uxGuardrailsEngine.ts` | fieldHintEngine, statusBadgeEngine, userInputGuard, workflowShortcutMenu |
 | Return measurement | `services/returnMeasurementEngine.ts` | simpleReturn, annualizedReturn, moneyWeightedReturn, timeWeightedReturn, benchmarkExcessReturn, totalReturnAttribution |
 | Goal conflict | `services/goalConflictEngine.ts` | detectGoalConflict, goalFeasibilityCheck, reprioritizeConflictingGoals (wired on **Goals** page) |

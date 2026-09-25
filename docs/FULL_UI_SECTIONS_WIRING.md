@@ -318,10 +318,15 @@ Refresh also runs when **`data.transactions.length`** changes (effect dependency
 
 | Button | Output | Data / service |
 |--------|--------|----------------|
-| **Wealth summary** JSON / CSV / Print HTML | File or print | **`generateWealthSummaryReportJson/Csv/Html`** — payload from **`wealthSummaryPayload`** `useMemo`: `computePersonalNetWorthBreakdownSAR`, `personalTransactions`, `netCashFlowForMonth`, personal accounts/investments, `ef`, `localSettings.riskProfile` |
-| **Monthly report (JSON)** | Download | **`generateMonthlyReport`** — current month label, liquid cash from checking/savings, `netCashFlowForMonth` on personal txs |
+| **Period Financial Report** | Browser Print → Save as PDF | Modal hosted in **`Layout`** (`PeriodFinancialReportModal`); opens via `openPeriodFinancialReportModal()` / `finova:open-period-financial-report`. Model: `buildPeriodFinancialReportModel` (`periodFinancialReportModel.ts`) over FY/CY/YTD/12M/custom + prior twin (`periodReportWindow.ts`); print HTML: `generatePeriodFinancialReportHtml` (sections 1→12 + orphans, TOC, SVG charts). Portfolio window P/L: `computePortfolioPnLForWindow`. **No binary PDF library.** |
+| **Wealth summary** JSON / CSV / Print HTML | File or print | Narrower snapshot: **`generateWealthSummaryReportJson/Csv/Html`** — payload from canonical wealth summary / KPI path |
+| **Monthly report (JSON)** | Download | **`generateMonthlyReport`** — current month label + KPI fields |
 | **Goal status (CSV)** | Download | **`exportGoalStatus`** — `data.goals` |
 | **Portfolio review (CSV)** | Download | **`exportPortfolioReview`** — positions from **`personalInvestments`** flattened holdings |
+
+Settings copy points to **Period Financial Report** as the full-period extract; wealth summary remains the lighter snapshot export.
+
+**Other entry points (same modal):** Dashboard button, Summary actions dropdown, Wealth Analytics export menu, Command palette, and pageAction `open-period-financial-report` on Dashboard / Settings / Summary / Wealth Analytics (shell passes `pageAction` via `AuthenticatedAppShell`).
 
 ---
 

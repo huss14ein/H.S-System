@@ -69,7 +69,7 @@ The system is structured in four layers so that **data**, **logic**, **output**,
 | **Review pages** | Goals, Analysis, Risk & Trading Hub, **Logic & Engines** (spec engines surfaced), Liquidation Planner, Dividend Tracker |
 | **Action items** | Notifications, next-best-action (Dashboard), financial health score (Dashboard) |
 | **Forecasts** | Forecast page, scenarioTimelineEngine |
-| **Reports** | Settings “Reports & export” (monthly report, goal status, portfolio review); reportingEngine |
+| **Reports** | Settings “Reports & export” — **Period Financial Report** (full extract via browser Print/PDF: `periodFinancialReportModel` + `periodFinancialReportHtml`); wealth summary JSON/CSV/HTML; monthly report, goal status, portfolio review via reportingEngine |
 | **Goal conflict & feasibility** | Goals page SectionCard |
 | **Debt intelligence** | Liabilities page (payoff order, stress score) |
 

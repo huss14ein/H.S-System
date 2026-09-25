@@ -22,6 +22,7 @@ interface CommandPaletteProps {
     setActivePage: (page: Page) => void;
     triggerPageAction?: (page: Page, action: string) => void;
     onOpenLiveAdvisor?: () => void;
+    onOpenPeriodFinancialReport?: () => void;
 }
 
 const CommandPalette: React.FC<CommandPaletteProps> = (props) => {
@@ -29,7 +30,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = (props) => {
     return <CommandPalettePanel {...props} />;
 };
 
-const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, triggerPageAction, onOpenLiveAdvisor }) => {
+const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen, setActivePage, triggerPageAction, onOpenLiveAdvisor, onOpenPeriodFinancialReport }) => {
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const { data, getAvailableCashForAccount } = useContext(DataContext)!;
@@ -172,6 +173,17 @@ const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen,
         const quick: { name: string; action: () => void; icon: React.FC<React.SVGProps<SVGSVGElement>> }[] = [];
         if (onOpenLiveAdvisor) {
             quick.push({ name: 'Open AI Advisor', action: () => { trackAction('open-advisor', 'Dashboard'); onOpenLiveAdvisor(); setIsOpen(false); }, icon: HeadsetIcon });
+        }
+        if (onOpenPeriodFinancialReport) {
+            quick.push({
+                name: 'Period Financial Report (Print / PDF)',
+                action: () => {
+                    trackAction('open-period-financial-report', 'Settings');
+                    onOpenPeriodFinancialReport();
+                    setIsOpen(false);
+                },
+                icon: ArrowDownTrayIcon,
+            });
         }
         quick.push({
             name: 'Capture net worth snapshot',
@@ -368,6 +380,7 @@ const CommandPalettePanel: React.FC<CommandPaletteProps> = ({ isOpen, setIsOpen,
         setIsOpen,
         triggerPageAction,
         onOpenLiveAdvisor,
+        onOpenPeriodFinancialReport,
         data,
         topPages,
         trackAction,

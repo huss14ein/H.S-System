@@ -119,9 +119,9 @@ const AppRouteHost: React.FC<AppRouteHostProps> = ({
       case 'Dashboard':
         return <Lazy key={routeKey} {...nav} {...actionProps} />;
       case 'Summary':
-        return <Lazy key={routeKey} {...nav} />;
+        return <Lazy key={routeKey} {...nav} {...actionProps} />;
       case 'Wealth Analytics':
-        return <Lazy key={routeKey} {...nav} />;
+        return <Lazy key={routeKey} {...nav} {...actionProps} />;
       case 'Accounts':
         return <Lazy key={routeKey} setActivePage={setActivePage} {...actionProps} />;
       case 'Liabilities':
@@ -307,6 +307,7 @@ const AuthenticatedAppShell: React.FC = () => {
                               <PrivacyProvider>
                                 <MarketSimulator />
                                 <Layout
+                                    // Period Financial Report modal (+ CommandPalette / LiveAdvisor) is hosted here.
                                   activePage={activePage}
                                   setActivePage={setActivePage}
                                   triggerPageAction={triggerPageAction}

@@ -32,6 +32,7 @@ import { ShieldCheckIcon } from '../components/icons/ShieldCheckIcon';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
+import { openPeriodFinancialReportModal } from '../utils/periodFinancialReportOpen';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { tryAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotCapture';
@@ -285,7 +286,18 @@ const DashboardContent: React.FC<{
     const kpiDensity = 'compact' as const;
 
     useEffect(() => {
-        if (pageAction !== 'plan-compare-dashboard' && pageAction !== 'focus-salary-invest' && pageAction !== 'focus-investment-roi') return;
+        if (
+            pageAction !== 'plan-compare-dashboard' &&
+            pageAction !== 'focus-salary-invest' &&
+            pageAction !== 'focus-investment-roi' &&
+            pageAction !== 'open-period-financial-report'
+        ) {
+            return;
+        }
+        if (pageAction === 'open-period-financial-report') {
+            openPeriodFinancialReportModal();
+            return scheduleClearPageAction(clearPageAction);
+        }
         const targetId =
             pageAction === 'focus-salary-invest'
                 ? 'salary-to-investment'
@@ -675,6 +687,15 @@ const DashboardContent: React.FC<{
                 />
             ) : null}
             {setActivePage && <WealthAnalyticsGuideBanner setActivePage={setActivePage} />}
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+                <button
+                    type="button"
+                    className="btn-outline text-sm"
+                    onClick={() => openPeriodFinancialReportModal()}
+                >
+                    Period Financial Report
+                </button>
+            </div>
 
             {isNewUser && (
                 <div className="mb-6 p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-white">

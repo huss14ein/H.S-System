@@ -6,6 +6,8 @@ import { Page } from '../types';
 import QuickActionsSidebar from './QuickActionsSidebar';
 import CommandPalette from './CommandPalette';
 import LiveAdvisorModal from './LiveAdvisorModal';
+import PeriodFinancialReportModal from './reports/PeriodFinancialReportModal';
+import { PERIOD_FINANCIAL_REPORT_EVENT } from '../utils/periodFinancialReportOpen';
 import { useTrackPageVisit } from '../context/SelfLearningContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
@@ -89,9 +91,16 @@ const Layout: React.FC<LayoutProps> = ({
 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isLiveAdvisorOpen, setIsLiveAdvisorOpen] = useState(false);
+  const [isPeriodReportOpen, setIsPeriodReportOpen] = useState(false);
   const mainContentRef = useRef<HTMLElement>(null);
   const { ready, analysis, actionQueue } = useFinancialEnginesIntegration({ eager: false });
   const { headline, extendedReady } = useExtendedCanonicalMetrics();
+
+  useEffect(() => {
+    const open = () => setIsPeriodReportOpen(true);
+    window.addEventListener(PERIOD_FINANCIAL_REPORT_EVENT, open);
+    return () => window.removeEventListener(PERIOD_FINANCIAL_REPORT_EVENT, open);
+  }, []);
   const liveQuotePrices = useLiveQuotePrices();
 
   const skipToMainContent = () => {
@@ -225,11 +234,25 @@ const Layout: React.FC<LayoutProps> = ({
           setIsCommandPaletteOpen(false);
           setIsLiveAdvisorOpen(true);
         }}
+        onOpenPeriodFinancialReport={() => {
+          setIsCommandPaletteOpen(false);
+          setIsPeriodReportOpen(true);
+        }}
       />
 
       <LiveAdvisorModal
         isOpen={isLiveAdvisorOpen}
         onClose={() => setIsLiveAdvisorOpen(false)}
+      />
+
+      <PeriodFinancialReportModal
+        isOpen={isPeriodReportOpen}
+        onClose={() => setIsPeriodReportOpen(false)}
+        onNavigate={(page, action) => {
+          setIsPeriodReportOpen(false);
+          setActivePage(page as Page);
+          if (action) triggerPageAction(page as Page, action);
+        }}
       />
     </div>
   );

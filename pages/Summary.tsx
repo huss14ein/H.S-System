@@ -39,6 +39,8 @@ import {
     openHtmlForPrint,
     generateWealthSummaryReportJson,
 } from '../services/reportingEngine';
+import { openPeriodFinancialReportModal } from '../utils/periodFinancialReportOpen';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { useSelfLearning } from '../context/SelfLearningContext';
 import Modal from '../components/Modal';
 import { useAI } from '../context/AiContext';
@@ -79,9 +81,11 @@ const InformationCircleIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) =
 interface SummaryProps {
   setActivePage?: (page: Page) => void;
   triggerPageAction?: (page: Page, action: string) => void;
+  pageAction?: string | null;
+  clearPageAction?: () => void;
 }
 
-const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) => {
+const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
     const { aiActionsEnabled, aiHealthChecked, isAiAvailable } = useAI();
     const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
     const { trackAction } = useSelfLearning();
@@ -100,6 +104,12 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
         salaryInvestment,
     } = useExtendedCanonicalMetrics();
     const { isRefreshing, hasQueuedPriceRefresh, symbolQuoteUpdatedAt, isLive } = useMarketQuoteMeta();
+
+    useEffect(() => {
+        if (pageAction !== 'open-period-financial-report') return;
+        openPeriodFinancialReportModal();
+        return scheduleClearPageAction(clearPageAction);
+    }, [pageAction, clearPageAction]);
     const fxBanner = useMemo(() => {
         const w = Number(data?.wealthUltraConfig?.fxRate);
         const hasWu = Number.isFinite(w) && w > 0;
@@ -365,6 +375,11 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction }) =
                     <PageActionsDropdown
                         ariaLabel="Summary quick links"
                         actions={[
+                            {
+                                value: 'period-financial-report',
+                                label: 'Period Financial Report (Print / PDF)',
+                                onClick: () => openPeriodFinancialReportModal(),
+                            },
                             { value: 'print-wealth-summary', label: 'Print wealth summary', onClick: () => setIsPrintOptionsOpen(true) },
                             { value: 'capture-snapshot', label: 'Capture net worth snapshot', onClick: handleCaptureSnapshot },
                             { value: 'export-review-pack', label: 'Export review pack (Markdown)', onClick: handleExportReviewPack },

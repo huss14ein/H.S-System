@@ -8,11 +8,24 @@ export function isSupportedPageAction(page: Page, action: string): boolean {
   if (!action || typeof action !== 'string') return false;
 
   if (page === 'Dashboard') {
-    return action === 'plan-compare-dashboard' || action === 'focus-salary-invest' || action === 'focus-investment-roi';
+    return (
+      action === 'plan-compare-dashboard' ||
+      action === 'focus-salary-invest' ||
+      action === 'focus-investment-roi' ||
+      action === 'open-period-financial-report'
+    );
   }
 
   if (page === 'Settings') {
-    return action === 'focus-salary-investing';
+    return action === 'focus-salary-investing' || action === 'open-period-financial-report';
+  }
+
+  if (page === 'Summary') {
+    return action === 'open-period-financial-report';
+  }
+
+  if (page === 'Wealth Analytics') {
+    return action === 'open-period-financial-report';
   }
 
   if (page === 'Notifications') {

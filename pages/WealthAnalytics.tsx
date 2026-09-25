@@ -44,14 +44,18 @@ import {
   loadAnalyticsVisitSnapshot,
   saveAnalyticsVisitSnapshot,
 } from '../services/analyticsVisitSnapshot';
+import { openPeriodFinancialReportModal } from '../utils/periodFinancialReportOpen';
+import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import type { Page } from '../types';
 
 interface WealthAnalyticsProps {
   setActivePage?: (page: Page) => void;
   triggerPageAction?: (page: Page, action: string) => void;
+  pageAction?: string | null;
+  clearPageAction?: () => void;
 }
 
-const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, triggerPageAction }) => {
+const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
   const { data, getAvailableCashForAccount, showHydrateBanner } = useContext(DataContext)!;
   const { computeData } = usePageDeferredData();
   const engineData = computeData ?? data;
@@ -61,6 +65,12 @@ const WealthAnalytics: React.FC<WealthAnalyticsProps> = ({ setActivePage, trigge
   const { dir, t } = useLanguage();
   const { isLive, symbolQuoteUpdatedAt } = useMarketQuoteMeta();
   const { strictReconciliationMode } = useDashboardReconciliationPrefs(auth?.user?.id);
+
+  useEffect(() => {
+    if (pageAction !== 'open-period-financial-report') return;
+    openPeriodFinancialReportModal();
+    return scheduleClearPageAction(clearPageAction);
+  }, [pageAction, clearPageAction]);
 
   const liveQuotePrices = useLiveQuotePrices();
   const {

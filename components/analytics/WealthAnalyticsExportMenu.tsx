@@ -6,6 +6,7 @@ import {
   generateWealthMetricPassportHtml,
   openHtmlForPrint,
 } from '../../services/reportingEngine';
+import { openPeriodFinancialReportModal } from '../../utils/periodFinancialReportOpen';
 import {
   buildWealthAnalyticsReportModel,
   WEALTH_METRIC_PASSPORT_LABELS,
@@ -105,6 +106,11 @@ export const WealthAnalyticsExportMenu: React.FC<{
         placeholder={t('exportChoose')}
         ariaLabel="Wealth Analytics export"
         actions={[
+          {
+            value: 'period-financial-report',
+            label: 'Period Financial Report (Print / PDF)',
+            onClick: () => openPeriodFinancialReportModal(),
+          },
           { value: 'executive-summary', label: t('exportExecutiveSummary'), onClick: printExecutive },
           ...passportActions,
         ]}

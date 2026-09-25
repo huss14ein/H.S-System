@@ -29,6 +29,7 @@ import {
     openHtmlForPrint,
     type WealthSummaryReportInput,
 } from '../services/reportingEngine';
+import { openPeriodFinancialReportModal } from '../utils/periodFinancialReportOpen';
 import { useCurrency } from '../context/CurrencyContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useNotifications } from '../context/NotificationsContext';
@@ -470,6 +471,19 @@ const Settings: React.FC<{
         const t = window.setTimeout(() => {
             scrollToSettingsSection('salary-investing-targets');
             document.getElementById('salary-invest-target')?.focus?.();
+        }, 140);
+        const cancelClear = scheduleClearPageAction(clearPageAction);
+        return () => {
+            window.clearTimeout(t);
+            cancelClear();
+        };
+    }, [pageAction, clearPageAction, scrollToSettingsSection]);
+
+    useEffect(() => {
+        if (pageAction !== 'open-period-financial-report') return;
+        const t = window.setTimeout(() => {
+            scrollToSettingsSection('reports-export');
+            openPeriodFinancialReportModal();
         }, 140);
         const cancelClear = scheduleClearPageAction(clearPageAction);
         return () => {
@@ -1405,11 +1419,27 @@ const Settings: React.FC<{
                 </div>
             </SectionCard>
 
-            <SectionCard id="reports-export" title="Reports & export" collapsible collapsibleSummary="Wealth summary, backup">
-                <p className="text-sm text-slate-600 mb-4">Generate structured reports and exports. Wealth summary includes net worth, cashflow, holdings, and risk metrics.</p>
+            <SectionCard id="reports-export" title="Reports & export" collapsible collapsibleSummary="Period report, wealth summary, backup">
+                <p className="text-sm text-slate-600 mb-4">
+                    For the full period extract (net worth, cashflow, budgets, portfolio P/L, cards, forecast, and more), use{' '}
+                    <strong>Period Financial Report</strong> below — browser Print → Save as PDF. Wealth summary JSON/CSV remains a narrower snapshot export.
+                </p>
+                <div className="mb-4 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Period Financial Report</p>
+                    <p className="text-sm text-slate-600 mb-2">
+                        FY / CY / YTD / 12M / custom windows with prior twin, soft-fail sections, and Print / Save as PDF (no binary PDF library).
+                    </p>
+                    <button
+                        type="button"
+                        className="btn-primary text-sm"
+                        onClick={() => openPeriodFinancialReportModal()}
+                    >
+                        Open Period Financial Report
+                    </button>
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                     <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50">
-                        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Wealth summary</p>
+                        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Wealth summary (snapshot)</p>
                         <ExtendedMetricGate ready={extendedReady} compact className="min-h-[2.5rem]">
                         <div className="flex flex-wrap gap-2">
                             {wealthSummaryPayload && (
