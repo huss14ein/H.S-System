@@ -298,6 +298,40 @@ SAR مبلغ:50.00
     expect(res.transactions.every((t) => Math.abs(Math.abs(t.amount) - 2.06) > 0.01)).toBe(true);
   });
 
+  it('does not add a merchant substring (fee/vat) as a same-block fee when total-due is absent', async () => {
+    const coffee = `شراء عبر نقاط البيع
+بطاقة:7365 ;فيزا
+لدى:COFFEE 02
+مبلغ:45 SAR
+3/9/26 4:06`;
+    const coffeeRes = await parseSMSTransactions(coffee, 'acc-coffee');
+    expect(coffeeRes.transactions.length).toBe(1);
+    expect(coffeeRes.transactions[0].amount).toBeCloseTo(-45, 2);
+
+    const privateMerchant = `شراء عبر نقاط البيع
+لدى:PRIVATE 12
+مبلغ:45 SAR
+3/9/26 4:06`;
+    const privateRes = await parseSMSTransactions(privateMerchant, 'acc-private');
+    expect(privateRes.transactions[0].amount).toBeCloseTo(-45, 2);
+
+    const englishFee = `شراء عبر نقاط البيع
+مبلغ:45 SAR
+لدى:SHOP
+fee: 2 SAR
+3/9/26 4:06`;
+    const englishFeeRes = await parseSMSTransactions(englishFee, 'acc-en-fee');
+    expect(englishFeeRes.transactions[0].amount).toBeCloseTo(-47, 2);
+
+    const withFee = `شراء انترنت
+مبلغ: 89.71 SAR
+لدى:CURSOR, A
+رسوم وضريبة: 2.06 SAR
+في:2/9/26 20:46`;
+    const feeRes = await parseSMSTransactions(withFee, 'acc-fee-still');
+    expect(feeRes.transactions[0].amount).toBeCloseTo(-91.77, 2);
+  });
+
   it('uses اجمالي المبلغ المستحق (no hamza) for Netlify USD paste with fees', async () => {
     const sms = `شراء انترنت 
 بطاقة: 5280 ;فيزا

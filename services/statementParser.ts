@@ -790,7 +790,7 @@ function extractSmsAmount(block: string): number {
   const sameBlockFeeSar = (() => {
     const feeMatch = compact.match(
       new RegExp(
-        String.raw`(?:رسوم(?:\s*و?\s*ضريبة)?|fee(?:\s*&?\s*tax)?|vat|ضريبة)[^\d]{0,32}(?:SAR|SR|ر\.?س)?\s*[:\-]?\s*${amountToken}`,
+        String.raw`(?:رسوم(?:\s*و?\s*ضريبة)?|\bfee(?:\s*&?\s*tax)?\b|\bvat\b|ضريبة)[^\d]{0,32}(?:SAR|SR|ر\.?س)?\s*[:\-]?\s*${amountToken}`,
         'i',
       ),
     );
