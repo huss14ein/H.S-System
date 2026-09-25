@@ -489,7 +489,14 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
   let dailySar = 0;
   let dailyUsd = 0;
   const asOfYmd = appCalendarTodayYmd(asOf);
-  const sameDayIndex = buildSameDayTradeIndex(transactions, asOfYmd);
+  const solePortfolioId = portfolios.length === 1 ? String(portfolios[0]?.id ?? '').trim() : '';
+  const sameDayIndex =
+    solePortfolioId !== ''
+      ? buildSameDayTradeIndex(transactions, asOfYmd, {
+          portfolioId: solePortfolioId,
+          includeOrphans: true,
+        })
+      : buildSameDayTradeIndex(transactions, asOfYmd);
   portfolios.forEach((p) => {
     const cur = resolveInvestmentPortfolioCurrency(p);
     (p.holdings || []).forEach((h: Holding) => {

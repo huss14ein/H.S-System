@@ -302,6 +302,39 @@ describe('computeHoldingDailyPnLInBookCurrency', () => {
     expect(pnl).toBeCloseTo(20, 6);
   });
 
+  it('unscoped index does not mark an orphan buy on every open lot', () => {
+    const orphan = tx({
+      id: 'b1',
+      type: 'buy',
+      symbol: 'AAPL',
+      quantity: 5,
+      price: 100,
+      portfolioId: undefined,
+    });
+    const index = buildSameDayTradeIndex([orphan], asOfYmd);
+    const base = {
+      bookCurrency: 'USD' as const,
+      sarPerUsd: 3.75,
+      simulatedPrices: { AAPL: { price: 110, change: 2 } },
+      sameDayIndex: index,
+      asOf,
+      asOfYmd,
+    };
+    const p1 = computeHoldingDailyPnLInBookCurrency({
+      ...base,
+      holding: holding({ symbol: 'AAPL', quantity: 10 }),
+      portfolioId: 'p1',
+    });
+    const p2 = computeHoldingDailyPnLInBookCurrency({
+      ...base,
+      holding: holding({ id: 'h2', symbol: 'AAPL', quantity: 10 }),
+      portfolioId: 'p2',
+    });
+    // Prior-close day move on the full open qty — not 5×$2 overnight + 5×(110−100).
+    expect(p1).toBeCloseTo(20, 6);
+    expect(p2).toBeCloseTo(20, 6);
+  });
+
   it('does not apply another portfolio’s same-day sell', () => {
     const pnl = computeHoldingDailyPnLInBookCurrency({
       holding: holding({ symbol: 'AAPL', quantity: 10 }),
@@ -335,6 +368,38 @@ describe('computeHoldingDailyPnLInBookCurrency', () => {
 });
 
 describe('same-day trade index', () => {
+  it('does not apply an orphan trade to every portfolio on an unscoped index', () => {
+    const orphan = tx({
+      id: 'orphan-buy',
+      type: 'buy',
+      symbol: 'AAPL',
+      quantity: 5,
+      price: 100,
+      portfolioId: undefined,
+    });
+    const idx = buildSameDayTradeIndex([orphan], '2026-09-25');
+    expect(lookupSameDayTradeSummary(idx, 'p1', 'AAPL').boughtQty).toBe(0);
+    expect(lookupSameDayTradeSummary(idx, 'p2', 'AAPL').boughtQty).toBe(0);
+    expect(lookupSameDayTradeSummary(idx, '', 'AAPL').boughtQty).toBe(5);
+  });
+
+  it('stamps orphan trades onto a sole portfolio when includeOrphans is set', () => {
+    const orphan = tx({
+      id: 'orphan-buy',
+      type: 'buy',
+      symbol: 'AAPL',
+      quantity: 5,
+      price: 100,
+      portfolioId: undefined,
+    });
+    const idx = buildSameDayTradeIndex([orphan], '2026-09-25', {
+      portfolioId: 'p1',
+      includeOrphans: true,
+    });
+    expect(lookupSameDayTradeSummary(idx, 'p1', 'AAPL').boughtQty).toBe(5);
+    expect(lookupSameDayTradeSummary(idx, 'p2', 'AAPL').boughtQty).toBe(0);
+  });
+
   it('scopes by calendar day and portfolio; aliases share a key', () => {
     const idx = buildSameDayTradeIndex(
       [
@@ -376,6 +441,86 @@ describe('platform Daily P/L uses trade-aware holding helper', () => {
     });
     expect(metrics.dailyPnLSAR).toBeCloseTo(12 * 3.75, 4);
   });
+
+  it('sole portfolio still marks a legacy buy that has no portfolio id', () => {
+    const asOf = new Date('2026-09-25T15:00:00+03:00');
+    const portfolio: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'Main',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [holding({ symbol: 'AAPL', quantity: 10, currentValue: 1100 })],
+    };
+    const live = { AAPL: { price: 110, change: 2 } };
+    const metrics = computePlatformCardMetrics({
+      portfolios: [portfolio],
+      transactions: [
+        tx({
+          id: 'b1',
+          type: 'buy',
+          symbol: 'AAPL',
+          quantity: 5,
+          price: 100,
+          accountId: 'acc1',
+          portfolioId: undefined,
+        }),
+      ],
+      accounts: [{ id: 'acc1', name: 'Broker', type: 'Investment', balance: 0 }],
+      allInvestments: [portfolio],
+      sarPerUsd: 3.75,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices: live,
+      dailyPnLPrices: live,
+      platformCurrency: 'USD',
+      asOf,
+    });
+    // overnight 5×2 + bought 5×(110−100) = 60 USD
+    expect(metrics.dailyPnLSAR).toBeCloseTo(60 * 3.75, 4);
+  });
+
+  it('multi-portfolio single-scope daily P/L does not apply one orphan buy to every book', () => {
+    const asOf = new Date('2026-09-25T15:00:00+03:00');
+    const p1: InvestmentPortfolio = {
+      id: 'p1',
+      name: 'A',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [holding({ symbol: 'AAPL', quantity: 10, currentValue: 1100 })],
+    };
+    const p2: InvestmentPortfolio = {
+      id: 'p2',
+      name: 'B',
+      accountId: 'acc1',
+      currency: 'USD',
+      holdings: [holding({ id: 'h2', symbol: 'AAPL', quantity: 10, currentValue: 1100 })],
+    };
+    const live = { AAPL: { price: 110, change: 2 } };
+    const metrics = computePlatformCardMetrics({
+      portfolios: [p1, p2],
+      transactions: [
+        tx({
+          id: 'b1',
+          type: 'buy',
+          symbol: 'AAPL',
+          quantity: 5,
+          price: 100,
+          accountId: 'acc1',
+          portfolioId: undefined,
+        }),
+      ],
+      accounts: [{ id: 'acc1', name: 'Broker', type: 'Investment', balance: 0 }],
+      allInvestments: [p1, p2],
+      sarPerUsd: 3.75,
+      availableCashByCurrency: { SAR: 0, USD: 0 },
+      simulatedPrices: live,
+      dailyPnLPrices: live,
+      platformCurrency: 'USD',
+      unrealizedPnLBasis: 'holdings_cost',
+      asOf,
+    });
+    // Two books × 10 × $2, not two books each marked with the full orphan buy.
+    expect(metrics.dailyPnLSAR).toBeCloseTo(40 * 3.75, 4);
+  });
 });
 
 describe('Tadawul day change scales with price normalization', () => {
@@ -396,6 +541,8 @@ describe('Today column wiring E2E', () => {
     expect(page).toContain('computeHoldingDailyPnLInBookCurrency');
     expect(page).toContain('buildSameDayTradeIndex');
     expect(page).toContain('sameDayTradeIndex');
+    expect(page).toContain('sameDayAsOfYmd');
+    expect(page).toMatch(/\[\s*metricsTransactions,\s*transactions,\s*sameDayAsOfYmd,\s*portfolios\s*\]/);
     expect(page).not.toMatch(/quoteDailyPnLInBookCurrency\(\s*liveQuoteRow\.change/);
   });
 

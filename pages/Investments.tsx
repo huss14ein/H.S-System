@@ -3164,11 +3164,46 @@ const PlatformCardInner: React.FC<{
         return holdingsOutliers.filter((o) => names.has(o.portfolioName));
     }, [holdingsOutliers, portfolios]);
 
+    /** Local calendar day for the same-day index — advances at midnight even if the ledger is idle. */
+    const [sameDayAsOfYmd, setSameDayAsOfYmd] = useState(() => appCalendarTodayYmd());
+    useEffect(() => {
+        let timer = 0;
+        const arm = () => {
+            const now = new Date();
+            const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 50);
+            const delay = Math.max(1000, nextMidnight.getTime() - now.getTime());
+            timer = window.setTimeout(() => {
+                setSameDayAsOfYmd(appCalendarTodayYmd());
+                arm();
+            }, delay);
+        };
+        arm();
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible') return;
+            setSameDayAsOfYmd((prev) => {
+                const next = appCalendarTodayYmd();
+                return prev === next ? prev : next;
+            });
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            window.clearTimeout(timer);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, []);
+
     /** Same-day buy/sell index so Today P/L excludes sold shares and marks new buys from purchase price. */
     const sameDayTradeIndex = useMemo(() => {
         const txs = metricsTransactions ?? transactions;
-        return buildSameDayTradeIndex(txs, appCalendarTodayYmd());
-    }, [metricsTransactions, transactions]);
+        const sole = portfolios.length === 1 ? portfolios[0] : null;
+        if (sole?.id) {
+            return buildSameDayTradeIndex(txs, sameDayAsOfYmd, {
+                portfolioId: sole.id,
+                includeOrphans: true,
+            });
+        }
+        return buildSameDayTradeIndex(txs, sameDayAsOfYmd);
+    }, [metricsTransactions, transactions, sameDayAsOfYmd, portfolios]);
 
     const platformPeriodPnL = useMemo(() => {
         if (portfolioPnLSummary) {

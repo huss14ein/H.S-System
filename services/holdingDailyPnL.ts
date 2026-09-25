@@ -84,17 +84,19 @@ export function sameDayTradeIndexKey(portfolioId: string | null | undefined, sym
  * Index buy/sell trades for a calendar day, optionally scoped to one portfolio.
  * Chronological order preserved for FIFO day allocation.
  * Symbols are keyed by {@link canonicalQuoteLookupKey} so `1120` / `1120.SR` match.
+ * `includeOrphans` stamps legacy rows (no portfolio id) onto `portfolioId` for a sole book.
  */
 export function buildSameDayTradeIndex(
   transactions: InvestmentTransaction[] | null | undefined,
   asOfYmd: string,
-  options?: { portfolioId?: string | null },
+  options?: { portfolioId?: string | null; includeOrphans?: boolean },
 ): Map<string, SameDayTradeSummary> {
   const out = new Map<string, SameDayTradeSummary>();
   const day = String(asOfYmd ?? '').slice(0, 10);
   if (!day || !transactions?.length) return out;
 
   const scopePid = options?.portfolioId != null ? portfolioKey(options.portfolioId) : null;
+  const includeOrphans = options?.includeOrphans === true && scopePid != null && scopePid !== '';
   const sorted = [...transactions].sort((a, b) => {
     const da = txDayYmd(a);
     const db = txDayYmd(b);
@@ -112,8 +114,9 @@ export function buildSameDayTradeIndex(
     if (!canon) continue;
     const pid = portfolioKey(tx.portfolioId);
     if (scopePid != null && scopePid !== '' && pid !== '' && pid !== scopePid) continue;
-    // When scoping to a portfolio, skip orphans (no portfolio_id) unless caller builds unscoped index.
-    if (scopePid != null && scopePid !== '' && pid === '') continue;
+    // Named scopes skip orphans unless the caller is the sole book and opts in.
+    // Unscoped orphans stay on the empty portfolio key and are not shared across books.
+    if (scopePid != null && scopePid !== '' && pid === '' && !includeOrphans) continue;
 
     const qty = Number(tx.quantity);
     if (!Number.isFinite(qty) || qty <= 0) continue;
@@ -148,10 +151,9 @@ export function lookupSameDayTradeSummary(
   const empty: SameDayTradeSummary = { boughtQty: 0, soldQty: 0, buys: [] };
   const canon = symbolCanon(symbol);
   if (!canon) return empty;
-  const hit = index.get(sameDayTradeIndexKey(portfolioId, canon));
-  if (hit) return hit;
-  /** Legacy ledger rows without portfolio_id. */
-  return index.get(sameDayTradeIndexKey('', canon)) ?? empty;
+  // Do not fall back to the empty-portfolio key. One unscoped trade would otherwise
+  // apply to every named book that has no same-day row of its own.
+  return index.get(sameDayTradeIndexKey(portfolioId, canon)) ?? empty;
 }
 
 /**
