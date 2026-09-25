@@ -34,7 +34,8 @@ describe('Investments hub completion (E2E)', () => {
 
   it('daily P/L zeros outside regular session via currencyMath helper', () => {
     expect(read('utils/currencyMath.ts')).toContain('quoteChangeForDailyPnL');
-    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteDailyPnLInBookCurrency');
+    expect(read('services/holdingDailyPnL.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
+    expect(read('services/investmentPlatformCardMetrics.ts')).toContain('computeHoldingDailyPnLInBookCurrency');
     expect(read('services/investmentPlatformCardMetrics.ts')).toContain('quoteChangeForDailyPnL');
   });
 

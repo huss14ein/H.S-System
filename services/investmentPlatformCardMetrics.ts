@@ -4,10 +4,16 @@
  */
 
 import type { Account, FinancialData, Holding, InvestmentPortfolio, InvestmentTransaction, TradeCurrency } from '../types';
-import { quoteDailyPnLInBookCurrency, toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
+import {
+  resolveQuoteChangePerShare,
+  toSAR,
+  tradableCashBucketToSAR,
+} from '../utils/currencyMath';
 import { quoteChangeForDailyPnL, resolveEquityListingExchange } from './marketSessionLocal';
 import { effectiveHoldingValueInBookCurrency, holdingUsesLiveQuote } from '../utils/holdingValuation';
 import { lookupLiveQuoteForSymbol } from '../services/finnhubService';
+import { computeHoldingDailyPnLInBookCurrency, buildSameDayTradeIndex } from './holdingDailyPnL';
+import { appCalendarTodayYmd } from './reconciliation/constants';
 import {
   inferInvestmentTransactionCurrency,
   portfolioBelongsToAccount,
@@ -39,19 +45,8 @@ import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolio
 export type SimulatedPriceRow = { price: number; change?: number; changePercent?: number };
 export type SimulatedPriceMap = Record<string, SimulatedPriceRow>;
 
-/** Resolve per-share day change from quote row (change or derived from changePercent). */
-export function resolveQuoteChangePerShare(
-  info: { price?: number; change?: number; changePercent?: number } | null | undefined,
-): number {
-  if (!info) return 0;
-  if (Number.isFinite(info.change) && info.change !== 0) return info.change as number;
-  const price = info.price;
-  const pct = info.changePercent;
-  if (Number.isFinite(price) && Number.isFinite(pct) && (price as number) > 0) {
-    return ((price as number) * (pct as number)) / 100;
-  }
-  return Number.isFinite(info.change) ? (info.change as number) : 0;
-}
+/** @deprecated Import from `utils/currencyMath` — re-exported for existing call sites. */
+export { resolveQuoteChangePerShare };
 
 export interface PlatformCardMetrics {
   totalValue: number;
@@ -493,25 +488,24 @@ function computePlatformCardMetricsForSingleScope(args: ComputePlatformCardMetri
 
   let dailySar = 0;
   let dailyUsd = 0;
+  const asOfYmd = appCalendarTodayYmd(asOf);
+  const sameDayIndex = buildSameDayTradeIndex(transactions, asOfYmd);
   portfolios.forEach((p) => {
     const cur = resolveInvestmentPortfolioCurrency(p);
     (p.holdings || []).forEach((h: Holding) => {
       if (!holdingUsesLiveQuote(h)) return;
       const qty = h.quantity ?? 0;
       if (qty <= 0) return;
-      const symRaw = (h.symbol || '').trim();
-      const info = lookupLiveQuoteForSymbol(pricesForDailyPnL, symRaw);
-      if (!info) return;
-      const changePerShare = resolveQuoteChangePerShare(info);
-      const d = quoteDailyPnLInBookCurrency(
-        changePerShare,
-        qty,
-        symRaw.toUpperCase(),
-        cur,
-        rate,
+      const d = computeHoldingDailyPnLInBookCurrency({
+        holding: h,
+        portfolioId: p.id,
+        bookCurrency: cur,
+        sarPerUsd: rate,
+        simulatedPrices: pricesForDailyPnL,
+        sameDayIndex,
         asOf,
-        pricesForDailyPnL as Record<string, unknown>,
-      );
+        asOfYmd,
+      });
       if (cur === 'SAR') dailySar += d;
       else dailyUsd += d;
     });
