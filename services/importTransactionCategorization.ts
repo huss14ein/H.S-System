@@ -22,7 +22,7 @@ export function inferImportTransactionCategory(
   const descRaw = String(description || '');
 
   if (
-    /(شراء عبر نقاط البيع|نقاط البيع|لدى:|payment at|pos purchase|pos debit|purchase at)/i.test(descRaw) &&
+    /(شراء عبر نقاط البيع|نقاط البيع|شراء\s*PoS|\bPoS\b|لدى:|payment at|pos purchase|pos debit|purchase at)/i.test(descRaw) &&
     !/(atm|سحب نقدي|cash withdrawal)/i.test(descRaw)
   ) {
     return 'Shopping';

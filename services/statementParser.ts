@@ -481,7 +481,7 @@ function isSmsSecondaryAmountLine(line: string): boolean {
 
 /**
  * Build one signed SMS transaction from a text block (one SMS ≈ one ledger row).
- * Amount rules: إجمالي المبلغ المستحق > بـSR principal (+ same-block رسوم) > labeled مبلغ (prefer SAR parenthetical).
+ * Amount rules: إجمالي المبلغ المستحق > بـSR/بـSAR principal (+ same-block رسوم) > labeled مبلغ (prefer SAR parenthetical).
  */
 function buildSmsTransactionFromBlock(
   block: string,
@@ -509,7 +509,7 @@ function buildSmsTransactionFromBlock(
     category = 'Transfer';
   } else if (/(استرداد|refund)/i.test(block) && signed > 0) {
     category = 'Income';
-  } else if (/(نقاط البيع|شراء إنترنت|شراء انترنت|pos purchase|purchase at|payment at)/i.test(block)) {
+  } else if (/(نقاط البيع|شراء\s*PoS|\bPoS\b|شراء إنترنت|شراء انترنت|pos purchase|purchase at|payment at)/i.test(block)) {
     category = 'Shopping';
   }
 
@@ -693,19 +693,21 @@ function extractSmsAmount(block: string): number {
     if (Number.isFinite(n) && n > 0) return n;
   }
 
-  // 2) Explicit بـSR / SR on purchase, transfer, or debit title lines.
+  // 2) Explicit بـSR / بـSAR on purchase, transfer, or debit title lines (same line or nearby).
+  const principalCurrency = String.raw`(?:SAR|SR)`;
   const principalSrLineRe = new RegExp(
-    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[^\n]*?بـ\s*SR\s*${amountToken}`,
+    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[^\n]*?بـ\s*${principalCurrency}\s*${amountToken}`,
     'i',
   );
   const principalSrAltRe = new RegExp(
-    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[^\n]*?\bSR\s*${amountToken}\b`,
+    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[^\n]*?\b${principalCurrency}\s*${amountToken}\b`,
     'i',
   );
+  const barePrincipalRe = new RegExp(String.raw`بـ\s*${principalCurrency}\s*${amountToken}`, 'i');
   let principal = 0;
   for (const line of lines) {
     if (isSmsSecondaryAmountLine(line)) continue;
-    const oneLine = line.match(principalSrLineRe) ?? line.match(principalSrAltRe);
+    const oneLine = line.match(principalSrLineRe) ?? line.match(principalSrAltRe) ?? line.match(barePrincipalRe);
     if (oneLine) {
       const n = parseNum(oneLine[1]);
       if (Number.isFinite(n) && n > 0) {
@@ -718,16 +720,19 @@ function extractSmsAmount(block: string): number {
     const arabPrincipalSr =
       compact.match(
         new RegExp(
-          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[\s\S]{0,500}?(?:^|\s)بـ\s*SR\s*${amountToken}(?=\s|$)`,
+          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[\s\S]{0,500}?(?:^|\s)بـ\s*${principalCurrency}\s*${amountToken}(?=\s|$)`,
           'i',
         ),
       ) ??
       compact.match(
         new RegExp(
-          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[\s\S]{0,300}?(?:^|\s)SR\s*${amountToken}(?=\s|$)`,
+          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[\s\S]{0,300}?(?:^|\s)${principalCurrency}\s*${amountToken}(?=\s|$)`,
           'i',
         ),
-      );
+      ) ??
+      (/(شراء|حوالة|نقاط البيع|\bpos\b)/i.test(compact)
+        ? compact.match(new RegExp(String.raw`بـ\s*${principalCurrency}\s*${amountToken}`, 'i'))
+        : null);
     if (arabPrincipalSr) {
       const n = parseNum(arabPrincipalSr[1]);
       if (Number.isFinite(n) && n > 0) principal = n;
@@ -804,7 +809,8 @@ function extractSmsAmount(block: string): number {
   for (const line of nonBalance) {
     let purchaseLine =
       line.match(principalSrLineRe) ??
-      line.match(principalSrAltRe);
+      line.match(principalSrAltRe) ??
+      line.match(barePrincipalRe);
     if (
       !purchaseLine &&
       (/(?:^|\s)مبلغ(?:\s*العملية)?\s*[:\-]?\s*[\d]/i.test(line) || /operation\s*amount/i.test(line))

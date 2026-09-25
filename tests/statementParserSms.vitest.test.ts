@@ -388,4 +388,37 @@ SAR مبلغ:50.00
     expect(res.transactions.some((t) => Math.abs(t.amount + 117) < 0.01)).toBe(true);
     expect(res.transactions.some((t) => t.amount < 0 && Math.abs(Math.abs(t.amount) - 50) < 0.01)).toBe(true);
   });
+
+  it('parses شراء PoS with بـSAR on a separate line (mada Apple Pay)', async () => {
+    const sms = [
+      'شراء PoS',
+      'عبر:8529;مدى-ابل باي',
+      'بـSAR 260',
+      'لـMohammed I',
+      '\u061C6/9/26 19:15',
+      'شراء PoS',
+      'عبر:8529;مدى-ابل باي',
+      'بـSAR 3',
+      'لـAl-Imtiaz',
+      '\u061C6/9/26 19:33',
+      'شراء PoS',
+      'عبر:8529;مدى-ابل باي',
+      'بـSAR 15.64',
+      'لـHANAA ROA',
+      '\u061C6/9/26 19:37',
+    ].join('\n');
+    const res = await parseSMSTransactions(sms, 'acc-pos-sar');
+    expect(res.transactions.length).toBe(3);
+    const byAmt = (n: number) => res.transactions.find((t) => Math.abs(Math.abs(t.amount) - n) < 0.01);
+    expect(byAmt(260)?.amount).toBeCloseTo(-260, 2);
+    expect(byAmt(260)?.type).toBe('expense');
+    expect(byAmt(260)?.description.toLowerCase()).toContain('mohammed');
+    expect(byAmt(260)?.category).toBe('Shopping');
+    expect(byAmt(260)?.date).toBe('2026-09-06');
+    expect(byAmt(3)?.amount).toBeCloseTo(-3, 2);
+    expect(byAmt(3)?.description).toMatch(/Al-Imtiaz/i);
+    expect(byAmt(15.64)?.amount).toBeCloseTo(-15.64, 2);
+    expect(byAmt(15.64)?.description.toUpperCase()).toContain('HANAA');
+    expect(res.transactions.every((t) => t.type === 'expense' && t.category === 'Shopping')).toBe(true);
+  });
 });
