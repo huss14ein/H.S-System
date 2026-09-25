@@ -31,7 +31,24 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('classifySmsIsDebit');
     expect(parser).toContain('إجمالي');
     expect(parser).toContain('pruneSmsSatelliteTransactions');
+    expect(parser).toContain('applySmsAccountRouting');
     expect(parser).not.toMatch(/const key = `\$\{date\}\|\$\{mag\}`;/);
+  });
+
+  it('Statement Upload wires SMS card routing + per-row account + import-anyway', () => {
+    const stmt = read('pages/StatementUpload.tsx');
+    expect(stmt).toContain('parseSMSTransactions(smsText, selectedAccount,');
+    expect(stmt).toContain('accounts: data?.accounts');
+    expect(stmt).toContain('parseSmsCardLast4FromNote');
+    expect(stmt).toContain('requireSameAccount: true');
+    expect(stmt).toContain('import anyway');
+    expect(stmt).toContain('accountId: e.target.value');
+    const accounts = read('pages/Accounts.tsx');
+    expect(accounts).toContain('lastFourDigits');
+    expect(accounts).toContain('Card / account last 4');
+    const routing = read('services/smsImportRouting.ts');
+    expect(routing).toContain('extractSmsCardLast4');
+    expect(routing).toContain('applySmsAccountRouting');
   });
 
   it('planStatementImport does not reject expenses missing budgetCategory', () => {

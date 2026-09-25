@@ -100,6 +100,7 @@ const AccountModal: React.FC<{
     const [balanceStr, setBalanceStr] = useState('');
     const [cashCurrency, setCashCurrency] = useState<'SAR' | 'USD'>('SAR');
     const [accountRole, setAccountRole] = useState<AccountRole | ''>('');
+    const [lastFourDigits, setLastFourDigits] = useState('');
 
     const planDefaultCash: 'SAR' | 'USD' =
         String((data?.investmentPlan as { budgetCurrency?: string } | undefined)?.budgetCurrency ?? '').toUpperCase() === 'USD'
@@ -115,6 +116,7 @@ const AccountModal: React.FC<{
             setCashCurrency(accountToEdit.currency ?? planDefaultCash);
             setBalanceStr('');
             setAccountRole((accountToEdit.accountRole as AccountRole) ?? '');
+            setLastFourDigits(accountToEdit.lastFourDigits || accountToEdit.platformDetails?.cardLast4 || '');
         } else {
             const learnedType = getLearnedDefault('account-add', 'type') as Account['type'] | undefined;
             const validTypes: Account['type'][] = ['Checking', 'Savings', 'Credit', 'Investment'];
@@ -125,6 +127,7 @@ const AccountModal: React.FC<{
             setCashCurrency(planDefaultCash);
             setBalanceStr('');
             setAccountRole('');
+            setLastFourDigits('');
         }
     }, [accountToEdit, isOpen, getLearnedDefault, planDefaultCash]);
 
@@ -132,6 +135,7 @@ const AccountModal: React.FC<{
         e.preventDefault();
         const parsedBalance =
             type === 'Investment' ? 0 : Number(balanceStr.replace(/,/g, '')) || 0;
+        const digits = lastFourDigits.replace(/\D/g, '').slice(-4);
         const accountData: any = {
             name,
             type,
@@ -140,6 +144,16 @@ const AccountModal: React.FC<{
             ...(type === 'Investment' ? { linkedAccountIds: linkedAccountIds || [] } : {}),
             ...(type === 'Checking' || type === 'Savings' || type === 'Credit' ? { currency: cashCurrency } : {}),
             accountRole: accountRole || null,
+            lastFourDigits: type !== 'Investment' && digits.length === 4 ? digits : undefined,
+            platformDetails:
+                type !== 'Investment' && digits.length === 4
+                    ? {
+                          ...(accountToEdit?.platformDetails ?? { features: [], assetTypes: [], fees: '' }),
+                          cardLast4: digits,
+                      }
+                    : accountToEdit?.platformDetails
+                      ? { ...accountToEdit.platformDetails, cardLast4: undefined }
+                      : undefined,
         };
 
         try {
@@ -201,6 +215,26 @@ const AccountModal: React.FC<{
                         </select>
                         <p className="mt-1 text-xs text-slate-500">
                             Use <strong>Salary receiving</strong> and <strong>Investment funding</strong> on your main cash accounts to improve salary-invest attribution confidence.
+                        </p>
+                    </div>
+                )}
+                {(type === 'Checking' || type === 'Savings' || type === 'Credit') && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                            Card / account last 4 (optional)
+                            <InfoHint text="Used to auto-route bank SMS (بطاقة / عبر / من). Example: 7365 from بطاقة:7365." hintId="account-last4" hintPage="Accounts" />
+                        </label>
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={4}
+                            placeholder="e.g. 7365"
+                            value={lastFourDigits}
+                            onChange={(e) => setLastFourDigits(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            className="input-base"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">
+                            Statement Upload matches SMS card masks to this value so multi-card pastes debit the right account.
                         </p>
                     </div>
                 )}

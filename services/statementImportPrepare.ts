@@ -127,9 +127,12 @@ export function computeStatementReviewDuplicates(
   bankTransactions: Transaction[],
   investmentTransactions: InvestmentTransaction[],
   ctx: StatementImportContext,
+  options?: { dateToleranceDays?: number; requireSameAccount?: boolean },
 ): Set<number> {
   const duplicates = new Set<number>();
   const bankLen = bankTransactions.length;
+  const dateToleranceDays = options?.dateToleranceDays ?? 3;
+  const requireSameAccount = options?.requireSameAccount ?? false;
 
   bankTransactions.forEach((tx, index) => {
     const matches = findDuplicateTransactions(
@@ -141,7 +144,7 @@ export function computeStatementReviewDuplicates(
         type: tx.type,
       },
       ctx.existingBankTransactions,
-      { dateToleranceDays: 3, requireSameAccount: false },
+      { dateToleranceDays, requireSameAccount },
     );
     if (matches.length > 0) duplicates.add(index);
   });
@@ -206,12 +209,13 @@ export function planStatementImport(args: {
   let skippedValidation = 0;
   const importPendingKeys = new Set<string>();
 
+  for (const idx of args.duplicateIndices) {
+    if (!args.selectedIndices.has(idx)) skippedDuplicates += 1;
+  }
+
   args.bankTransactions.forEach((raw, idx) => {
     if (!args.selectedIndices.has(idx)) return;
-    if (args.duplicateIndices.has(idx)) {
-      skippedDuplicates += 1;
-      return;
-    }
+    // Selecting a duplicate row is an explicit "import anyway" override.
     const tx = {
       ...raw,
       date: String(raw.date || '').slice(0, 10),
@@ -233,10 +237,7 @@ export function planStatementImport(args: {
   args.investmentTransactions.forEach((raw, invIdx) => {
     const absoluteIdx = bankLen + invIdx;
     if (!args.selectedIndices.has(absoluteIdx)) return;
-    if (args.duplicateIndices.has(absoluteIdx)) {
-      skippedDuplicates += 1;
-      return;
-    }
+    // Selecting a duplicate investment row is an explicit "import anyway" override.
     const tx = prepareStatementInvestmentRow(raw, args.ctx);
     const reasons = validatePreparedStatementInvestmentRow(tx);
     if (reasons.length > 0) {

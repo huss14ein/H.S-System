@@ -657,6 +657,11 @@ function normalizeAccount(raw: any): Account {
     const linkedAccountIds = raw.linkedAccountIds ?? raw.linked_account_ids;
     const cur = raw.currency;
     const accountCurrency = cur === 'SAR' || cur === 'USD' ? cur : undefined;
+    const platformDetails = raw.platformDetails ?? raw.platform_details;
+    const lastFourDigits =
+      raw.lastFourDigits ??
+      raw.last_four_digits ??
+      (platformDetails && typeof platformDetails === 'object' ? (platformDetails as { cardLast4?: string }).cardLast4 : undefined);
     return {
         ...(raw as Record<string, unknown>),
         id,
@@ -667,7 +672,8 @@ function normalizeAccount(raw: any): Account {
         currency: accountCurrency,
         owner: raw.owner,
         linkedAccountIds: Array.isArray(linkedAccountIds) ? linkedAccountIds.filter((id: any): id is string => typeof id === 'string') : undefined,
-        platformDetails: raw.platformDetails ?? raw.platform_details,
+        lastFourDigits: lastFourDigits != null && String(lastFourDigits).trim() !== '' ? String(lastFourDigits).replace(/\D/g, '').slice(-4) : undefined,
+        platformDetails,
         accountRole: raw.account_role ?? raw.accountRole,
         bucketType: raw.bucket_type ?? raw.bucketType,
     };
@@ -692,7 +698,8 @@ function buildAccountInsertPayload(platform: Omit<Account, 'id' | 'user_id' | 'b
     if (platform.type === 'Investment') {
         payload.linked_account_ids = Array.isArray(platform.linkedAccountIds) ? platform.linkedAccountIds : [];
     }
-    if (platform.platformDetails) payload.platform_details = platform.platformDetails;
+    const pd = withSyncedCardLast4(platform.platformDetails, platform.lastFourDigits);
+    if (pd) payload.platform_details = pd;
     if (platform.currency === 'SAR' || platform.currency === 'USD') {
         payload.currency = platform.currency;
     }
@@ -700,6 +707,29 @@ function buildAccountInsertPayload(platform: Omit<Account, 'id' | 'user_id' | 'b
     else if ('accountRole' in platform) payload.account_role = null;
     if (platform.bucketType) payload.bucket_type = platform.bucketType;
     return payload;
+}
+
+function withSyncedCardLast4(
+    platformDetails: Account['platformDetails'] | undefined,
+    lastFourDigits: string | undefined,
+): Account['platformDetails'] | undefined {
+    const digits = String(lastFourDigits ?? '').replace(/\D/g, '').slice(-4);
+    const base = platformDetails ? { ...platformDetails } : undefined;
+    if (digits.length === 4) {
+        return {
+            features: base?.features ?? [],
+            assetTypes: base?.assetTypes ?? [],
+            fees: base?.fees ?? '',
+            cardLast4: digits,
+        };
+    }
+    if (!base) return undefined;
+    const { cardLast4: _drop, ...rest } = base;
+    return {
+        features: rest.features ?? [],
+        assetTypes: rest.assetTypes ?? [],
+        fees: rest.fees ?? '',
+    };
 }
 
 function normalizeAssetRow(raw: any): Asset {
@@ -4021,9 +4051,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             payload.linked_account_ids = [];
         }
         
-        // Handle platform details if present
-        if (platform.platformDetails) {
-            payload.platform_details = platform.platformDetails;
+        // Handle platform details + card last-4 (SMS routing) if present
+        const pd = withSyncedCardLast4(platform.platformDetails, platform.lastFourDigits);
+        if (pd) {
+            payload.platform_details = pd;
         }
         if (platform.accountRole) payload.account_role = platform.accountRole;
         else if ('accountRole' in platform) payload.account_role = null;

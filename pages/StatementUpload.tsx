@@ -19,6 +19,7 @@ import {
   planStatementImport,
   type StatementImportContext,
 } from '../services/statementImportPrepare';
+import { parseSmsCardLast4FromNote } from '../services/smsImportRouting';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
@@ -285,7 +286,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
 
     try {
       setProcessingProgress(30);
-      const result = await parseSMSTransactions(smsText, selectedAccount);
+      const result = await parseSMSTransactions(smsText, selectedAccount, {
+        accounts: data?.accounts ?? [],
+      });
       const mapped = enrichTransactionsWithBudgetMapping(result.transactions);
       setExtractedTransactions(sortByNewestFirst(mapped));
       setValidationWarnings(result.warnings ?? []);
@@ -349,6 +352,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       transactions,
       investmentTransactions,
       statementImportCtx,
+      activeTab === 'sms'
+        ? { dateToleranceDays: 1, requireSameAccount: true }
+        : { dateToleranceDays: 3, requireSameAccount: false },
     );
     setDuplicateTransactions(duplicates);
     if (options?.resetSelection !== false) {
@@ -365,7 +371,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return next;
       });
     }
-  }, [statementImportCtx]);
+  }, [statementImportCtx, activeTab]);
 
   const checkForDuplicates = useCallback((
     transactions: Transaction[],
@@ -674,8 +680,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
 
 
   const handleExtractedTransactionEdit = (index: number, patch: Partial<Transaction>) => {
-    setExtractedTransactions((prev) =>
-      prev.map((tx, i) => {
+    setExtractedTransactions((prev) => {
+      const nextRows = prev.map((tx, i) => {
         if (i !== index) return tx;
         const next = { ...tx, ...patch };
         if (
@@ -697,8 +703,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
           };
         }
         return next;
-      }),
-    );
+      });
+      if (Object.prototype.hasOwnProperty.call(patch, 'accountId')) {
+        queueMicrotask(() => {
+          applyReviewDuplicateFlags(nextRows, extractedInvestmentTransactions, { resetSelection: false });
+        });
+      }
+      return nextRows;
+    });
   };
 
   const handleExtractedInvestmentTransactionEdit = (index: number, patch: Partial<InvestmentTransaction>) => {
@@ -973,6 +985,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                 {bankAccounts.length === 0 && (
                   <p className="mt-1 text-sm text-amber-700">Add bank accounts in Settings or Accounts first.</p>
                 )}
+                <p className="mt-2 text-xs text-slate-500">
+                  Tip: set each account’s <strong>Card / account last 4</strong> on the Accounts page so multi-card SMS pastes auto-route (e.g. 7365 vs 5280). You can still change the account per row in review.
+                </p>
               </div>
 
               <div>
@@ -1095,7 +1110,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
           isOpen={isReviewModalOpen}
           onClose={dismissReviewModal}
           title="Review Extracted Transactions"
-          maxWidthClass="max-w-4xl"
+          maxWidthClass="max-w-6xl"
         >
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -1106,7 +1121,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                 {duplicateTransactions.size > 0 && (
                   <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
                     <p className="text-xs font-medium text-amber-800">
-                      {duplicateTransactions.size} potential duplicate(s) detected
+                      {duplicateTransactions.size} potential duplicate(s) — unchecked by default; tick a row to import anyway
                     </p>
                   </div>
                 )}
@@ -1274,6 +1289,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Account</th>
                         <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Budget</th>
@@ -1284,6 +1300,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                       {extractedTransactions.map((tx, index) => {
                         const isDuplicate = duplicateTransactions.has(index);
                         const isSelected = selectedTransactions.has(index);
+                        const cardLast4 = parseSmsCardLast4FromNote(tx.note);
+                        const rowAccount = bankAccounts.find((a) => a.id === tx.accountId);
+                        const rowCurrency = rowAccount?.currency === 'USD' ? 'USD' : selectedAccountCurrency;
                         return (
                           <tr
                             key={index}
@@ -1294,15 +1313,37 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                 type="checkbox"
                                 checked={isSelected}
                                 onChange={() => handleToggleTransaction(index)}
-                                disabled={isDuplicate}
-                                className="rounded border-slate-300 text-primary focus:ring-primary disabled:opacity-50"
+                                className="rounded border-slate-300 text-primary focus:ring-primary"
+                                title={isDuplicate ? 'Duplicate — tick to import anyway' : undefined}
                               />
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
-                            <td className="px-4 py-3 text-sm text-slate-900">{tx.description}</td>
+                            <td className="px-4 py-3 text-sm text-slate-900">
+                              <div>{tx.description}</div>
+                              {cardLast4 && (
+                                <div className="text-xs text-slate-500 mt-0.5">Card ••••{cardLast4}</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-600 min-w-[160px]">
+                              <select
+                                value={tx.accountId || ''}
+                                onChange={(e) => handleExtractedTransactionEdit(index, { accountId: e.target.value })}
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                aria-label={`Account for ${tx.description}`}
+                              >
+                                {bankAccounts.map((acc) => (
+                                  <option key={acc.id} value={acc.id}>
+                                    {acc.name}
+                                    {acc.lastFourDigits || acc.platformDetails?.cardLast4
+                                      ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
+                                      : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
                             <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                               {tx.amount >= 0 ? '+' : '-'}
-                              {formatCurrencyString(Math.abs(tx.amount), { inCurrency: selectedAccountCurrency })}
+                              {formatCurrencyString(Math.abs(tx.amount), { inCurrency: rowCurrency })}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600 min-w-[180px]">
                               <input
@@ -1333,7 +1374,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                             <td className="px-4 py-3 text-center">
                               {isDuplicate ? (
                                 <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-medium">
-                                  Duplicate
+                                  {isSelected ? 'Import anyway' : 'Duplicate'}
                                 </span>
                               ) : isSelected ? (
                                 <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">

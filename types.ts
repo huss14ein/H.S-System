@@ -279,10 +279,17 @@ export interface Account {
   owner?: string;
   /** For Investment accounts: linked cash account IDs that can fund this platform */
   linkedAccountIds?: string[];
+  /**
+   * Last 4 digits of debit/credit card or account mask (for SMS auto-routing).
+   * Persisted in `platform_details.cardLast4` when no dedicated DB column exists.
+   */
+  lastFourDigits?: string;
   platformDetails?: {
     features: string[];
     assetTypes: string[];
     fees: string;
+    /** Mirror of `lastFourDigits` for JSON persistence on accounts.platform_details. */
+    cardLast4?: string;
   };
   /** Cash allocation role (persisted when DB column exists). */
   accountRole?: AccountRole;
