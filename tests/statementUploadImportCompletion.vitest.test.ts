@@ -28,6 +28,9 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('smsDedupeDescriptionKey');
     expect(parser).toContain('inferCategoryForSignedAmount');
     expect(parser).toContain('inferImportTransactionCategory');
+    expect(parser).toContain('classifySmsIsDebit');
+    expect(parser).toContain('إجمالي');
+    expect(parser).toContain('pruneSmsSatelliteTransactions');
     expect(parser).not.toMatch(/const key = `\$\{date\}\|\$\{mag\}`;/);
   });
 

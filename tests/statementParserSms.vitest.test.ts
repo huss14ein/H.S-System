@@ -227,4 +227,165 @@ SAR مبلغ:50.00
     expect(res.transactions.length).toBeGreaterThan(0);
     expect(res.transactions[0].date).toBe('2026-08-10');
   });
+
+  it('parses outgoing local transfer (حوالة صادرة) as expense including fee, not income', async () => {
+    const sms = `حوالة محلية صادرة بـSR 300
+من3138
+لـ0102;abdullah alsaggaf
+رسوم:SR 0.58
+26/9/9 20:47`;
+    const res = await parseSMSTransactions(sms, 'acc-hawala');
+    expect(res.transactions.length).toBe(1);
+    const tx = res.transactions[0];
+    expect(tx.type).toBe('expense');
+    expect(tx.amount).toBeCloseTo(-300.58, 2);
+    expect(tx.date).toBe('2026-09-09');
+    expect(tx.description.toLowerCase()).toContain('abdullah');
+    expect(tx.category).toBe('Transfer');
+  });
+
+  it('parses credit-card refund SMS as income (استرداد)', async () => {
+    const sms = `بطاقة ائتمانية استرداد مبلغ
+بطاقة: 7365; فيزا
+مبلغ: 13.45 SAR
+التاجر: MAF Carre
+في: 5/9/26 10:37`;
+    const res = await parseSMSTransactions(sms, 'acc-refund');
+    expect(res.transactions.length).toBe(1);
+    expect(res.transactions[0].type).toBe('income');
+    expect(res.transactions[0].amount).toBeCloseTo(13.45, 2);
+    expect(res.transactions[0].description.toUpperCase()).toContain('MAF');
+    expect(res.transactions[0].date).toBe('2026-09-05');
+  });
+
+  it('uses إجمالي المبلغ المستحق for USD purchase and ignores fee/FX ghost rows', async () => {
+    const sms = `شراء انترنت
+بطاقة: 5280 ;فيزا
+مبلغ: 9 USD (33.81 ريال)
+لدى: NETLIFY
+رسوم وضريبة: 0.78 SAR
+سعر الصرف~ 3.756667
+إجمالي المبلغ المستحق: 34.59 SAR
+دولة: USA
+رصيد: 45993.85 SAR
+12/9/26 4:27`;
+    const res = await parseSMSTransactions(sms, 'acc-netlify');
+    expect(res.transactions.length).toBe(1);
+    expect(res.transactions[0].amount).toBeCloseTo(-34.59, 2);
+    expect(res.transactions[0].type).toBe('expense');
+    expect(res.transactions[0].description.toUpperCase()).toContain('NETLIFY');
+    expect(res.transactions.every((t) => Math.abs(t.amount) !== 9)).toBe(true);
+    expect(res.transactions.every((t) => Math.abs(Math.abs(t.amount) - 0.78) > 0.01)).toBe(true);
+    expect(res.transactions.every((t) => Math.abs(t.amount) < 1000)).toBe(true);
+  });
+
+  it('parses a multi-SMS paste of POS, internet, refund, and transfer as one row each', async () => {
+    const sms = `شراء عبر نقاط البيع
+بطاقة:7365 ;فيزا
+لدى:ALJAZIRA T
+مبلغ:500 SAR
+رصيد:4232.62 SAR
+3/9/26 4:06
+
+شراء إنترنت بـSR 117
+عبر7365;فيزا-ابل باي
+لـKeeta Tec
+رصيد:4129.07 SR
+4/9/26 23:23
+
+بطاقة ائتمانية استرداد مبلغ
+بطاقة: 7365; فيزا
+مبلغ: 13.45 SAR
+التاجر: MAF Carre
+في: 5/9/26 10:37
+
+شراء عبر نقاط البيع
+بطاقة:7365 ;فيزا-ابل باي
+لدى:Aramco St
+مبلغ:111.19 SAR
+رصيد:4017.88 SAR
+5/9/26 16:43
+
+شراء عبر نقاط البيع
+بطاقة:7365 ;فيزا-أثير
+لدى:ROKN MOSH
+مبلغ:48 SAR
+رصيد:4406.93 SAR
+9/9/26 8:34
+
+شراء عبر نقاط البيع
+بطاقة:7365 ;فيزا-أثير
+لدى:ROKN MOSH
+مبلغ:8 SAR
+رصيد:4270.03 SAR
+11/9/26 22:43
+
+شراء انترنت
+بطاقة: 5280 ;فيزا
+مبلغ: 9 USD (33.81 ريال)
+لدى: NETLIFY
+رسوم وضريبة: 0.78 SAR
+سعر الصرف~ 3.756667
+إجمالي المبلغ المستحق: 34.59 SAR
+دولة: USA
+رصيد: 45993.85 SAR
+12/9/26 4:27
+
+شراء عبر نقاط البيع
+بطاقة:7365 ;فيزا-ابل باي
+لدى:Almajdoui
+مبلغ:3232.31 SAR
+رصيد:1037.72 SAR
+12/9/26 11:03
+
+حوالة محلية صادرة بـSR 300
+من3138
+لـ0102;abdullah alsaggaf
+رسوم:SR 0.58
+26/9/9 20:47`;
+    const res = await parseSMSTransactions(sms, 'acc-multi-batch');
+    expect(res.transactions.length).toBe(9);
+
+    const byAmt = (n: number) =>
+      res.transactions.find((t) => Math.abs(Math.abs(t.amount) - n) < 0.02);
+
+    expect(byAmt(500)?.amount).toBeCloseTo(-500, 2);
+    expect(byAmt(500)?.description.toUpperCase()).toContain('ALJAZIRA');
+    expect(byAmt(117)?.amount).toBeCloseTo(-117, 2);
+    expect(byAmt(117)?.description.toLowerCase()).toContain('keeta');
+    expect(byAmt(13.45)?.amount).toBeCloseTo(13.45, 2);
+    expect(byAmt(13.45)?.type).toBe('income');
+    expect(byAmt(111.19)?.amount).toBeCloseTo(-111.19, 2);
+    expect(byAmt(48)?.amount).toBeCloseTo(-48, 2);
+    expect(byAmt(8)?.amount).toBeCloseTo(-8, 2);
+    expect(byAmt(34.59)?.amount).toBeCloseTo(-34.59, 2);
+    expect(byAmt(3232.31)?.amount).toBeCloseTo(-3232.31, 2);
+    expect(byAmt(300.58)?.amount).toBeCloseTo(-300.58, 2);
+    expect(byAmt(300.58)?.type).toBe('expense');
+
+    // No balance / fee / USD ghosts
+    const absAmts = res.transactions.map((t) => Math.abs(t.amount));
+    expect(absAmts.every((a) => a !== 9)).toBe(true);
+    expect(absAmts.every((a) => Math.abs(a - 0.78) > 0.01)).toBe(true);
+    expect(absAmts.every((a) => Math.abs(a - 4232.62) > 0.01)).toBe(true);
+    expect(absAmts.every((a) => Math.abs(a - 45993.85) > 0.01)).toBe(true);
+  });
+
+  it('parses multi-SMS without blank lines between Arabic starters', async () => {
+    const sms = `شراء عبر نقاط البيع
+لدى:ALJAZIRA T
+مبلغ:500 SAR
+3/9/26 4:06
+شراء إنترنت بـSR 117
+لـKeeta Tec
+4/9/26 23:23
+حوالة محلية صادرة بـSR 50
+لـ0102;test user
+26/9/25 12:00`;
+    const res = await parseSMSTransactions(sms, 'acc-no-blank');
+    expect(res.transactions.length).toBe(3);
+    expect(res.transactions.some((t) => Math.abs(t.amount + 500) < 0.01)).toBe(true);
+    expect(res.transactions.some((t) => Math.abs(t.amount + 117) < 0.01)).toBe(true);
+    expect(res.transactions.some((t) => t.amount < 0 && Math.abs(Math.abs(t.amount) - 50) < 0.01)).toBe(true);
+  });
 });

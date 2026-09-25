@@ -27,11 +27,17 @@ export function inferImportTransactionCategory(
   ) {
     return 'Shopping';
   }
-  if (/(شراء إنترنت|online purchase|e-?commerce|noon|amazon|نون|امازون)/i.test(descRaw)) {
+  if (/(شراء إنترنت|شراء انترنت|online purchase|e-?commerce|noon|amazon|نون|امازون)/i.test(descRaw)) {
     return 'Shopping';
   }
   if (/(atm|سحب نقدي|cash withdrawal)/i.test(descRaw)) {
     return 'Uncategorized';
+  }
+  if (/(حوالة|تحويل\s*صادر|transfer\s*out|local\s*transfer)/i.test(descRaw)) {
+    return 'Transfer';
+  }
+  if (/(استرداد|refund)/i.test(descRaw)) {
+    return 'Income';
   }
   if (/(salary|payroll|راتب|ايداع|إيداع|transfer received|income transfer)/i.test(descRaw)) {
     return 'Income';

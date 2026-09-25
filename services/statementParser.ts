@@ -390,22 +390,22 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           amount = parseFloat(match[1].replace(/,/g, ''));
           dateStr = match[3];
           description = line.substring(0, line.indexOf('SAR')).trim();
-          isDebit = /debited|withdrawn|paid/i.test(line);
+          isDebit = classifySmsIsDebit(line);
         } else if (pattern.source.includes('STC')) {
           amount = parseFloat(match[1].replace(/,/g, ''));
           dateStr = match[2];
           description = 'STC Payment';
-          isDebit = /paid|debited/i.test(line);
+          isDebit = classifySmsIsDebit(line);
         } else if (pattern.source.includes('Date-first')) {
           dateStr = match[1];
           description = match[2].trim();
           amount = parseFloat(match[3].replace(/,/g, ''));
-          isDebit = /debited|withdrawn|paid|purchase/i.test(line);
+          isDebit = classifySmsIsDebit(line);
         } else {
           // Generic pattern
           description = match[1]?.trim() || '';
           amount = parseFloat(match[2]?.replace(/,/g, '') || '0');
-          isDebit = /debited|withdrawn|paid|purchase/i.test(line);
+          isDebit = classifySmsIsDebit(line);
           
           // Try to extract date from the rest
           const dateMatch = match[3]?.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
@@ -440,103 +440,192 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
   return transactions;
 }
 
+/** Amount token used across SMS parsers (comma thousands + optional decimals). */
+const SMS_AMOUNT_TOKEN = String.raw`((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d{1,4})?)`;
+
+const SMS_DEBIT_RE =
+  /debited|withdrawn|purchase|payment|paid|spent|pos|atm|transfer\s*out|outgoing|sent|شراء|سحب|خصم|دفع|نقاط البيع|حوالة|صادرة|تحويل\s*صادر|سداد|محفظة/i;
+const SMS_CREDIT_RE =
+  /credited|refund|received|deposit|transfer\s*in|incoming|استرداد|واردة|تحويل\s*وارد|ايداع|إيداع|استلام/i;
+const SMS_SECONDARY_AMOUNT_RE =
+  /رسوم|ضريبة|سعر\s*الصرف|exchange\s*rate|\bfee\b|\bvat\b|\btax\b|fx\s*rate/i;
+
+/** Credit keywords win (e.g. استرداد) so refunds never book as expenses. */
+function classifySmsIsDebit(text: string): boolean {
+  const sample = String(text || '');
+  if (SMS_CREDIT_RE.test(sample)) return false;
+  return SMS_DEBIT_RE.test(sample);
+}
+
+function smsParseAmountToken(raw: string | undefined): number {
+  return Number(String(raw ?? '0').replace(/,/g, ''));
+}
+
+function isSmsBalanceOnlyLine(line: string): boolean {
+  return (
+    /(?:\bbalance\b|\bbal\b|رصيد)/i.test(line) &&
+    !/(amount|مبلغ|debited|credited|withdrawn|received|purchase|payment|paid|spent|transfer|شراء|سحب|خصم|دفع|حوالة|استرداد|نقاط البيع|ايداع|إيداع|deposit)/i.test(
+      line,
+    )
+  );
+}
+
+function isSmsSecondaryAmountLine(line: string): boolean {
+  const t = String(line || '').trim();
+  if (!t) return false;
+  if (SMS_SECONDARY_AMOUNT_RE.test(t) && !/إجمالي\s*المبلغ\s*المستحق/i.test(t)) return true;
+  if (isSmsBalanceOnlyLine(t)) return true;
+  if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(t) && !/(amount|مبلغ|شراء|purchase|حوالة)/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * Build one signed SMS transaction from a text block (one SMS ≈ one ledger row).
+ * Amount rules: إجمالي المبلغ المستحق > بـSR principal (+ same-block رسوم) > labeled مبلغ (prefer SAR parenthetical).
+ */
+function buildSmsTransactionFromBlock(
+  block: string,
+  accountId: string,
+  idPrefix: string,
+  idx: number,
+): Transaction | null {
+  const amount = extractSmsAmount(block);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const dateMatch = block.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})/);
+  let parsedDate = parseSmsDate(String(dateMatch?.[1] ?? '').replace(/\./g, '/'));
+  if (Number.isNaN(parsedDate.getTime())) {
+    const fb = extractFirstSmsDateInBlock(block).replace(/\./g, '/');
+    parsedDate = fb ? parseSmsDate(fb) : parsedDate;
+  }
+  const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
+  const description = canonicalizeTransactionDescription(extractSmsDescription(block, idx));
+  const isDebit = classifySmsIsDebit(block);
+  const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
+  // Seed category with block title keywords (نقاط البيع / شراء إنترنت) — merchant-only desc loses them.
+  const categorySeed = `${block.split('\n').slice(0, 3).join(' ')} ${description}`;
+  let category = inferCategoryForSignedAmount(categorySeed, signed);
+  if (/(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block)) {
+    category = 'Transfer';
+  } else if (/(استرداد|refund)/i.test(block) && signed > 0) {
+    category = 'Income';
+  } else if (/(نقاط البيع|شراء إنترنت|شراء انترنت|pos purchase|purchase at|payment at)/i.test(block)) {
+    category = 'Shopping';
+  }
+
+  return {
+    id: `${idPrefix}-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
+    date: dateIso,
+    description,
+    amount: signed,
+    category,
+    accountId,
+    type: signed < 0 ? 'expense' : 'income',
+    status: 'Approved',
+  };
+}
+
+function countSmsDateTokens(text: string): number {
+  return [...String(text || '').matchAll(/\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4}/g)].length;
+}
+
 /** Fallback parser for multiline/mixed-language SMS blocks. */
 function extractTransactionsFromSMSHeuristic(smsText: string, accountId: string): Transaction[] {
   const blocks = splitSmsIntoBlocks(smsText);
   const out: Transaction[] = [];
+  const signatures = new Set<string>();
+
+  const pushUnique = (tx: Transaction | null) => {
+    if (!tx) return;
+    const sig = `${tx.date}|${tx.amount}|${tx.description.toLowerCase()}`;
+    if (signatures.has(sig)) return;
+    signatures.add(sig);
+    out.push(tx);
+  };
 
   blocks.forEach((block, idx) => {
-    const amount = extractSmsAmount(block);
-    if (!Number.isFinite(amount) || amount <= 0) return;
-
-    const dateMatch = block.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/);
-    let parsedDate = parseSmsDate(String(dateMatch?.[1] ?? '').replace(/\./g, '/'));
-    if (Number.isNaN(parsedDate.getTime())) {
-      const fb = extractFirstSmsDateInBlock(block).replace(/\./g, '/');
-      parsedDate = fb ? parseSmsDate(fb) : parsedDate;
-    }
-    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
-
-    const explicitDesc =
-      block.match(/(?:لدى|لـ|merchant|at|from)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,})/i)?.[1]?.trim() ??
-      block
-        .split('\n')
-        .map((line) => line.trim())
-        .find((line) => /[A-Za-z]{3,}/.test(line) && !/SAR|balance|رصيد|مبلغ/i.test(line));
-    const description = canonicalizeTransactionDescription((explicitDesc || `SMS Transaction ${idx + 1}`).slice(0, 120).trim());
-
-    const isDebit = /debited|withdrawn|purchase|payment|paid|شراء|سحب|خصم|دفع|نقاط البيع/i.test(block);
-    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
-    const category = inferCategory(description, {
-      amount: signed,
-      type: signed < 0 ? 'expense' : 'income',
-    });
-
-    out.push({
-      id: `sms-heur-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
-      date: dateIso,
-      description,
-      amount: signed,
-      category,
-      accountId,
-      type: signed < 0 ? 'expense' : 'income',
-      status: 'Approved',
-    });
+    pushUnique(buildSmsTransactionFromBlock(block, accountId, 'sms-heur', idx));
   });
 
-  // Second pass: line-window extraction for tightly packed multi-SMS text.
-  const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/;
-  const lines = smsText.split('\n').map((l) => l.trim()).filter(Boolean);
-  const signatures = new Set(out.map((t) => `${t.date}|${t.amount}|${t.description.toLowerCase()}`));
-  for (let i = 0; i < lines.length; i++) {
-    if (!dateRe.test(lines[i])) continue;
-    const window = [lines[i], lines[i - 1], lines[i - 2], lines[i + 1]].filter(Boolean).join('\n');
-    const amount = extractSmsAmount(window);
-    if (!Number.isFinite(amount) || amount <= 0) continue;
-    let parsedDate = parseSmsDate(lines[i].replace(/\./g, '/'));
-    if (Number.isNaN(parsedDate.getTime())) parsedDate = parseSmsDate(extractFirstSmsDateInBlock(window).replace(/\./g, '/'));
-    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
-    const descLine =
-      [lines[i - 1], lines[i - 2], lines[i + 1]]
-        .filter(Boolean)
-        .find((line) => /[A-Za-z]{3,}/.test(line) && !/SAR|balance|رصيد|مبلغ/i.test(line)) ?? `SMS Transaction ${i + 1}`;
-    const isDebit = /debited|withdrawn|purchase|payment|paid|شراء|سحب|خصم|دفع|نقاط البيع/i.test(window);
-    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
-    const description = canonicalizeTransactionDescription(descLine.slice(0, 120).trim());
-    const sig = `${dateIso}|${signed}|${description.toLowerCase()}`;
-    if (signatures.has(sig)) continue;
-    signatures.add(sig);
-    out.push({
-      id: `sms-heur-line-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
-      date: dateIso,
-      description,
-      amount: signed,
-      category: inferCategoryForSignedAmount(description, signed),
-      accountId,
-      type: signed < 0 ? 'expense' : 'income',
-      status: 'Approved',
-    });
+  const dateTokenCount = countSmsDateTokens(smsText);
+  const blockCoverageOk =
+    out.length > 0 && out.length >= Math.max(1, Math.min(blocks.length, dateTokenCount));
+  // Secondary passes only fill gaps (compact paste / NBSP layouts). Avoid inventing fee/USD/total rows
+  // on top of good block parses — that was the multi-line ghost-transaction failure mode.
+  const needsSecondaryPasses = !blockCoverageOk || out.length === 0 || (blocks.length <= 1 && dateTokenCount > 1);
+
+  if (needsSecondaryPasses) {
+    // Second pass: line-window extraction for tightly packed multi-SMS text.
+    const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{1,4}/;
+    const lines = smsText.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (let i = 0; i < lines.length; i++) {
+      if (!dateRe.test(lines[i])) continue;
+      const window = [lines[i], lines[i - 1], lines[i - 2], lines[i + 1]].filter(Boolean).join('\n');
+      if (isSmsSecondaryAmountLine(lines[i])) continue;
+      pushUnique(buildSmsTransactionFromBlock(window, accountId, 'sms-heur-line', i));
+    }
+
+    // Third pass: date-anchored extraction for compact pastes.
+    for (const tx of extractTransactionsFromSmsDateAnchors(smsText, accountId)) {
+      pushUnique(tx);
+    }
+
+    // Fourth pass: currency-token anchors (NBSP / ISO-date layouts).
+    for (const tx of extractTransactionsFromSmsCurrencyAnchors(smsText, accountId)) {
+      pushUnique(tx);
+    }
   }
 
-  // Third pass: date-anchored extraction for compact pastes where multiple SMS were copied in one paragraph.
-  const anchored = extractTransactionsFromSmsDateAnchors(smsText, accountId);
-  for (const tx of anchored) {
-    const sig = `${tx.date}|${tx.amount}|${tx.description.toLowerCase()}`;
-    if (signatures.has(sig)) continue;
-    signatures.add(sig);
-    out.push(tx);
+  return pruneSmsSatelliteTransactions(out, smsText);
+}
+
+/**
+ * Drop fee / FX / balance / USD-op ghosts when a primary total (or principal) already exists for the date.
+ */
+function pruneSmsSatelliteTransactions(transactions: Transaction[], sourceText: string): Transaction[] {
+  if (transactions.length <= 1) return transactions;
+  const text = String(sourceText || '');
+  const byDate = new Map<string, Transaction[]>();
+  for (const tx of transactions) {
+    const key = String(tx.date || '').slice(0, 10);
+    const arr = byDate.get(key) ?? [];
+    arr.push(tx);
+    byDate.set(key, arr);
   }
 
-  // Fourth pass: currency-token anchors (handles NBSP-heavy bank SMS and ISO dates without slashes).
-  const currencyAnchored = extractTransactionsFromSmsCurrencyAnchors(smsText, accountId);
-  for (const tx of currencyAnchored) {
-    const sig = `${tx.date}|${tx.amount}|${tx.description.toLowerCase()}`;
-    if (signatures.has(sig)) continue;
-    signatures.add(sig);
-    out.push(tx);
+  const drop = new Set<string>();
+  for (const [, group] of byDate) {
+    if (group.length <= 1) continue;
+    const mags = group.map((t) => Math.abs(Number(t.amount)));
+    const primaryMag = Math.max(...mags);
+
+    for (const tx of group) {
+      const mag = Math.abs(Number(tx.amount));
+      const amtRe = new RegExp(
+        `(?:^|[\\s:])(${mag.toFixed(2).replace('.', '\\.')}|${String(mag).replace('.', '\\.')})(?!\\d)`,
+      );
+      const line =
+        text
+          .split(/\n/)
+          .map((l) => l.trim())
+          .find((l) => amtRe.test(l.replace(/,/g, ''))) ?? '';
+
+      if (line && isSmsSecondaryAmountLine(line) && mag < primaryMag - 0.001) {
+        drop.add(tx.id);
+        continue;
+      }
+      // USD operation amount when إجمالي / larger SAR sibling exists same day
+      if (
+        mag < primaryMag - 0.001 &&
+        /USD|\$/i.test(line) &&
+        /إجمالي\s*المبلغ\s*المستحق/i.test(text)
+      ) {
+        drop.add(tx.id);
+      }
+    }
   }
 
-  return out;
+  return transactions.filter((t) => !drop.has(t.id));
 }
 
 /** Split raw SMS paste into transaction-like blocks (blank lines OR starter lines). */
@@ -551,13 +640,20 @@ function splitSmsIntoBlocks(smsText: string): string[] {
   if (lines.length <= 1) return lines;
   const blocks: string[] = [];
   let current: string[] = [];
-  const startRe =
-    /(purchase|payment|transaction|debited|credited|withdrawn|received|transfer|paid|spent|pos|atm|شراء|سحب|خصم|نقاط البيع|تحويل|سداد|عملية|إيداع|ايداع|استلام)/i;
-  const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/;
+  // Do NOT use bare `عملية` — it false-splits on `مبلغ العملية`.
+  const startReEn =
+    /^(?:purchase|payment|transaction|debited|credited|withdrawn|received|transfer|paid|spent|pos|atm)\b/i;
+  const startReAr = /^(?:شراء|سحب|خصم|نقاط البيع|تحويل|حوالة|استرداد|سداد|إيداع|ايداع|استلام)/;
+  const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{1,4}/;
 
   for (const line of lines) {
-    const startsNew = startRe.test(line) && current.length > 0;
-    if (startsNew) {
+    const lineStartsTx =
+      current.length > 0 &&
+      (startReEn.test(line) ||
+        startReAr.test(line) ||
+        /استرداد/.test(line) ||
+        (/^بطاقة/.test(line) && /استرداد|ائتمانية/.test(line) && /مبلغ|استرداد/.test(line)));
+    if (lineStartsTx) {
       blocks.push(current.join('\n').trim());
       current = [line];
       continue;
@@ -574,140 +670,211 @@ function splitSmsIntoBlocks(smsText: string): string[] {
 
 function extractSmsAmount(block: string): number {
   const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
-  const parseNum = (raw: string | undefined) => Number((raw ?? '0').replace(/,/g, ''));
+  const parseNum = smsParseAmountToken;
   const compact = String(block || '').replace(/\s+/g, ' ').trim();
-  const amountToken = String.raw`((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d+)?)`;
-  const isBalanceOnlyLine = (line: string) =>
-    /(?:\bbalance\b|\bbal\b|رصيد)/i.test(line) &&
-    !/(amount|مبلغ|debited|credited|withdrawn|received|purchase|payment|paid|spent|transfer|شراء|سحب|خصم|دفع|عملية|نقاط البيع|ايداع|إيداع|deposit)/i.test(line);
+  const amountToken = SMS_AMOUNT_TOKEN;
 
-  /**
-   * KSA SMS: "SR" (not SAR) and "بـSR" on one line, e.g. `شراء إنترنت بـSR 57.5`.
-   * Do not use \b before Arabic (JS word boundary is Latin-oriented and often fails after spaces).
-   */
-  for (const line of lines) {
-    const oneLine =
-      line.match(new RegExp(String.raw`شراء[^\n]*?بـ\s*SR\s*${amountToken}`, 'i')) ??
-      line.match(new RegExp(String.raw`شراء[^\n]*?\bSR\s*${amountToken}\b`, 'i'));
-    if (oneLine) {
-      const n = parseNum(oneLine[1]);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
-  }
-  const arabPurchaseSr =
-    compact.match(new RegExp(String.raw`شراء[\s\S]{0,500}?(?:^|\s)بـ\s*SR\s*${amountToken}(?=\s|$)`, 'i')) ??
-    compact.match(new RegExp(String.raw`شراء[\s\S]{0,300}?(?:^|\s)SR\s*${amountToken}(?=\s|$)`, 'i'));
-  if (arabPurchaseSr) {
-    const n = parseNum(arabPurchaseSr[1]);
+  // 1) Total amount due (SAR) — authoritative for FX / fee SMS.
+  const totalDue =
+    compact.match(
+      new RegExp(
+        String.raw`إجمالي\s*المبلغ\s*المستحق\s*[:\-]?\s*(?:SAR|SR|ر\.?س|ريال)?\s*${amountToken}`,
+        'i',
+      ),
+    ) ??
+    compact.match(
+      new RegExp(
+        String.raw`إجمالي\s*المبلغ\s*المستحق\s*[:\-]?\s*${amountToken}\s*(?:SAR|SR|ر\.?س|ريال)?`,
+        'i',
+      ),
+    );
+  if (totalDue) {
+    const n = parseNum(totalDue[1]);
     if (Number.isFinite(n) && n > 0) return n;
   }
 
-  const moneyAfterCurrency =
-    new RegExp(String.raw`(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)[^\d]{0,20}${amountToken}`, 'i');
-  const moneyBeforeCurrency =
-    new RegExp(String.raw`${amountToken}\s*(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)\b`, 'i');
+  // 2) Explicit بـSR / SR on purchase, transfer, or debit title lines.
+  const principalSrLineRe = new RegExp(
+    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[^\n]*?بـ\s*SR\s*${amountToken}`,
+    'i',
+  );
+  const principalSrAltRe = new RegExp(
+    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[^\n]*?\bSR\s*${amountToken}\b`,
+    'i',
+  );
+  let principal = 0;
+  for (const line of lines) {
+    if (isSmsSecondaryAmountLine(line)) continue;
+    const oneLine = line.match(principalSrLineRe) ?? line.match(principalSrAltRe);
+    if (oneLine) {
+      const n = parseNum(oneLine[1]);
+      if (Number.isFinite(n) && n > 0) {
+        principal = n;
+        break;
+      }
+    }
+  }
+  if (!principal) {
+    const arabPrincipalSr =
+      compact.match(
+        new RegExp(
+          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[\s\S]{0,500}?(?:^|\s)بـ\s*SR\s*${amountToken}(?=\s|$)`,
+          'i',
+        ),
+      ) ??
+      compact.match(
+        new RegExp(
+          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[\s\S]{0,300}?(?:^|\s)SR\s*${amountToken}(?=\s|$)`,
+          'i',
+        ),
+      );
+    if (arabPrincipalSr) {
+      const n = parseNum(arabPrincipalSr[1]);
+      if (Number.isFinite(n) && n > 0) principal = n;
+    }
+  }
+  if (principal > 0) {
+    // Same-SMS bank fee is part of the cash out (do not emit a second row).
+    const feeMatch = compact.match(
+      new RegExp(String.raw`(?:رسوم|fee)[^\d]{0,24}(?:SAR|SR|ر\.?س)?\s*[:\-]?\s*${amountToken}`, 'i'),
+    );
+    const fee = feeMatch ? parseNum(feeMatch[1]) : 0;
+    if (Number.isFinite(fee) && fee > 0 && fee < principal) return principal + fee;
+    return principal;
+  }
+
+  const moneyAfterCurrency = new RegExp(
+    String.raw`(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)[^\d]{0,20}${amountToken}`,
+    'i',
+  );
+  const moneyBeforeCurrency = new RegExp(
+    String.raw`${amountToken}\s*(?:SAR|SR|USD|EUR|\$|ر\.?س|ريال)\b`,
+    'i',
+  );
   const kdPattern = new RegExp(String.raw`${amountToken}\s*(?:KD|KWD|د\.ك)\b`, 'i');
 
-  const withAmountLabel = lines.find((line) => /(amount|مبلغ)/i.test(line));
-  const labelMatch = withAmountLabel?.match(moneyAfterCurrency)
-    ?? withAmountLabel?.match(moneyBeforeCurrency)
-    ?? withAmountLabel?.match(kdPattern);
-  if (labelMatch) return parseNum(labelMatch[1]);
+  // 3) Labeled مبلغ — prefer SAR / parenthetical ريال over foreign ops amount.
+  const withAmountLabel = lines.find(
+    (line) => /(amount|مبلغ)/i.test(line) && !isSmsSecondaryAmountLine(line) && !/إجمالي/i.test(line),
+  );
+  if (withAmountLabel) {
+    const parenSar = withAmountLabel.match(
+      new RegExp(String.raw`\(${amountToken}\s*(?:ريال|SAR|SR)\)`, 'i'),
+    );
+    if (parenSar) {
+      const n = parseNum(parenSar[1]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    const hasForeign = /\b(?:USD|EUR|\$)\b/i.test(withAmountLabel);
+    const hasSar = /\b(?:SAR|SR|ريال|ر\.?س)\b/i.test(withAmountLabel);
+    if (!(hasForeign && !hasSar)) {
+      const labelMatch =
+        withAmountLabel.match(moneyAfterCurrency) ??
+        withAmountLabel.match(moneyBeforeCurrency) ??
+        withAmountLabel.match(kdPattern);
+      if (labelMatch) return parseNum(labelMatch[1]);
+    } else {
+      // USD-only مبلغ without إجمالي (already checked) — still take it as last resort below.
+      const foreignAmt = withAmountLabel.match(moneyAfterCurrency) ?? withAmountLabel.match(moneyBeforeCurrency);
+      if (foreignAmt) {
+        const n = parseNum(foreignAmt[1]);
+        if (Number.isFinite(n) && n > 0) {
+          // Prefer later SAR total lines if any slipped past إجمالي wording variants.
+          for (const line of lines) {
+            if (/مستحق|total\s*due|total\s*amount/i.test(line)) {
+              const sar =
+                line.match(new RegExp(String.raw`${amountToken}\s*(?:SAR|SR|ريال)`, 'i')) ??
+                line.match(new RegExp(String.raw`(?:SAR|SR|ريال)\s*${amountToken}`, 'i'));
+              if (sar) return parseNum(sar[1]);
+            }
+          }
+          return n;
+        }
+      }
+    }
+  }
 
-  const explicitAmt = block.match(new RegExp(String.raw`\b(?:amount|مبلغ)\s*[:\-]?\s*${amountToken}\b`, 'i'));
+  const explicitAmt = block.match(new RegExp(String.raw`(?:amount|مبلغ)\s*[:\-]?\s*${amountToken}`, 'i'));
   if (explicitAmt) {
     const n = parseNum(explicitAmt[1]);
     if (Number.isFinite(n) && n > 0) return n;
   }
 
-  const nonBalance = lines.filter((line) => {
-    if (isBalanceOnlyLine(line)) return false;
-    if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء|purchase)/i.test(line)) return false;
-    return true;
-  });
+  const nonBalance = lines.filter((line) => !isSmsSecondaryAmountLine(line));
   for (const line of nonBalance) {
-    if (isBalanceOnlyLine(line)) continue;
-    if (/(?:^|\s)(?:balance|رصيد)\s*:/i.test(line) && !/(amount|مبلغ|شراء)/i.test(line)) continue;
-    // Purchase / operation line: take that amount first (avoids matching a later "رصيد" on the same line).
     let purchaseLine =
-      line.match(new RegExp(String.raw`شراء[^\n]*?بـ\s*SR\s*${amountToken}`, 'i')) ??
-      line.match(new RegExp(String.raw`شراء[^\n]*?\bSR\s*${amountToken}\b`, 'i'));
-    if (!purchaseLine && (/(?:^|\s)مبلغ(?:\s*العملية)?\s*[:\-]?\s*[\d]/i.test(line) || /operation\s*amount/i.test(line))) {
+      line.match(principalSrLineRe) ??
+      line.match(principalSrAltRe);
+    if (
+      !purchaseLine &&
+      (/(?:^|\s)مبلغ(?:\s*العملية)?\s*[:\-]?\s*[\d]/i.test(line) || /operation\s*amount/i.test(line))
+    ) {
       purchaseLine = line.match(moneyAfterCurrency) ?? line.match(moneyBeforeCurrency);
     }
     if (purchaseLine) {
       const n = parseNum(purchaseLine[1]);
       if (Number.isFinite(n) && n > 0) return n;
     }
-    const m = line.match(moneyAfterCurrency)
-      ?? line.match(moneyBeforeCurrency)
-      ?? line.match(kdPattern);
+    // Leading "144.25 SAR - …" Alinma style
+    const leading = line.match(new RegExp(String.raw`^${amountToken}\s*(?:SAR|SR)\b`, 'i'));
+    if (leading) {
+      const n = parseNum(leading[1]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    const m = line.match(moneyAfterCurrency) ?? line.match(moneyBeforeCurrency) ?? line.match(kdPattern);
     if (m) return parseNum(m[1]);
   }
 
-  const hasTransactionSignal = /(amount|مبلغ|debited|credited|withdrawn|received|purchase|payment|paid|spent|transfer|شراء|سحب|خصم|دفع|عملية|نقاط البيع|ايداع|إيداع|deposit)/i.test(compact);
+  const hasTransactionSignal =
+    /(amount|مبلغ|debited|credited|withdrawn|received|purchase|payment|paid|spent|transfer|شراء|سحب|خصم|دفع|حوالة|استرداد|نقاط البيع|ايداع|إيداع|deposit)/i.test(
+      compact,
+    );
   if (!hasTransactionSignal && /(?:\bbalance\b|\bbal\b|رصيد)/i.test(compact)) {
     return 0;
   }
   const nonBalanceText = nonBalance.join('\n');
-  const anyMatch = nonBalanceText.match(moneyAfterCurrency)
-    ?? nonBalanceText.match(moneyBeforeCurrency)
-    ?? nonBalanceText.match(kdPattern)
-    ?? (hasTransactionSignal
-      ? (block.match(moneyAfterCurrency)
-        ?? block.match(moneyBeforeCurrency)
-        ?? block.match(kdPattern))
+  const anyMatch =
+    nonBalanceText.match(moneyAfterCurrency) ??
+    nonBalanceText.match(moneyBeforeCurrency) ??
+    nonBalanceText.match(kdPattern) ??
+    (hasTransactionSignal
+      ? (block.match(moneyAfterCurrency) ?? block.match(moneyBeforeCurrency) ?? block.match(kdPattern))
       : null);
   return parseNum(anyMatch?.[1]);
-}
-
-function extractSmsNearestDateBefore(text: string, pos: number): string {
-  const slice = text.slice(Math.max(0, pos - 280), pos);
-  const isoMatches = [...slice.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)];
-  if (isoMatches.length) return isoMatches[isoMatches.length - 1][1];
-  const slashMatches = [...slice.matchAll(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\b/g)];
-  if (slashMatches.length) return slashMatches[slashMatches.length - 1][1].replace(/\./g, '/');
-  return '';
 }
 
 /** When date regex missed (e.g. dotted 08.04.2026), still find a date in the block for heuristics. */
 function extractFirstSmsDateInBlock(block: string): string {
   const iso = block.match(/\b(\d{4}-\d{2}-\d{2})\b/);
   if (iso) return iso[1];
-  const slash = block.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\b/);
+  const slash = block.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})\b/);
   return slash ? slash[1].replace(/\./g, '/') : '';
 }
 
 function extractTransactionsFromSmsDateAnchors(smsText: string, accountId: string): Transaction[] {
   const results: Transaction[] = [];
   const dateAnchors = [
-    ...smsText.matchAll(/(?:(\d{1,2}:\d{2})\s*)?(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})/g),
+    ...smsText.matchAll(/(?:(\d{1,2}:\d{2})\s*)?(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})/g),
   ];
   if (!dateAnchors.length) return results;
   for (let i = 0; i < dateAnchors.length; i++) {
     const current = dateAnchors[i];
     const start = Math.max(0, (current.index ?? 0) - 220);
-    const end = i + 1 < dateAnchors.length ? (dateAnchors[i + 1].index ?? smsText.length) : Math.min(smsText.length, (current.index ?? 0) + 220);
+    const end =
+      i + 1 < dateAnchors.length
+        ? (dateAnchors[i + 1].index ?? smsText.length)
+        : Math.min(smsText.length, (current.index ?? 0) + 220);
     const segment = smsText.slice(start, end);
-    const amount = extractSmsAmount(segment);
-    if (!Number.isFinite(amount) || amount <= 0) continue;
-
-    const rawDate = String(current[2] || '').replace(/\./g, '/');
-    const parsedDate = parseSmsDate(rawDate);
-    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
-    const description = canonicalizeTransactionDescription(extractSmsDescription(segment, i));
-    const isDebit = /(debited|withdrawn|purchase|payment|paid|spent|شراء|سحب|خصم|دفع|نقاط البيع|شراء عبر)/i.test(segment);
-    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
-    results.push({
-      id: `sms-anchor-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
-      date: dateIso,
-      description,
-      amount: signed,
-      category: inferCategoryForSignedAmount(description, signed),
-      accountId,
-      type: signed < 0 ? 'expense' : 'income',
-      status: 'Approved',
-    });
+    const tx = buildSmsTransactionFromBlock(segment, accountId, 'sms-anchor', i);
+    if (tx) {
+      // Prefer the date at this anchor over any earlier date that leaked into the window.
+      const rawDate = String(current[2] || '').replace(/\./g, '/');
+      const parsedDate = parseSmsDate(rawDate);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        tx.date = formatLocalYmd(parsedDate);
+      }
+      results.push(tx);
+    }
   }
   return results;
 }
@@ -747,46 +914,45 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
     const lineEndNl = smsText.indexOf('\n', at);
     const lineEnd = lineEndNl === -1 ? smsText.length : lineEndNl;
     const amountLine = smsText.slice(lineStart, lineEnd).trim();
-    if (/^(?:balance|bal|رصيد)\b/i.test(amountLine) && !/(amount|مبلغ|عملية|purchase|amt)/i.test(amountLine)) {
+    if (isSmsSecondaryAmountLine(amountLine)) {
+      idx++;
+      continue;
+    }
+    if (/إجمالي\s*المبلغ\s*المستحق/i.test(segment)) {
+      const total = extractSmsAmount(segment);
+      if (Number.isFinite(total) && total > 0 && Math.abs(total - amount) > 0.02) {
+        idx++;
+        continue;
+      }
+    }
+    if (/^(?:balance|bal|رصيد)/i.test(amountLine) && !/(amount|مبلغ|عملية|purchase|amt|حوالة)/i.test(amountLine)) {
       idx++;
       continue;
     }
 
     const looksLikeBalanceOnly =
       /\b(balance|رصيد)\b/i.test(segment) &&
-      !/\b(amount|مبلغ|debited|credited|withdrawn|purchase|paid|spent|transfer|شراء|سحب|خصم|عملية)\b/i.test(segment) &&
+      !/(amount|مبلغ|debited|credited|withdrawn|purchase|paid|spent|transfer|شراء|سحب|خصم|حوالة|استرداد|نقاط البيع)/i.test(
+        segment,
+      ) &&
       !/\b(?:POS|ATM|purchase|payment)\b/i.test(segment);
     if (looksLikeBalanceOnly) {
       idx++;
       continue;
     }
 
-    let dateRaw = extractSmsNearestDateBefore(smsText, at);
-    if (!dateRaw) dateRaw = extractFirstSmsDateInBlock(segment);
-    const parsedDate = parseSmsDate(dateRaw);
-    const dateIso = formatLocalYmd(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
-
-    const description = canonicalizeTransactionDescription(extractSmsDescription(segment, idx));
-    const isDebit =
-      /(debited|withdrawn|purchase|payment|paid|spent|pos|atm|transfer\s*out|شراء|سحب|خصم|دفع|نقاط البيع|شراء عبر|محفظة|سداد)/i.test(segment);
-    const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
-    const sig = `${dateIso}|${signed}|${description.toLowerCase()}|${at}`;
+    const tx = buildSmsTransactionFromBlock(segment, accountId, 'sms-ccy', idx);
+    if (!tx || Math.abs(Math.abs(tx.amount) - amount) > 0.02) {
+      idx++;
+      continue;
+    }
+    const sig = `${tx.date}|${tx.amount}|${tx.description.toLowerCase()}|${at}`;
     if (seen.has(sig)) {
       idx++;
       continue;
     }
     seen.add(sig);
-
-    results.push({
-      id: `sms-ccy-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
-      date: dateIso,
-      description,
-      amount: signed,
-      category: inferCategoryForSignedAmount(description, signed),
-      accountId,
-      type: signed < 0 ? 'expense' : 'income',
-      status: 'Approved',
-    });
+    results.push(tx);
     idx++;
   }
 
@@ -795,8 +961,13 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
 
 function extractSmsDescription(segment: string, idx: number): string {
   const merchantFirst =
-    segment.match(/(?:merchant|at|from|لدى|لـ)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim() ?? '';
-  if (merchantFirst && !/^لـ?\s*sr\b/i.test(merchantFirst)) {
+    segment.match(/(?:merchant|at|from|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
+      ?.trim() ?? '';
+  if (merchantFirst && !/^لـ?\s*sr\b/i.test(merchantFirst) && !/^\d{3,}$/.test(merchantFirst)) {
+    const afterSemi = merchantFirst.split(';').slice(1).join(';').trim();
+    if (afterSemi && /[A-Za-z\u0600-\u06FF]{3,}/.test(afterSemi)) {
+      return afterSemi.slice(0, 120);
+    }
     return merchantFirst.slice(0, 120);
   }
   const lineBased = segment
@@ -806,13 +977,25 @@ function extractSmsDescription(segment: string, idx: number): string {
       (line) =>
         /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
         !/^\s*رصيد\s*:/i.test(line) &&
-        !/balance|رصيد|مبلغ|amount|^\d{1,2}:\d{2}/i.test(line) &&
-        !/^\s*شراء\b/u.test(line),
+        !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|إجمالي|دولة|بطاقة|^\d{1,2}:\d{2}/i.test(line) &&
+        !/^\s*شراء\b/u.test(line) &&
+        !/^\s*حوالة/u.test(line) &&
+        !/^\s*استرداد/u.test(line),
     );
   if (lineBased) return lineBased.slice(0, 120);
+
+  const transferTitle = segment.match(/حوالة[^\n]{0,48}/)?.[0]?.trim();
+  if (transferTitle) return transferTitle.replace(/\s*بـ\s*SR.*$/i, '').trim().slice(0, 120);
+
+  const refundTitle = segment.match(/(?:استرداد|بطاقة ائتمانية استرداد)[^\n]{0,48}/)?.[0]?.trim();
+  if (refundTitle) return refundTitle.slice(0, 120);
+
   const merchantMatch =
-    segment.match(/(?:merchant|at|from|لدى|لـ)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim() ??
-    segment.match(/(?:purchase|payment|transaction|عملية)\s*(?:at|لدى)?\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]?.trim();
+    segment.match(/(?:merchant|at|from|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
+      ?.trim() ??
+    segment
+      .match(/(?:purchase|payment|transaction)\s*(?:at|لدى)?\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]
+      ?.trim();
   const purchaseLine = segment
     .split('\n')
     .map((l) => l.trim())
@@ -838,8 +1021,24 @@ function normalizeSmsTextForParsing(smsText: string): string {
     .replace(/\u00a0/g, ' ')
     .replace(/\r/g, '\n')
     .replace(/[ \t]+/g, ' ')
-    .replace(/(?:\.\s+|;\s+|،\s+)(?=(?:\d{1,2}:\d{2}\s*)?(?:\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\b)/g, '\n')
-    .replace(/([^\n])\s+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|لـ|payment|purchase|transaction|debited|credited|withdrawn|received)\b)/gi, '$1\n')
+    .replace(
+      /(?:\.\s+|;\s+|،\s+)(?=(?:\d{1,2}:\d{2}\s*)?(?:\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})\b)/g,
+      '\n',
+    )
+    // Use [ \\t]+ (not \\s+) so blank-line SMS separators are preserved.
+    .replace(
+      /([^\n])[ \t]+(?=(?:payment|purchase|transaction|debited|credited|withdrawn|received)\b)/gi,
+      '$1\n',
+    )
+    // Split before Arabic starters ONLY after a date token (never mid-line after "Apple Pay شراء").
+    .replace(
+      /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})(?:[ \t]+\d{1,2}:\d{2})?[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل))/g,
+      '$1\n',
+    )
+    .replace(
+      /(\d{1,2}:\d{2}[ \t]+\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل))/g,
+      '$1\n',
+    )
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -1678,7 +1877,7 @@ function extractSmsDateToken(raw: string): string {
   const trimmed = String(raw || '').trim();
   const iso = trimmed.match(/\b(\d{4}-\d{2}-\d{2})\b/);
   if (iso) return iso[1];
-  const dmy = trimmed.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4})\b/);
+  const dmy = trimmed.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})\b/);
   return dmy ? dmy[1].replace(/\./g, '/') : trimmed;
 }
 
@@ -1698,10 +1897,9 @@ function parseSmsDate(dateStr: string, refDate = new Date()): Date {
     return Number.isNaN(d.getTime()) ? new Date(NaN) : d;
   }
 
-  const parts = trimmed.match(/^(\d{1,2})([\/\.-])(\d{1,2})\2(\d{2,4})$/);
+  const parts = trimmed.match(/^(\d{1,2})([\/\.-])(\d{1,2})\2(\d{1,4})$/);
   if (!parts) return new Date(NaN);
 
-  const sep = parts[2];
   const a = parseInt(parts[1], 10);
   const b = parseInt(parts[3], 10);
   const yRaw = parts[4];
@@ -1720,11 +1918,15 @@ function parseSmsDate(dateStr: string, refDate = new Date()): Date {
     }
   };
 
-  const yearFromThird = parseInt(yRaw.length === 2 ? `20${yRaw}` : yRaw, 10);
+  const yearFromThird = parseInt(yRaw.length === 2 ? `20${yRaw}` : yRaw.length === 1 ? `200${yRaw}` : yRaw, 10);
   addCandidate(yearFromThird, b, a);
 
-  if (sep === '-' && yRaw.length === 2 && a >= 20 && a <= 99 && b >= 1 && b <= 12) {
-    addCandidate(2000 + a, b, parseInt(yRaw, 10));
+  // Alinma / some KSA banks: YY-M-D or YY/M/D (e.g. 26-08-10, 26/9/9) when first part is year-like.
+  if (yRaw.length <= 2 && a >= 20 && a <= 99 && b >= 1 && b <= 12) {
+    const dayFromThird = parseInt(yRaw, 10);
+    if (dayFromThird >= 1 && dayFromThird <= 31) {
+      addCandidate(2000 + a, b, dayFromThird);
+    }
   }
 
   const minYear = refYear - 15;
@@ -1763,8 +1965,10 @@ function inferCategoryForSignedAmount(description: string, signed: number): stri
 function canonicalizeTransactionDescription(raw: string): string {
   const cleaned = String(raw || '')
     .replace(/^(بطاقة|card|account|a\/c)\s*[:\-]?\s*/i, '')
-    .replace(/^(لدى|at|merchant|from)\s*[:\-]?\s*/i, '')
-    .replace(/\b(sar|balance|رصيد|مبلغ)\b.*$/i, '')
+    .replace(/^(لدى|at|merchant|from|التاجر)\s*[:\-]?\s*/i, '')
+    // Strip trailing balance/amount tails, but keep merchant text after a leading "N SAR - Merchant".
+    .replace(/\b(balance|رصيد|مبلغ)\b.*$/i, '')
+    .replace(/^\d+(?:[.,]\d+)?\s*(?:SAR|SR|USD|EUR)?\s*[-–:]\s*/i, '')
     .replace(/\s+/g, ' ')
     .trim();
   return cleaned || 'Transaction';
