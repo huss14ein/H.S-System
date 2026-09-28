@@ -9,6 +9,8 @@ import {
     getSuggestedAnalystEligibility,
     translateFinancialInsightToArabic,
 } from '../services/geminiService';
+import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
+import { requestAiFeedRefresh } from '../services/aiFeedTriggers';
 import { InvestmentPortfolio, Holding, HoldingAssetClass, HOLDING_ASSET_CLASS_OPTIONS, InvestmentTransaction, Account, Goal, InvestmentPlanSettings, TickerStatus, InvestmentPlanExecutionResult, InvestmentPlanExecutionLog, UniverseTicker, TradeCurrency } from '../types';
 import type { Page } from '../types';
 import SukukInvestmentsSection from '../components/investments/SukukInvestmentsSection';
@@ -1357,6 +1359,7 @@ const RecordTradeModal: React.FC<{
                     : `${type === 'buy' ? 'Buy' : 'Sell'} recorded for ${tradePayload.symbol}.`,
                 'success',
             );
+            requestAiFeedRefresh();
             trackFormDefault('record-trade', 'accountId', accountId);
             trackFormDefault('record-trade', 'portfolioId', portfolioId);
             trackFormDefault('record-trade', 'type', type);
@@ -1890,9 +1893,21 @@ const HoldingDetailModal: React.FC<{
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const { formatCurrency, formatCurrencyString } = useFormatCurrency();
     const sarPerUsd = useCanonicalSpotFx();
-    const { data: dataCtx } = useContext(DataContext)!;
+    const { data: dataCtx, getAvailableCashForAccount } = useContext(DataContext)!;
     const { simulatedPrices: liveQuoteMap } = useMarketPrices();
     const dailyPnLPrefs = useMemo(() => resolveDailyPnLPrefs(dataCtx?.settings), [dataCtx?.settings]);
+    const wealthGroundingPrompt = useMemo(() => {
+        try {
+            return buildAiPersonalWealthGrounding({
+                data: dataCtx,
+                exchangeRate: sarPerUsd,
+                getAvailableCashForAccount,
+                simulatedPrices: liveQuoteMap,
+            });
+        } catch {
+            return null;
+        }
+    }, [dataCtx, sarPerUsd, getAvailableCashForAccount, liveQuoteMap]);
     const [aiAnalysis, setAiAnalysis] = useState('');
     const [analystAr, setAnalystAr] = useState<string | null>(null);
     const [analystDisplayLang, setAnalystDisplayLang] = useState<'en' | 'ar'>(() => {
@@ -1922,7 +1937,11 @@ const HoldingDetailModal: React.FC<{
         setAnalystAr(null);
         setGroundingChunks([]);
         try {
-            const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding, { forceRefresh });
+            const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding, {
+                forceRefresh,
+                wealthGrounding: wealthGroundingPrompt?.promptBlock,
+                investableCashSar: wealthGroundingPrompt?.investableCashSar,
+            });
             const resolvedContent = content || buildFallbackAnalystReport(holding);
             const isFallbackContent = /coverage status|analyst engine note|ai analyst engine was unavailable/i.test(resolvedContent);
             setAiAnalysis(resolvedContent);
@@ -1937,7 +1956,7 @@ const HoldingDetailModal: React.FC<{
         } finally {
             setIsLoading(false);
         }
-    }, [holding, analystDisplayLang]);
+    }, [holding, analystDisplayLang, wealthGroundingPrompt]);
 
     useEffect(() => {
         if (analystDisplayLang !== 'ar' || !aiAnalysis.trim() || analystAr != null || !aiActionsEnabled) return;

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useContext, useMemo, useEffect } from 're
 import { DataContext } from '../context/DataContext';
 import {
     getAIDashboardInsight,
+    getAIExecutiveSummary,
     getInvestmentAIAnalysis,
     getAIPlanAnalysis,
     getAIHouseholdEngineAnalysis,
@@ -30,6 +31,13 @@ import {
     formatAiError,
     translateFinancialInsightToArabic,
 } from '../services/geminiService';
+import {
+    buildRuleBasedActionCards,
+    splitInsightAndActionCards,
+    type AiActionCard,
+} from '../services/aiActionCards';
+import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
+import AiActionCardsPanel from './AiActionCardsPanel';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
@@ -146,14 +154,28 @@ const getAnalysisForPage = (
     switch (context) {
         case 'dashboard':
             return getAIDashboardInsight(data, {
+                ...insightOpts,
                 exchangeRate: sarPerUsd,
                 getAvailableCashForAccount,
                 simulatedPrices: insightOpts.simulatedPrices ?? contextData?.simulatedPrices,
+                page: insightOpts.page ?? 'dashboard',
+            });
+        case 'summary':
+            return getAIExecutiveSummary(data, {
+                ...insightOpts,
+                exchangeRate: sarPerUsd,
+                getAvailableCashForAccount,
+                simulatedPrices: insightOpts.simulatedPrices ?? contextData?.simulatedPrices,
+                page: insightOpts.page ?? 'summary',
             });
         case 'investments': {
             const holdings = ((data as any)?.personalInvestments ?? data?.investments ?? []).flatMap((p: { holdings?: unknown[] }) => p.holdings ?? []) as Holding[];
             const meta = contextData as InvestmentHubAiMeta | undefined;
-            return getInvestmentAIAnalysis(holdings, meta);
+            return getInvestmentAIAnalysis(holdings, meta, {
+                ...insightOpts,
+                data,
+                page: 'investments',
+            });
         }
         case 'commodities': {
             const ctx = contextData as CommoditiesAiContext | undefined;
@@ -179,12 +201,20 @@ const getAnalysisForPage = (
              return Promise.resolve("Not enough data for plan analysis.");
         case 'cashflow':
             if (contextData?.transactions && contextData?.budgets) {
-                return getAITransactionAnalysis(contextData.transactions, contextData.budgets);
+                return getAITransactionAnalysis(contextData.transactions, contextData.budgets, data, {
+                    ...insightOpts,
+                    page: 'cashflow',
+                    data,
+                });
             }
             return Promise.resolve("Not enough data for cashflow analysis.");
         case 'goals':
             if (contextData?.goals && typeof contextData?.monthlySavings !== 'undefined') {
-                return getAIGoalStrategyAnalysis(contextData.goals, contextData.monthlySavings, data);
+                return getAIGoalStrategyAnalysis(contextData.goals, contextData.monthlySavings, data, {
+                    ...insightOpts,
+                    page: 'goals',
+                    data,
+                });
             }
             return Promise.resolve("Not enough data for goal strategy analysis.");
         case 'analysis':
@@ -302,9 +332,18 @@ function readDefaultAiLang(): 'en' | 'ar' {
     }
 }
 
+function rulesMarkdownFromCards(cards: AiActionCard[], page: string): string {
+    if (!cards.length) {
+        return `### Recommendations\nNo rule-based recommendations for your ${page} data right now. Check cash, budgets, and holdings when you refresh.`;
+    }
+    return cards.map((c) => `### ${c.title}\n${c.rationale}`).join('\n\n');
+}
+
 const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title = 'Financial Advisor', subtitle = 'Expert financial & investment insights', buttonLabel = 'Get AI Insights' }) => {
     const [insightEn, setInsightEn] = useState<string>('');
     const [insightAr, setInsightAr] = useState<string | null>(null);
+    const [actionCards, setActionCards] = useState<AiActionCard[]>([]);
+    const [cardsSource, setCardsSource] = useState<'ai' | 'rules' | 'mixed' | null>(null);
     const [displayLang, setDisplayLang] = useState<'en' | 'ar'>(readDefaultAiLang);
     const [isLoading, setIsLoading] = useState(false);
     const [isTranslating, setIsTranslating] = useState(false);
@@ -315,11 +354,13 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
 
     const insightSource = useMemo(() => {
+        if (!insightEn && !actionCards.length) return null;
+        if (cardsSource === 'rules' || !aiActionsEnabled) return 'Deterministic fallback';
         const text = (insightEn || '').toLowerCase();
-        if (!insightEn) return null;
         if (text.includes('deterministic') || text.includes('fallback') || text.includes('provider unavailable')) return 'Deterministic fallback';
+        if (cardsSource === 'mixed') return 'Deterministic fallback';
         return 'AI provider';
-    }, [insightEn]);
+    }, [insightEn, actionCards.length, cardsSource, aiActionsEnabled]);
 
     const activeText = displayLang === 'ar' ? (insightAr ?? insightEn) : insightEn;
 
@@ -361,13 +402,43 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
         setIsLoading(true);
         setInsightEn('');
         setInsightAr(null);
+        setActionCards([]);
+        setCardsSource(null);
         setTranslateError(null);
         setDisplayLang('en');
+
+        let wealth = null as ReturnType<typeof buildAiPersonalWealthGrounding> | null;
+        try {
+            wealth = buildAiPersonalWealthGrounding({
+                data,
+                exchangeRate: sarPerUsd,
+                getAvailableCashForAccount,
+                simulatedPrices,
+            });
+        } catch {
+            wealth = null;
+        }
+
+        const applyRulesFallback = (prefixMd?: string) => {
+            const cards = wealth ? buildRuleBasedActionCards(wealth, data, pageContext) : [];
+            const md = [prefixMd?.trim(), rulesMarkdownFromCards(cards, pageContext)].filter(Boolean).join('\n\n');
+            setInsightEn(md);
+            setActionCards(cards);
+            setCardsSource('rules');
+        };
+
+        if (!aiActionsEnabled) {
+            applyRulesFallback();
+            setIsLoading(false);
+            return;
+        }
+
         try {
             const insightOpts: AiInsightOptions = {
                 exchangeRate: sarPerUsd,
                 getAvailableCashForAccount,
                 simulatedPrices,
+                page: pageContext,
             };
             const mergedContext = { ...contextData, simulatedPrices };
             const result = await getAnalysisForPage(
@@ -378,13 +449,22 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                 getAvailableCashForAccount,
                 insightOpts,
             );
-            setInsightEn(result);
+            const split = splitInsightAndActionCards(result);
+            let cards = split.actionCards;
+            let source: 'ai' | 'rules' | 'mixed' = split.source;
+            if (!cards.length && wealth) {
+                cards = buildRuleBasedActionCards(wealth, data, pageContext);
+                source = cards.length ? 'mixed' : 'ai';
+            }
+            setInsightEn(split.markdown || result);
+            setActionCards(cards);
+            setCardsSource(source);
         } catch (error) {
             console.error("AI analysis failed:", error);
-            setInsightEn(formatAiError(error));
+            applyRulesFallback(formatAiError(error));
         }
         setIsLoading(false);
-    }, [pageContext, data, contextData, sarPerUsd, getAvailableCashForAccount, simulatedPrices]);
+    }, [pageContext, data, contextData, sarPerUsd, getAvailableCashForAccount, simulatedPrices, aiActionsEnabled]);
 
     const handleLangChange = (lang: 'en' | 'ar') => {
         setDisplayLang(lang);
@@ -429,12 +509,16 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                     <button
                         type="button"
                         onClick={handleGenerate}
-                        disabled={!aiActionsEnabled || isLoading}
-                        title={!aiActionsEnabled ? "AI features are disabled. Please configure your API key." : "Get AI Insights"}
+                        disabled={isLoading}
+                        title={
+                            !aiActionsEnabled
+                                ? 'AI is off — Generate still shows rules-based recommendations from your live KPIs.'
+                                : 'Get AI Insights'
+                        }
                         className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors"
                     >
                         <SparklesIcon className="h-5 w-5 mr-2 shrink-0" />
-                        {isLoading ? 'Analyzing...' : buttonLabel}
+                        {isLoading ? 'Analyzing...' : !aiActionsEnabled ? 'Generate recommendations' : buttonLabel}
                     </button>
                 </div>
             </div>
@@ -495,20 +579,24 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
                             );
                         })}
                     </div>
+
+                    <AiActionCardsPanel
+                        cards={actionCards}
+                        title={cardsSource === 'rules' || !aiActionsEnabled ? 'Rules-based recommendations' : 'Recommendations'}
+                    />
                 </div>
             )}
 
             {aiHealthChecked && !isAiAvailable ? (
                 <AiProxyUnavailableHint
                     className="mt-2"
-                    title="AI غير مفعّل / AI disabled"
+                    title="AI غير مفعّل — التوصيات القواعدية ما زالت متاحة / AI off — rules-based recommendations still available"
                 />
-            ) : (
-                !insightEn && !isLoading && (
-                    <div className="text-center p-4 text-slate-500 border border-dashed border-slate-200 rounded-lg bg-slate-50/50 text-sm">
-                        اضغط للحصول على تحليل بيانات {pageContext} / Click &quot;{buttonLabel}&quot; for an analysis of your {pageContext} data.
-                    </div>
-                )
+            ) : null}
+            {!insightEn && !isLoading && (
+                <div className="text-center p-4 text-slate-500 border border-dashed border-slate-200 rounded-lg bg-slate-50/50 text-sm">
+                    اضغط للحصول على تحليل بيانات {pageContext} / Click &quot;{!aiActionsEnabled ? 'Generate recommendations' : buttonLabel}&quot; for an analysis of your {pageContext} data.
+                </div>
             )}
         </div>
     );

@@ -39,7 +39,7 @@ type InvestmentSubPage = 'Overview' | 'Portfolios' | 'Investment Plan' | 'Recove
 const SWOT_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
 const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => void }> = ({ setActiveTab }) => {
-    const { data } = useContext(DataContext)!;
+    const { data, getAvailableCashForAccount } = useContext(DataContext)!;
     const { isAiAvailable, aiHealthChecked, aiActionsEnabled } = useAI();
     const {
         sarPerUsd,
@@ -238,6 +238,14 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
                     name: formatSymbolWithCompany(h.symbol, h.name, companyNameMap),
                     gainLossPercent: h.gainLossPercent,
                 })),
+                {
+                    data,
+                    exchangeRate: sarPerUsd,
+                    getAvailableCashForAccount,
+                    simulatedPrices,
+                    page: 'investments',
+                    concentrationWarnings: diversification.warnings,
+                },
             );
             setSwotEn(result);
         } catch (err) {
@@ -246,7 +254,7 @@ const InvestmentOverview: React.FC<{ setActiveTab?: (tab: InvestmentSubPage) => 
         } finally {
             setIsAiLoading(false);
         }
-    }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation, companyNameMap]);
+    }, [allHoldingsWithGains, portfolioAllocation, assetClassAllocation, companyNameMap, data, sarPerUsd, getAvailableCashForAccount, simulatedPrices, diversification.warnings]);
 
     const hasNoPortfolios = portfolioAllocation.length === 0 && tradableCashSAR <= 0 && sukukPositionsSAR <= 0;
 

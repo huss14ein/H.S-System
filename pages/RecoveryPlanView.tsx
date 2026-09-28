@@ -20,6 +20,7 @@ import { CheckCircleIcon } from '../components/icons/CheckCircleIcon';
 import { ExclamationTriangleIcon } from '../components/icons/ExclamationTriangleIcon';
 import { PresentationChartLineIcon } from '../components/icons/PresentationChartLineIcon';
 import { suggestRecoveryParameters, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
+import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
 import { HOLDING_PER_UNIT_DECIMALS } from '../utils/holdingValuation';
 import {
   saveRecoveryExecution,
@@ -136,6 +137,19 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     [data, exchangeRate, headlineFx, simulatedPrices, getAvailableCashForAccount, symbolQuoteUpdatedAt],
   );
   const sarPerUsd = canonical?.sarPerUsd ?? headlineFx;
+
+  const recoveryWealthCtx = useMemo(() => {
+    try {
+      return buildAiPersonalWealthGrounding({
+        data,
+        exchangeRate: sarPerUsd,
+        getAvailableCashForAccount,
+        simulatedPrices,
+      });
+    } catch {
+      return null;
+    }
+  }, [data, sarPerUsd, getAvailableCashForAccount, simulatedPrices]);
 
   const deployableCashSAR = canonical?.recoveryPlan?.deployableCashSar ?? 0;
 
@@ -1111,6 +1125,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         deployableCash,
         currentPrice: selected.plan.currentPrice,
         avgCost: selected.holding.avgCost ?? 0,
+        wealthGroundingPrompt: recoveryWealthCtx?.promptBlock,
+        concentrationPct: recoveryWealthCtx?.topConcentrationPct,
+        runwayMonths: recoveryWealthCtx?.emergencyFundMonths,
       });
       setAiRecoveryBySymbol(prev => ({ ...prev, [sym]: suggestion }));
     } catch (error) {
@@ -1118,7 +1135,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsAiRecoveryLoading(false);
     }
-  }, [selected, sarPerUsd, trackAction]);
+  }, [selected, sarPerUsd, trackAction, recoveryWealthCtx]);
 
 
   const applyAiToAllQualifiedPositions = useCallback(async () => {
@@ -1145,6 +1162,9 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             deployableCash,
             currentPrice: position.plan.currentPrice,
             avgCost: position.holding.avgCost ?? 0,
+            wealthGroundingPrompt: recoveryWealthCtx?.promptBlock,
+            concentrationPct: recoveryWealthCtx?.topConcentrationPct,
+            runwayMonths: recoveryWealthCtx?.emergencyFundMonths,
           });
           return [sym, suggestion] as const;
         }),
@@ -1155,7 +1175,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
     } finally {
       setIsBulkAiRecoveryLoading(false);
     }
-  }, [qualifiedPositions, sarPerUsd, trackAction]);
+  }, [qualifiedPositions, sarPerUsd, trackAction, recoveryWealthCtx]);
 
   useEffect(() => {
     setWhatIfSpend('');

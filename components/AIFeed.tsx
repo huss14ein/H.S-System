@@ -1,7 +1,14 @@
-import React, { useState, useCallback, useContext, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useContext, useEffect, useRef, useMemo } from 'react';
 import { DataContext } from '../context/DataContext';
 import { useCanonicalSpotFx, useCanonicalSimulatedPrices } from '../hooks/useCanonicalFinancialMetrics';
 import { getAIFeedInsights, formatAiError, translateFinancialInsightToArabic } from '../services/geminiService';
+import {
+    buildRuleBasedActionCards,
+    feedItemToActionCard,
+    type AiActionCard,
+} from '../services/aiActionCards';
+import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
+import AiActionCardsPanel from './AiActionCardsPanel';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { LightBulbIcon } from './icons/LightBulbIcon';
 import { PiggyBankIcon } from './icons/PiggyBankIcon';
@@ -12,6 +19,11 @@ import { FeedItem } from '../types';
 import SafeMarkdownRenderer from './SafeMarkdownRenderer';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from './AiProxyUnavailableHint';
+import {
+    AI_FEED_REFRESH_EVENT,
+    consumeAiFeedStale,
+} from '../services/aiFeedTriggers';
+import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 
 const FEED_AI_LANG_KEY = 'finova_default_ai_lang_v1';
 
@@ -26,8 +38,25 @@ const FeedItemIcon: React.FC<{ type: FeedItem['type'] }> = ({ type }) => {
     }
 }
 
+function ruleCardsToFeedItems(cards: AiActionCard[]): FeedItem[] {
+    return cards.slice(0, 5).map((c) => ({
+        type: (c.kind === 'budget'
+            ? 'BUDGET'
+            : c.kind === 'goal'
+              ? 'GOAL'
+              : c.kind === 'trade' || c.kind === 'recovery'
+                ? 'INVESTMENT'
+                : 'SAVINGS') as FeedItem['type'],
+        title: c.title,
+        description: c.rationale + (c.rulesBased ? ' (Rules-based)' : ''),
+        emoji: c.kind === 'budget' ? '⚠️' : c.kind === 'goal' ? '🎯' : '💡',
+    }));
+}
+
 const AIFeed: React.FC = () => {
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
+    const [actionCards, setActionCards] = useState<AiActionCard[]>([]);
+    const [isRulesBased, setIsRulesBased] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [displayLang, setDisplayLang] = useState<'en' | 'ar'>(() => {
@@ -87,29 +116,92 @@ const AIFeed: React.FC = () => {
         };
     }, [displayLang, feedItems, arItems, aiActionsEnabled]);
 
+    const applyRulesFeed = useCallback(() => {
+        try {
+            const wealth = buildAiPersonalWealthGrounding({
+                data: dataRef.current,
+                exchangeRate: sarPerUsd,
+                getAvailableCashForAccount,
+                simulatedPrices,
+            });
+            const cards = buildRuleBasedActionCards(wealth, dataRef.current, 'dashboard');
+            const items = ruleCardsToFeedItems(cards);
+            setFeedItems(items);
+            setActionCards(cards.length ? cards : items.map((it, i) => feedItemToActionCard(it, i)));
+            setIsRulesBased(true);
+            setError(null);
+        } catch (err) {
+            setFeedItems([]);
+            setActionCards([]);
+            setIsRulesBased(true);
+            setError(formatAiError(err));
+        }
+    }, [sarPerUsd, getAvailableCashForAccount, simulatedPrices]);
+
     const handleGenerate = useCallback(async () => {
         setIsLoading(true);
         setFeedItems([]);
+        setActionCards([]);
         setArItems(null);
         setError(null);
+        setIsRulesBased(false);
+
+        if (!aiActionsEnabled) {
+            applyRulesFeed();
+            setIsLoading(false);
+            return;
+        }
+
         try {
             const items = await getAIFeedInsights(dataRef.current, {
                 exchangeRate: sarPerUsd,
                 getAvailableCashForAccount,
                 simulatedPrices,
+                page: 'dashboard',
             });
-            setFeedItems(items);
+            if (!items.length) {
+                applyRulesFeed();
+            } else {
+                setFeedItems(items);
+                setActionCards(items.map((it, i) => feedItemToActionCard(it, i)));
+                setIsRulesBased(false);
+            }
         } catch (err) {
             console.error("AI Feed generation failed:", err);
-            setError(formatAiError(err));
+            applyRulesFeed();
+            if (!dataRef.current) setError(formatAiError(err));
         }
         setIsLoading(false);
-    }, [sarPerUsd, getAvailableCashForAccount, simulatedPrices]);
+    }, [sarPerUsd, getAvailableCashForAccount, simulatedPrices, aiActionsEnabled, applyRulesFeed]);
+
+    const handleGenerateRef = useRef(handleGenerate);
+    useEffect(() => {
+        handleGenerateRef.current = handleGenerate;
+    }, [handleGenerate]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        let cancelIdle: (() => void) | undefined;
+        const onRefresh = () => {
+            consumeAiFeedStale();
+            cancelIdle?.();
+            cancelIdle = scheduleIdleWorkAsync(() => {
+                void handleGenerateRef.current();
+            }, 2500);
+        };
+        window.addEventListener(AI_FEED_REFRESH_EVENT, onRefresh);
+        return () => {
+            window.removeEventListener(AI_FEED_REFRESH_EVENT, onRefresh);
+            cancelIdle?.();
+        };
+    }, []);
 
     const handleLangToggle = useCallback(() => {
         if (feedItems.length === 0) return;
         setDisplayLang((prev) => (prev === 'ar' ? 'en' : 'ar'));
     }, [feedItems.length]);
+
+    const panelCards = useMemo(() => actionCards, [actionCards]);
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
@@ -125,12 +217,12 @@ const AIFeed: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleGenerate}
-                  disabled={isLoading || !aiActionsEnabled}
-                  title={!aiActionsEnabled ? 'AI unavailable — check proxy and API keys' : 'Refresh Feed'}
+                  disabled={isLoading}
+                  title={!aiActionsEnabled ? 'AI off — Refresh loads rules-based recommendations' : 'Refresh Feed'}
                   className="w-full sm:w-auto flex items-center justify-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                     <SparklesIcon className="h-5 w-5 mr-2" />
-                    {isLoading ? 'Thinking...' : 'Refresh Feed'}
+                    {isLoading ? 'Thinking...' : !aiActionsEnabled ? 'Refresh (rules-based)' : 'Refresh Feed'}
                 </button>
                 <button
                   type="button"
@@ -161,14 +253,20 @@ const AIFeed: React.FC = () => {
                 <p className="text-xs text-slate-500 mb-2" dir="rtl">جاري الترجمة…</p>
             )}
             
-            {error && !isLoading && (
+            {error && !isLoading && feedItems.length === 0 && (
                 <div className="bg-red-50 border-l-4 border-red-400 text-red-800 p-4 rounded-r-lg">
                      <h4 className="font-bold">AI Feed Error</h4>
                      <SafeMarkdownRenderer content={error} />
                 </div>
             )}
 
-            {feedItems.length > 0 && !isLoading && !error && (
+            {isRulesBased && feedItems.length > 0 && !isLoading && (
+                <span className="inline-flex mb-2 text-[11px] px-2.5 py-1 rounded-full font-medium border bg-amber-50 border-amber-200 text-amber-900">
+                    ● Rules-based feed
+                </span>
+            )}
+
+            {feedItems.length > 0 && !isLoading && (
                  <div className="space-y-2">
                     {feedItems.map((item, index) => {
                         const ar = displayLang === 'ar' && arItems?.[index];
@@ -193,17 +291,20 @@ const AIFeed: React.FC = () => {
                             </div>
                         </div>
                     );})}
+                    <AiActionCardsPanel
+                        cards={panelCards}
+                        title={isRulesBased ? 'Rules-based recommendations' : 'Recommended actions'}
+                    />
                 </div>
             )}
 
             {aiHealthChecked && !isAiAvailable ? (
-                <AiProxyUnavailableHint title="AI features are off" />
-            ) : (
-                feedItems.length === 0 && !isLoading && !error && (
-                    <div className="text-center p-4 text-gray-500">
-                        Click "Refresh Feed" for personalized AI insights on your finances.
-                    </div>
-                )
+                <AiProxyUnavailableHint title="AI features are off — Refresh still loads rules-based cards" />
+            ) : null}
+            {feedItems.length === 0 && !isLoading && !error && (
+                <div className="text-center p-4 text-gray-500">
+                    Click &quot;{!aiActionsEnabled ? 'Refresh (rules-based)' : 'Refresh Feed'}&quot; for personalized insights on your finances.
+                </div>
             )}
         </div>
     );

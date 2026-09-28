@@ -8,6 +8,8 @@ import CommandPalette from './CommandPalette';
 import LiveAdvisorModal from './LiveAdvisorModal';
 import PeriodFinancialReportModal from './reports/PeriodFinancialReportModal';
 import { PERIOD_FINANCIAL_REPORT_EVENT } from '../utils/periodFinancialReportOpen';
+import { OPEN_LIVE_ADVISOR_EVENT } from '../utils/openLiveAdvisor';
+import { registerAiActionNavigator } from '../services/aiActionNavigate';
 import { useTrackPageVisit } from '../context/SelfLearningContext';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from './CrossEngineAlertsBanner';
@@ -101,6 +103,18 @@ const Layout: React.FC<LayoutProps> = ({
     window.addEventListener(PERIOD_FINANCIAL_REPORT_EVENT, open);
     return () => window.removeEventListener(PERIOD_FINANCIAL_REPORT_EVENT, open);
   }, []);
+
+  useEffect(() => {
+    const open = () => setIsLiveAdvisorOpen(true);
+    window.addEventListener(OPEN_LIVE_ADVISOR_EVENT, open);
+    return () => window.removeEventListener(OPEN_LIVE_ADVISOR_EVENT, open);
+  }, []);
+
+  useEffect(() => {
+    registerAiActionNavigator({ setActivePage, triggerPageAction });
+    return () => registerAiActionNavigator(null);
+  }, [setActivePage, triggerPageAction]);
+
   const liveQuotePrices = useLiveQuotePrices();
 
   const skipToMainContent = () => {
