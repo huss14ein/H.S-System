@@ -132,10 +132,18 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     return rows.map((tx) => {
       const budgetCategoryNames = budgetCategoriesForTransactionDate(tx.date);
       const mapped = categorizeImportedTransaction(tx, { budgetCategoryNames, userHistory });
+      const nextBudget = mapped.budgetCategory;
+      // Never keep a budget link that is not on this transaction's financial-month cards.
+      const budgetCategory =
+        nextBudget && budgetCategoryNames.includes(nextBudget)
+          ? nextBudget
+          : tx.budgetCategory && budgetCategoryNames.includes(String(tx.budgetCategory))
+            ? tx.budgetCategory
+            : undefined;
       return {
         ...tx,
         category: mapped.category || tx.category,
-        budgetCategory: mapped.budgetCategory ?? tx.budgetCategory,
+        budgetCategory,
       };
     });
   }, [budgetCategoriesForTransactionDate, data?.transactions]);
@@ -725,10 +733,17 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
             budgetCategoryNames,
             userHistory: data?.transactions ?? [],
           });
+          const nextBudget = mapped.budgetCategory;
+          const budgetCategory =
+            nextBudget && budgetCategoryNames.includes(nextBudget)
+              ? nextBudget
+              : next.budgetCategory && budgetCategoryNames.includes(String(next.budgetCategory))
+                ? next.budgetCategory
+                : undefined;
           return {
             ...next,
             category: mapped.category || next.category,
-            budgetCategory: mapped.budgetCategory ?? next.budgetCategory,
+            budgetCategory,
           };
         }
         return next;

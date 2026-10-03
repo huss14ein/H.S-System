@@ -26,6 +26,10 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('note: tx.note');
     expect(stmt).toContain('selectedMissingAccount');
     expect(stmt).toContain('type="date"');
+    // Stale budget links from another month must be cleared when remapping.
+    expect(stmt).toContain('budgetCategoryNames.includes(nextBudget)');
+    expect(stmt).not.toContain('budgetCategory: mapped.budgetCategory ?? next.budgetCategory');
+    expect(stmt).not.toContain('budgetCategory: mapped.budgetCategory ?? tx.budgetCategory');
   });
 
   it('SMS parser merchant-aware dedupe + amount-aware categories', () => {
