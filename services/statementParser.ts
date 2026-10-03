@@ -477,7 +477,9 @@ const SMS_AMOUNT_TOKEN = String.raw`((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d{1,4
 const SMS_DEBIT_RE =
   /debited|withdrawn|purchase|payment|paid|spent|pos|atm|transfer\s*out|outgoing|sent|شراء|سحب|خصم|دفع|نقاط البيع|حوالة|صادرة|تحويل\s*صادر|سداد|محفظة/i;
 const SMS_CREDIT_RE =
-  /credited|refund|received|deposit|transfer\s*in|incoming|استرداد|واردة|تحويل\s*وارد|ايداع|إيداع|استلام/i;
+  /credited|refund|received|deposit|transfer\s*in|incoming|استرداد|عكس\s*عملية|واردة|تحويل\s*وارد|ايداع|إيداع|استلام/i;
+/** Al Rajhi / Visa "card settlement" SMS — payment applied TO the card (credit), not a purchase. */
+const SMS_CARD_SETTLEMENT_RE = /بطاقة[^\n]{0,80}سداد|(?:فيزا|visa|مدى)[^\n]{0,40}سداد/i;
 const SMS_SECONDARY_AMOUNT_RE =
   /رسوم|ضريبة|سعر\s*الصرف|exchange\s*rate|\bfee\b|\bvat\b|\btax\b|fx\s*rate/i;
 
@@ -490,9 +492,11 @@ const SMS_TOTAL_DUE_LABEL_RE = new RegExp(SMS_TOTAL_DUE_LABEL, 'i');
 /** Any إجمالي / اجمالي word (exclude matching مبلغ lines that are actually totals). */
 const SMS_IJMALI_WORD_RE = /(?:إ|ا)جمالي/i;
 
-/** Credit keywords win (e.g. استرداد) so refunds never book as expenses. */
+/** Credit keywords win (e.g. استرداد / بطاقة فيزا:سداد) so refunds & card payments never book as expenses. */
 function classifySmsIsDebit(text: string): boolean {
   const sample = String(text || '');
+  // Card settlement increases available / reduces debt on the card ledger (overrides generic سداد debit).
+  if (SMS_CARD_SETTLEMENT_RE.test(sample)) return false;
   if (SMS_CREDIT_RE.test(sample)) return false;
   return SMS_DEBIT_RE.test(sample);
 }
@@ -545,9 +549,11 @@ function buildSmsTransactionFromBlock(
   // Seed category with block title keywords (نقاط البيع / شراء إنترنت) — merchant-only desc loses them.
   const categorySeed = `${block.split('\n').slice(0, 3).join(' ')} ${description}`;
   let category = inferCategoryForSignedAmount(categorySeed, signed);
-  if (/(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block)) {
+  if (SMS_CARD_SETTLEMENT_RE.test(block)) {
     category = 'Transfer';
-  } else if (/(استرداد|refund)/i.test(block) && signed > 0) {
+  } else if (/(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block)) {
+    category = 'Transfer';
+  } else if (/(استرداد|عكس\s*عملية|refund|reversal)/i.test(block) && signed > 0) {
     category = 'Income';
   } else if (/(نقاط البيع|شراء\s*PoS|\bPoS\b|شراء إنترنت|شراء انترنت|pos purchase|purchase at|payment at)/i.test(block)) {
     category = 'Shopping';
@@ -690,21 +696,30 @@ function splitSmsIntoBlocks(smsText: string): string[] {
   let current: string[] = [];
   // Do NOT use bare `عملية` — it false-splits on `مبلغ العملية`.
   const startReEn =
-    /^(?:purchase|payment|transaction|debited|credited|withdrawn|received|transfer|paid|spent|pos|atm)\b/i;
-  const startReAr = /^(?:شراء|سحب|خصم|نقاط البيع|تحويل|حوالة|استرداد|سداد|إيداع|ايداع|استلام)/;
+    /^(?:purchase|payment|transaction|debited|credited|withdrawn|received|transfer|paid|spent|pos|atm|reversal)\b/i;
+  const startReAr = /^(?:شراء|سحب|خصم|نقاط البيع|تحويل|حوالة|استرداد|سداد|عكس|إيداع|ايداع|استلام)/;
   const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{1,4}/;
-  /** Title-like بطاقة lines (سداد / استرداد) — not mid-block بطاقة:7365 masks. */
-  const isCardTitleStarter = (line: string) =>
-    /^بطاقة/.test(line) &&
-    !/\d{4}/.test(line) &&
-    /(?:استرداد|ائتمانية|فيزا|مدى|سداد)/.test(line);
+  /**
+   * Title-like بطاقة lines (سداد / استرداد) — not mid-block card masks (`بطاقة:7365`, `*3282`).
+   * Amounts on the title (`بـSR 1000`) must NOT disqualify settlement starters.
+   */
+  const isCardTitleStarter = (line: string) => {
+    if (!/^بطاقة/.test(line)) return false;
+    // Settlement / refund titles may include the amount on the same line.
+    if (/(?:استرداد|سداد)/.test(line)) return true;
+    // Other card banners without an embedded last-4 / *mask.
+    if (/(?:ائتمانية|فيزا|مدى)/.test(line) && !/بطاقة\s*[:\-]?\s*\d{4}/.test(line) && !/\*\s*\d{4}/.test(line)) {
+      return true;
+    }
+    return false;
+  };
 
   for (const line of lines) {
     const lineStartsTx =
       current.length > 0 &&
       (startReEn.test(line) ||
         startReAr.test(line) ||
-        /استرداد/.test(line) ||
+        /استرداد|عكس\s*عملية/.test(line) ||
         isCardTitleStarter(line));
     if (lineStartsTx) {
       blocks.push(current.join('\n').trim());
@@ -1073,7 +1088,7 @@ function extractSmsDescription(segment: string, idx: number): string {
         /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
         !/^\s*رصيد\s*:/i.test(line) &&
         !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|(?:إ|ا)جمالي|دولة|بطاقة|^\d{1,2}:\d{2}/i.test(line) &&
-        !/^\s*(?:شراء|سحب|حوالة|استرداد|سداد|عبر)\b/u.test(line),
+        !/^\s*(?:شراء|سحب|حوالة|استرداد|سداد|عكس|عبر)\b/u.test(line),
     );
   if (lineBased) return lineBased.slice(0, 120);
 
@@ -1081,7 +1096,18 @@ function extractSmsDescription(segment: string, idx: number): string {
   if (transferTitle) return transferTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120);
 
   const sadadTitle = segment.match(/بطاقة[^\n]{0,40}سداد[^\n]{0,40}/)?.[0]?.trim();
-  if (sadadTitle) return sadadTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120) || 'Visa settlement';
+  if (sadadTitle) {
+    const cleaned = sadadTitle.replace(/\s*بـ?\s*(?:SR|SAR).*$/i, '').trim();
+    return (cleaned || 'Card payment').slice(0, 120);
+  }
+
+  const reversalTitle = segment.match(/عكس\s*عملية[^\n]{0,48}/)?.[0]?.trim();
+  if (reversalTitle) {
+    const merchant =
+      segment.match(/(?:لدى|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]?.trim();
+    if (merchant) return merchant.slice(0, 120);
+    return reversalTitle.slice(0, 120);
+  }
 
   const refundTitle = segment.match(/(?:استرداد|بطاقة ائتمانية استرداد)[^\n]{0,48}/)?.[0]?.trim();
   if (refundTitle) return refundTitle.slice(0, 120);
@@ -1133,11 +1159,11 @@ function normalizeSmsTextForParsing(smsText: string): string {
     )
     // Split before Arabic starters ONLY after a date token (never mid-line after "Apple Pay شراء").
     .replace(
-      /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})(?:[ \t]+\d{1,2}:\d{2})?[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|بطاقة))/g,
+      /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})(?:[ \t]+\d{1,2}:\d{2})?[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|عكس|بطاقة))/g,
       '$1\n',
     )
     .replace(
-      /(\d{1,2}:\d{2}[ \t]+\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|بطاقة))/g,
+      /(\d{1,2}:\d{2}[ \t]+\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|عكس|بطاقة))/g,
       '$1\n',
     )
     .replace(/\n{3,}/g, '\n\n')
