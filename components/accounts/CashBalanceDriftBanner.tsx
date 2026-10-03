@@ -13,6 +13,8 @@ import {
 import {
   acknowledgeCashBalanceDriftDurable,
   filterUnackedCashDriftWarnings,
+  mergeUiAcks,
+  normalizeUiAcks,
   resolveCashBalanceDriftAcks,
   type CashBalanceDriftAckMap,
 } from '../../services/uiAcks';
@@ -34,8 +36,11 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
   const auth = useContext(AuthContext);
   const data = ctx?.data;
   const userId = auth?.user?.id ?? null;
+  const isBackgroundSyncing = Boolean(ctx?.isBackgroundSyncing);
   const [busyId, setBusyId] = useState<string | null>(null);
   const busyLockRef = useRef(false);
+  /** Serialize banner persists the same way Apply does — avoid multi-card Keep stored races. */
+  const persistChainRef = useRef(Promise.resolve());
   const [acks, setAcks] = useState<CashBalanceDriftAckMap>(() =>
     resolveCashBalanceDriftAcks(userId, data?.settings),
   );
@@ -70,20 +75,47 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
 
   const keepStored = (row: (typeof rows)[number]) => {
     if (busyLockRef.current) return;
+    if (isBackgroundSyncing) {
+      toast('Still loading transactions — wait a moment, then dismiss again so the fingerprint matches the full ledger.', 'info');
+      return;
+    }
     busyLockRef.current = true;
     setBusyId(row.accountId);
     void (async () => {
       try {
+        /** Recompute from the latest book — never ack a stale row fingerprint after mid-flight hydrate. */
+        const live = ctx.data;
+        if (!live) throw new Error('Data unavailable');
+        const liveAcc = (getPersonalAccounts(live) as Account[]).find((a) => a.id === row.accountId);
+        if (!liveAcc) throw new Error('Account not found');
+        const liveTxs = getPersonalTransactions(live);
+        const liveRec =
+          liveAcc.type === 'Credit'
+            ? reconcileCreditAccountBalance(liveAcc, liveTxs)
+            : reconcileCashAccountBalance(liveAcc, liveTxs);
+        if (!liveRec || !liveRec.showWarning) {
+          setAcks(resolveCashBalanceDriftAcks(userId, live.settings, { writeThrough: true }));
+          toast(`No open drift for ${row.label}.`, 'info');
+          return;
+        }
+
+        const persistUiAcks = (partial: import('../../services/uiAcks').UiAcks) => {
+          persistChainRef.current = persistChainRef.current
+            .catch(() => undefined)
+            .then(async () => {
+              const latest = normalizeUiAcks(ctx.data?.settings?.uiAcks);
+              await ctx.updateSettings!({ uiAcks: mergeUiAcks(latest, partial) });
+            });
+          return persistChainRef.current;
+        };
+
         const next = await acknowledgeCashBalanceDriftDurable({
           userId,
-          accountId: row.accountId,
-          storedBalance: row.storedBalance,
-          transactionNet: row.transactionNet,
-          currentUiAcks: data.settings?.uiAcks,
-          persistUiAcks: async (partial) => {
-            // Pass only the partial map — updateSettings merges against dataRef so sibling acks stay fresh.
-            await ctx.updateSettings({ uiAcks: partial });
-          },
+          accountId: liveRec.accountId,
+          storedBalance: liveRec.storedBalance,
+          transactionNet: liveRec.transactionNet,
+          currentUiAcks: live.settings?.uiAcks,
+          persistUiAcks,
         });
         setAcks(next);
         toast(`Kept stored balance for ${row.label} — warning dismissed until drift changes.`, 'success');
@@ -107,6 +139,11 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
         audited delta, or <span className="font-semibold">Keep stored balance</span> if the bank book is correct and
         history is incomplete — dismissals sync across devices and stay until the stored balance or ledger net changes.
       </p>
+      {isBackgroundSyncing && (
+        <p className="text-xs text-amber-800 mb-2 font-medium">
+          Loading full transaction history… dismissals are more reliable after sync finishes.
+        </p>
+      )}
       <ul className="space-y-2">
         {rows.slice(0, 8).map((r) => (
           <li
@@ -125,7 +162,7 @@ const CashBalanceDriftBanner: React.FC<Props> = ({ onReconcile }) => {
               <button
                 type="button"
                 data-testid={`keep-cash-balance-${r.accountId}`}
-                disabled={busyId === r.accountId}
+                disabled={busyId === r.accountId || isBackgroundSyncing}
                 className="text-xs px-2.5 py-1.5 rounded-md border border-slate-400 text-slate-900 bg-white hover:bg-slate-100 font-medium disabled:opacity-50"
                 onClick={() => keepStored(r)}
               >
