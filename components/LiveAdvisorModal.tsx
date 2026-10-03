@@ -491,7 +491,7 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
 - Month P&L (SAR): **${wealthGroundingRef.monthlyPnLSar.toLocaleString()}** (income ${wealthGroundingRef.monthlyIncomeSar.toLocaleString()} / expenses ${wealthGroundingRef.monthlyExpensesSar.toLocaleString()})
 - Liquid cash (SAR): **${wealthGroundingRef.liquidCashSar.toLocaleString()}**
 - Investable cash (SAR): **${wealthGroundingRef.investableCashSar.toLocaleString()}**
-- Emergency fund months: **${wealthGroundingRef.emergencyFundMonths.toFixed(1)}**
+- Emergency fund months: **${wealthGroundingRef.emergencyFundMonths != null ? wealthGroundingRef.emergencyFundMonths.toFixed(1) : 'n/a (no expense estimate)'}**
 - Top concentration: **${wealthGroundingRef.topConcentrationPct.toFixed(1)}%**
 - This month expenses (approved): **${monthlyExpenses.toLocaleString()}**
 - Top spending category: **${topCat ? `${topCat[0]} (${topCat[1].toLocaleString()})` : 'No category data yet'}**

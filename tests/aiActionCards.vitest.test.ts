@@ -67,6 +67,38 @@ describe('aiActionCards', () => {
     expect(actionCardsPromptFooter(cards)).toContain('actionCards');
   });
 
+  it('does not treat 10/50/100% goal progress as behind, and ignores unknown emergency coverage', () => {
+    const g = buildAiPersonalWealthGrounding({ data: minimalData, exchangeRate: 3.75 });
+    const healthy = buildRuleBasedActionCards(
+      {
+        ...g,
+        goalsProgress: 'Retirement (100%), House (50%), Vacation (10%)',
+        emergencyFundMonths: null,
+        monthlyExpensesSar: 0,
+        overspentBudgetLines: [],
+        unpaidInstallmentsHint: null,
+        dividendRunRateSar: 0,
+        topConcentrationPct: 0,
+        fundedNotDeployedSar: 0,
+        investableCashSar: 0,
+        totalDebtSar: 0,
+        monthlyPnLSar: 0,
+        platformsDailyPnLSar: 0,
+      },
+      minimalData,
+      'dashboard',
+    );
+    expect(healthy.some((c) => c.id === 'rules-goals-fund')).toBe(false);
+    expect(healthy.some((c) => c.id === 'rules-ef-low')).toBe(false);
+
+    const behind = buildRuleBasedActionCards(
+      { ...g, goalsProgress: 'Emergency (0%), House (40%)', emergencyFundMonths: 6, monthlyExpensesSar: 2000 },
+      minimalData,
+      'goals',
+    );
+    expect(behind.some((c) => c.id === 'rules-goals-fund')).toBe(true);
+  });
+
   it('mergeAiActionCards prefers higher severity', () => {
     const merged = mergeAiActionCards(
       [{ id: '1', kind: 'ops', severity: 'info', title: 'X', rationale: 'r', cta: { page: 'Dashboard' } }],

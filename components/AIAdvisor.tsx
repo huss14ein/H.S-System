@@ -358,7 +358,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
         if (cardsSource === 'rules' || !aiActionsEnabled) return 'Deterministic fallback';
         const text = (insightEn || '').toLowerCase();
         if (text.includes('deterministic') || text.includes('fallback') || text.includes('provider unavailable')) return 'Deterministic fallback';
-        if (cardsSource === 'mixed') return 'Deterministic fallback';
+        // `mixed` is provider prose with rules cards backfilled — still a live-model reply.
         return 'AI provider';
     }, [insightEn, actionCards.length, cardsSource, aiActionsEnabled]);
 
@@ -451,7 +451,8 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ pageContext, contextData, title =
             );
             const split = splitInsightAndActionCards(result);
             let cards = split.actionCards;
-            let source: 'ai' | 'rules' | 'mixed' = split.source;
+            // Provider prose stays "ai"/"mixed" even when attached cards are all rules-based.
+            let source: 'ai' | 'rules' | 'mixed' = split.source === 'rules' ? 'mixed' : 'ai';
             if (!cards.length && wealth) {
                 cards = buildRuleBasedActionCards(wealth, data, pageContext);
                 source = cards.length ? 'mixed' : 'ai';

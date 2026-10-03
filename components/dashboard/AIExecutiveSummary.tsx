@@ -117,7 +117,9 @@ export const AIExecutiveSummary: React.FC = () => {
             const normalized = split.markdown || result || '';
             setSummaryEn(normalized);
             setActionCards(cards);
-            setIsRulesBased(cards.every((c) => c.rulesBased) && cards.length > 0);
+            // Markdown is provider output. Rules cards backfilled when the model
+            // omitted a JSON fence must not relabel that prose as rules-based.
+            setIsRulesBased(false);
             if (summaryLanguage === 'ar') {
                 const translated = await translateFinancialInsightToArabic(normalized);
                 setSummary(translated ?? normalized);

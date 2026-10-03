@@ -24,7 +24,9 @@ import {
   getPersonalSukukPositions,
   getPersonalLiabilities,
   getPersonalAccounts,
+  getPersonalInvestments,
 } from '../utils/wealthScope';
+import { investmentTransactionCashAmountSarDated } from '../utils/investmentTransactionSar';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { sumRewardsFiatSar, rewardsExpiringWithinDays } from './rewards/rewardsDomain';
 import { buildAvailableLiquiditySnapshot } from './availableLiquidity';
@@ -66,8 +68,8 @@ export type AiPersonalWealthGrounding = {
   totalDebtSar: number;
   /** Tradable cash on investment accounts (SAR). */
   investableCashSar: number;
-  /** Months of essential expenses covered by liquid cash. */
-  emergencyFundMonths: number;
+  /** Months of essential expenses covered by liquid cash. Null when this month has no expense estimate. */
+  emergencyFundMonths: number | null;
   /** Largest holding as % of investment exposure (0–100). */
   topConcentrationPct: number;
   /** Sum of platforms daily P/L (SAR). */
@@ -211,7 +213,7 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   );
 
   const emergencyFundMonths =
-    cf.monthlyExpensesSar > 0 ? (snap?.liquidCashSar ?? 0) / cf.monthlyExpensesSar : 0;
+    cf.monthlyExpensesSar > 0 ? (snap?.liquidCashSar ?? 0) / cf.monthlyExpensesSar : null;
 
   let platformsDailyPnLSar = 0;
   let investmentsTotalSar = presentedRoi?.presentValueSar ?? snap?.headlineInvestmentExposure?.totalExposureSar ?? 0;
@@ -249,7 +251,9 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   const topConcentrationPct =
     investmentsTotalSar > 0 ? Math.min(100, (topHoldingSar / investmentsTotalSar) * 100) : 0;
 
-  const liabilities = getPersonalLiabilities(data).filter((l) => l.status === 'Active' && l.type !== 'Receivable');
+  const liabilities = getPersonalLiabilities(data).filter(
+    (l) => (l.status ?? 'Active') === 'Active' && l.type !== 'Receivable',
+  );
   const minPaySum = liabilities.reduce((s, l) => s + (Number(l.minPayment) || 0), 0);
   const unpaidInstallmentsHint =
     minPaySum > 0
@@ -260,12 +264,18 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
 
   const yearStart = `${now.getFullYear()}-01-01`;
   let dividendRunRateSar = 0;
+  const dividendPortfolios = getPersonalInvestments(data);
   for (const t of data.investmentTransactions ?? []) {
     if (String(t.type || '').toLowerCase() !== 'dividend') continue;
     const d = String(t.date || '').slice(0, 10);
     if (d < yearStart) continue;
-    const amt = Math.abs(Number((t as { total?: number }).total) || Number((t as { amount?: number }).amount) || 0);
-    dividendRunRateSar += amt;
+    dividendRunRateSar += investmentTransactionCashAmountSarDated({
+      tx: t,
+      accounts: scopeAccounts,
+      portfolios: dividendPortfolios,
+      data,
+      uiExchangeRate: exchangeRate,
+    });
   }
 
   const promptBlock = [
@@ -276,7 +286,9 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     `Liquid cash (SAR): ${fmt(snap?.liquidCashSar ?? 0)}`,
     `Investable / tradable platform cash (SAR): ${fmt(investableCashSar)}`,
     `Total debt (SAR): ${fmt(totalDebtSar)}`,
-    `Emergency fund months (liquid / month expenses): ${emergencyFundMonths.toFixed(1)}`,
+    emergencyFundMonths != null
+      ? `Emergency fund months (liquid / month expenses): ${emergencyFundMonths.toFixed(1)}`
+      : 'Emergency fund months: unavailable (no expense estimate this financial month)',
     `Top holding concentration: ${topConcentrationPct.toFixed(1)}% of investments`,
     `Platforms daily P/L (SAR): ${fmt(platformsDailyPnLSar)}`,
     unpaidInstallmentsHint ? `Liability payment hint: ${unpaidInstallmentsHint}` : null,
@@ -353,7 +365,7 @@ export function buildAiPageDelta(
   }
   if (page === 'liabilities') {
     const debts = getPersonalLiabilities(data)
-      .filter((l) => l.status === 'Active' && l.type !== 'Receivable')
+      .filter((l) => (l.status ?? 'Active') === 'Active' && l.type !== 'Receivable')
       .slice(0, 8)
       .map((l) => `${l.name} (${l.type}): ${fmt(Number(l.amount) || 0)} min ${fmt(Number(l.minPayment) || 0)}`);
     if (debts.length) lines.push(`Debt lines: ${debts.join('; ')}`);

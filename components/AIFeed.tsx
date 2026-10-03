@@ -22,6 +22,7 @@ import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 import {
     AI_FEED_REFRESH_EVENT,
     consumeAiFeedStale,
+    isAiFeedStale,
 } from '../services/aiFeedTriggers';
 import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 
@@ -182,16 +183,17 @@ const AIFeed: React.FC = () => {
     useEffect(() => {
         if (typeof window === 'undefined') return;
         let cancelIdle: (() => void) | undefined;
-        const onRefresh = () => {
-            consumeAiFeedStale();
+        const scheduleRefresh = () => {
             cancelIdle?.();
             cancelIdle = scheduleIdleWorkAsync(() => {
+                consumeAiFeedStale();
                 void handleGenerateRef.current();
             }, 2500);
         };
-        window.addEventListener(AI_FEED_REFRESH_EVENT, onRefresh);
+        window.addEventListener(AI_FEED_REFRESH_EVENT, scheduleRefresh);
+        if (isAiFeedStale()) scheduleRefresh();
         return () => {
-            window.removeEventListener(AI_FEED_REFRESH_EVENT, onRefresh);
+            window.removeEventListener(AI_FEED_REFRESH_EVENT, scheduleRefresh);
             cancelIdle?.();
         };
     }, []);

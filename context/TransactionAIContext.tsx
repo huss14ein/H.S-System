@@ -1,6 +1,9 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { ParsedTransaction } from '../services/ocrDocumentParser';
 import { getAICategorySuggestion as geminiCategorySuggestion } from '../services/geminiService';
+import { DataContext } from './DataContext';
+import { budgetCardCategoryNames } from '../utils/budgetCardCategories';
+import { financialMonthKey, resolveMonthStartDayFromData } from '../utils/financialMonth';
 
 export interface AIContextType {
   isCategorizing: boolean;
@@ -66,6 +69,7 @@ interface AIProviderProps {
 }
 
 export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
+  const financialData = useContext(DataContext)?.data ?? null;
   const [isCategorizing, setIsCategorizing] = useState(false);
   const [categoryRules, setCategoryRules] = useState<CategoryRule[]>([]);
 
@@ -206,8 +210,11 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
     const description = transaction.description.toLowerCase();
     const activeRules = categoryRules.filter(rule => rule.isActive).sort((a, b) => a.priority - b.priority);
 
-    // Try to match against rules
+    // Try to match against rules. Skip rules whose category is not a live budget name.
+    const liveBudgets = liveBudgetCategoryNames();
+    const liveBudgetKey = new Set(liveBudgets.map((c) => c.toLowerCase()));
     for (const rule of activeRules) {
+      if (liveBudgets.length > 0 && !liveBudgetKey.has(rule.category.toLowerCase())) continue;
       for (const pattern of rule.patterns) {
         if (description.includes(pattern.toLowerCase())) {
           // Update rule usage
@@ -268,7 +275,23 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
     };
   };
 
+  const liveBudgetCategoryNames = (): string[] => {
+    if (!financialData) return [];
+    const monthStartDay = resolveMonthStartDayFromData(financialData);
+    return budgetCardCategoryNames({
+      budgets: financialData.budgets ?? [],
+      viewKey: financialMonthKey(new Date(), monthStartDay),
+      monthStartDay,
+      finalizedNewCategoryNames: (financialData.budgetRequests ?? [])
+        .filter((r) => r.status === 'Finalized' && r.requestType === 'NewCategory')
+        .map((r) => String(r.categoryName || '').trim())
+        .filter(Boolean),
+    });
+  };
+
   const allowedCategoryNames = (): string[] => {
+    const fromBudgets = liveBudgetCategoryNames();
+    if (fromBudgets.length > 0) return fromBudgets;
     const fromRules = categoryRules.map((r) => r.category);
     const defaults = [
       'Food & Dining',
@@ -285,24 +308,35 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
     return [...new Set([...fromRules, ...defaults])];
   };
 
+  const alignToAllowed = (name: string, categories: string[], liveBudgets: boolean): string => {
+    const hit =
+      categories.find((c) => c === name) ||
+      categories.find((c) => c.toLowerCase() === name.toLowerCase());
+    if (hit) return hit;
+    return liveBudgets ? 'Uncategorized' : name;
+  };
+
   const getAICategorySuggestion = async (
     description: string,
     tx?: ParsedTransaction,
   ): Promise<CategorySuggestion & { tags?: string[] }> => {
     const fallback = keywordCategorySuggestion(description);
     const categories = allowedCategoryNames();
+    const liveBudgets = liveBudgetCategoryNames().length > 0;
+    const alignedFallback = {
+      ...fallback,
+      category: alignToAllowed(fallback.category, categories, liveBudgets),
+    };
     try {
       const picked = await geminiCategorySuggestion(description, categories, {
+        data: financialData,
         amount: tx?.amount,
         date: tx?.date instanceof Date ? tx.date.toISOString().slice(0, 10) : undefined,
         type: tx?.type,
       });
       if (picked && String(picked).trim()) {
         const name = String(picked).trim();
-        const matched =
-          categories.find((c) => c === name) ||
-          categories.find((c) => c.toLowerCase() === name.toLowerCase()) ||
-          name;
+        const matched = alignToAllowed(name, categories, liveBudgets);
         return {
           category: matched,
           subcategory: fallback.subcategory !== 'Other' ? fallback.subcategory : 'General',
@@ -314,7 +348,7 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
     } catch {
       /* offline / AI unavailable — keyword stub */
     }
-    return fallback;
+    return alignedFallback;
   };
 
   const detectDuplicates = async (transactions: ParsedTransaction[], existingTransactions: any[]): Promise<DuplicateResult[]> => {

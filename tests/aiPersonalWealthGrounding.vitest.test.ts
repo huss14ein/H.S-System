@@ -31,7 +31,7 @@ describe('aiPersonalWealthGrounding', () => {
   it('exposes investor-copilot fields (liquidity, concentration, dividends, debt)', () => {
     const g = buildAiPersonalWealthGrounding({ data: minimalData, exchangeRate: 3.75 });
     expect(typeof g.investableCashSar).toBe('number');
-    expect(typeof g.emergencyFundMonths).toBe('number');
+    expect(g.emergencyFundMonths === null || typeof g.emergencyFundMonths === 'number').toBe(true);
     expect(typeof g.topConcentrationPct).toBe('number');
     expect(typeof g.platformsDailyPnLSar).toBe('number');
     expect(typeof g.dividendRunRateSar).toBe('number');
@@ -46,6 +46,46 @@ describe('aiPersonalWealthGrounding', () => {
     const delta = buildAiPageDelta('investments', minimalData, { concentrationWarnings: ['Top holding 30%'] });
     expect(delta).toContain('PAGE DELTA (investments)');
     expect(delta).toContain('concentrationWarnings');
+  });
+
+  it('does not treat a zero-expense month as zero months of emergency coverage', () => {
+    const data = { ...minimalData, transactions: [] } as FinancialData;
+    const g = buildAiPersonalWealthGrounding({ data, exchangeRate: 3.75 });
+    expect(g.monthlyExpensesSar).toBe(0);
+    expect(g.emergencyFundMonths).toBeNull();
+    expect(g.promptBlock).toContain('Emergency fund months: unavailable');
+  });
+
+  it('converts USD dividend legs into SAR for the run-rate', () => {
+    const year = new Date().getFullYear();
+    const data = {
+      ...minimalData,
+      investmentTransactions: [
+        {
+          id: 'd1',
+          accountId: 'inv1',
+          date: `${year}-03-15`,
+          type: 'dividend',
+          symbol: 'AAPL',
+          quantity: 1,
+          price: 100,
+          total: 100,
+          currency: 'USD',
+        },
+      ],
+    } as FinancialData;
+    const g = buildAiPersonalWealthGrounding({ data, exchangeRate: 3.75 });
+    expect(g.dividendRunRateSar).toBeGreaterThan(100);
+  });
+
+  it('includes liabilities with a missing status in the installment hint', () => {
+    const data = {
+      ...minimalData,
+      liabilities: [{ id: 'l1', name: 'Car loan', type: 'Loan', amount: -5000, minPayment: 400 }],
+    } as FinancialData;
+    const g = buildAiPersonalWealthGrounding({ data, exchangeRate: 3.75 });
+    expect(g.totalDebtSar).toBeGreaterThan(0);
+    expect(g.unpaidInstallmentsHint).toMatch(/400/);
   });
 
   it('buildCategorySuggestionGrounding surfaces prior labels for similar descriptions', () => {

@@ -211,6 +211,16 @@ function fmtSar(n: number): string {
 }
 
 /**
+ * Goal copy from `formatGoalsProgressForPrompt` looks like `Name (10%)`.
+ * Match a real 0% figure, not the trailing `0%` inside 10%, 50%, or 100%.
+ */
+function goalsProgressNeedsFunding(progress: string): boolean {
+  if (/under|behind|gap/i.test(progress)) return true;
+  const pcts = progress.match(/\d+(?:\.\d+)?(?=%)/g);
+  return !!pcts?.some((raw) => Number(raw) === 0);
+}
+
+/**
  * Deterministic recommendation seeds from wealth grounding + optional page hints.
  * Always useful when LLM is down.
  */
@@ -222,7 +232,11 @@ export function buildRuleBasedActionCards(
   const cards: AiActionCard[] = [];
   const g = grounding;
 
-  if (g.emergencyFundMonths != null && g.emergencyFundMonths < 2) {
+  if (
+    g.monthlyExpensesSar > 0 &&
+    g.emergencyFundMonths != null &&
+    g.emergencyFundMonths < 2
+  ) {
     cards.push({
       id: 'rules-ef-low',
       kind: 'wealth',
@@ -299,7 +313,7 @@ export function buildRuleBasedActionCards(
   }
 
   if (page === 'goals' || page === 'summary' || page === 'dashboard') {
-    if (g.goalsProgress && /0%|under|behind|gap/i.test(g.goalsProgress)) {
+    if (g.goalsProgress && goalsProgressNeedsFunding(g.goalsProgress)) {
       cards.push({
         id: 'rules-goals-fund',
         kind: 'goal',

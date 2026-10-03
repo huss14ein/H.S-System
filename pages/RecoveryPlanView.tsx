@@ -1127,7 +1127,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
         avgCost: selected.holding.avgCost ?? 0,
         wealthGroundingPrompt: recoveryWealthCtx?.promptBlock,
         concentrationPct: recoveryWealthCtx?.topConcentrationPct,
-        runwayMonths: recoveryWealthCtx?.emergencyFundMonths,
+        runwayMonths: recoveryWealthCtx?.emergencyFundMonths ?? undefined,
       });
       setAiRecoveryBySymbol(prev => ({ ...prev, [sym]: suggestion }));
     } catch (error) {
@@ -1164,7 +1164,7 @@ function RecoveryPlanViewContent({ onNavigateToTab, onOpenWealthUltra, setActive
             avgCost: position.holding.avgCost ?? 0,
             wealthGroundingPrompt: recoveryWealthCtx?.promptBlock,
             concentrationPct: recoveryWealthCtx?.topConcentrationPct,
-            runwayMonths: recoveryWealthCtx?.emergencyFundMonths,
+            runwayMonths: recoveryWealthCtx?.emergencyFundMonths ?? undefined,
           });
           return [sym, suggestion] as const;
         }),
