@@ -8,6 +8,7 @@ import {
   smsNoteWithMeta,
 } from './smsImportRouting';
 import { applySmsAtmCashTransfers, smsNoteWithAtmMeta } from './smsAtmCashTransfer';
+import { applySmsCcPaymentTransfers, smsNoteWithCcPaymentMeta } from './smsCcPaymentTransfer';
 import type { Account } from '../types';
 
 /** Extract HH:mm from an SMS block (trailing `DD/MM/YY HH:mm` or `في: …`). */
@@ -165,15 +166,16 @@ export async function parseSMSTransactions(
     const accounts = options?.accounts ?? [];
     const routed = applySmsAccountRouting(uniqueTransactions, accounts, accountId);
     const atmCash = applySmsAtmCashTransfers(routed.transactions, accounts);
+    const ccPay = applySmsCcPaymentTransfers(atmCash.transactions, accounts);
     
     // Validate extracted transactions
-    const validation = validateTransactions(atmCash.transactions);
+    const validation = validateTransactions(ccPay.transactions);
     const routingWarnings = routed.warnings;
     
     return {
-      transactions: validation.isValid ? atmCash.transactions : atmCash.transactions.filter((_, i) => {
-        const txDate = new Date(atmCash.transactions[i].date);
-        return !isNaN(txDate.getTime()) && atmCash.transactions[i].description && atmCash.transactions[i].amount !== undefined;
+      transactions: validation.isValid ? ccPay.transactions : ccPay.transactions.filter((_, i) => {
+        const txDate = new Date(ccPay.transactions[i].date);
+        return !isNaN(txDate.getTime()) && ccPay.transactions[i].description && ccPay.transactions[i].amount !== undefined;
       }),
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
@@ -182,6 +184,7 @@ export async function parseSMSTransactions(
         ...(validation.warnings ?? []),
         ...routingWarnings,
         ...atmCash.warnings,
+        ...ccPay.warnings,
       ],
       validation
     };
@@ -451,10 +454,23 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           let date = parseSmsDate(dateStr || formatLocalYmd(new Date()));
           if (Number.isNaN(date.getTime())) date = new Date();
           const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
-          const category = inferCategoryForSignedAmount(canonicalDescription, signed);
+          let category = inferCategoryForSignedAmount(canonicalDescription, signed);
           
           const last4 = extractSmsCardLast4(line);
           const clock = extractSmsClockTime(line);
+          const lineBlob = `${line}\n${canonicalDescription}`;
+          const isAtm = /(صراف\s*آلي|\batm\b)/i.test(lineBlob);
+          const isCcSettlement = SMS_CARD_SETTLEMENT_RE.test(lineBlob);
+          let note: string | undefined;
+          if (isAtm) {
+            category = 'Transfer';
+            note = smsNoteWithAtmMeta(undefined, { last4, time: clock, kind: 'atm' });
+          } else if (isCcSettlement) {
+            category = 'Transfer';
+            note = smsNoteWithCcPaymentMeta(undefined, { last4, time: clock, fundedFromAccountId: null });
+          } else {
+            note = smsNoteWithMeta(undefined, { last4, time: clock });
+          }
           transactions.push({
             id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             date: formatLocalYmd(date),
@@ -464,7 +480,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
             accountId,
             type: isDebit ? 'expense' : 'income',
             status: 'Approved',
-            note: smsNoteWithMeta(undefined, { last4, time: clock }),
+            note,
           });
         }
         break; // Found a match, move to next line
@@ -570,6 +586,17 @@ function buildSmsTransactionFromBlock(
   const last4 = extractSmsCardLast4(block);
   const clock = extractSmsClockTime(block);
   const isAtm = /(صراف\s*آلي|\batm\b)/i.test(block);
+  const isCcSettlement = SMS_CARD_SETTLEMENT_RE.test(block);
+
+  let note: string | undefined;
+  if (isAtm) {
+    note = smsNoteWithAtmMeta(undefined, { last4, time: clock, kind: 'atm' });
+  } else if (isCcSettlement) {
+    note = smsNoteWithCcPaymentMeta(undefined, { last4, time: clock, fundedFromAccountId: null });
+    category = 'Transfer';
+  } else {
+    note = smsNoteWithMeta(undefined, { last4, time: clock });
+  }
 
   return {
     id: `${idPrefix}-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
@@ -580,9 +607,8 @@ function buildSmsTransactionFromBlock(
     accountId,
     type: signed < 0 ? 'expense' : 'income',
     status: 'Approved',
-    note: isAtm
-      ? smsNoteWithAtmMeta(undefined, { last4, time: clock, kind: 'atm' })
-      : smsNoteWithMeta(undefined, { last4, time: clock }),
+    note,
+    ...(isAtm || isCcSettlement ? { budgetCategory: undefined } : {}),
   };
 }
 

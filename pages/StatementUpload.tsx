@@ -27,6 +27,15 @@ import {
   smsNoteWithAtmMeta,
   stripSmsAtmMeta,
 } from '../services/smsAtmCashTransfer';
+import {
+  isSmsCcPaymentTx,
+  parseSmsCcFundedFromNote,
+  shouldImportSmsCcPaymentAsTransfer,
+  smsNoteWithCcPaymentMeta,
+  stripSmsCcPaymentMeta,
+  isEligibleCcFundingAccount,
+} from '../services/smsCcPaymentTransfer';
+import { isSmsLedgerTransferTx } from '../services/smsImportTransferGuards';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
@@ -89,6 +98,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     () => bankAccounts.filter((a) => a.type === 'Checking' || a.type === 'Savings'),
     [bankAccounts],
   );
+  /** Checking/Savings that can fund a card payment (excludes physical cash wallets). */
+  const ccFundingAccountChoices = useMemo(
+    () => bankAccounts.filter((a) => isEligibleCcFundingAccount(a)),
+    [bankAccounts],
+  );
   const selectedAccountObj = useMemo(
     () => (data?.accounts ?? []).find((a) => a.id === selectedAccount) ?? null,
     [data?.accounts, selectedAccount],
@@ -141,6 +155,13 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
     const userHistory = data?.transactions ?? [];
     return rows.map((tx) => {
+      if (isSmsLedgerTransferTx(tx)) {
+        return {
+          ...tx,
+          category: 'Transfer',
+          budgetCategory: undefined,
+        };
+      }
       const budgetCategoryNames = budgetCategoriesForTransactionDate(tx.date);
       const mapped = categorizeImportedTransaction(tx, { budgetCategoryNames, userHistory });
       const nextBudget = mapped.budgetCategory;
@@ -488,6 +509,22 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return;
       }
 
+      const selectedCcMissingFunding = [...selectedTransactions].filter((idx) => {
+        if (idx >= extractedTransactions.length) return false;
+        const tx = extractedTransactions[idx];
+        if (!isSmsCcPaymentTx(tx)) return false;
+        const fundedFrom = parseSmsCcFundedFromNote(tx.note);
+        if (!fundedFrom) return true;
+        if (fundedFrom === String(tx.accountId || '').trim()) return true;
+        return !ccFundingAccountChoices.some((a) => a.id === fundedFrom);
+      });
+      if (selectedCcMissingFunding.length > 0) {
+        alert(
+          `${selectedCcMissingFunding.length} card payment(s) (سداد) need a Paid-from Checking/Savings account (different from the card). Set Cash role “Debt servicing” / “Bills payment” on Accounts, or pick Paid from on each سداد row.`,
+        );
+        return;
+      }
+
       const plan = planStatementImport({
         bankTransactions: extractedTransactions,
         investmentTransactions: extractedInvestmentTransactions,
@@ -543,6 +580,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
             for (let attempt = 0; attempt < 2; attempt++) {
               try {
                 const cashTo = parseSmsAtmCashToFromNote(tx.note);
+                const fundedFrom = parseSmsCcFundedFromNote(tx.note);
                 if (shouldImportSmsAtmAsTransfer(tx) && cashTo) {
                   const fromAccountId = String(tx.accountId || '').trim();
                   const absAmt = Math.abs(Number(tx.amount) || 0);
@@ -560,6 +598,30 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     transferNote,
                     0,
                     { system: true },
+                  );
+                } else if (shouldImportSmsCcPaymentAsTransfer(tx) && fundedFrom) {
+                  const cardAccountId = String(tx.accountId || '').trim();
+                  const absAmt = Math.abs(Number(tx.amount) || 0);
+                  const transferNote =
+                    stripSmsCcPaymentMeta(tx.note) ||
+                    String(tx.description || '')
+                      .replace(/^CC payment\s*(?:←[^·]*·?\s*)?/i, '')
+                      .trim() ||
+                    'Card payment (سداد)';
+                  await addTransfer(
+                    fundedFrom,
+                    cardAccountId,
+                    absAmt,
+                    tx.date,
+                    transferNote,
+                    0,
+                    { system: true },
+                  );
+                } else if (isSmsAtmWithdrawalTx(tx) || isSmsCcPaymentTx(tx)) {
+                  throw new Error(
+                    isSmsAtmWithdrawalTx(tx)
+                      ? 'ATM withdrawal must import as a transfer to Cash (pick Cash destination).'
+                      : 'Card payment (سداد) must import as a transfer from a funding account (pick Paid from).',
                   );
                 } else {
                   await addTransaction({
@@ -772,6 +834,13 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       const nextRows = prev.map((tx, i) => {
         if (i !== index) return tx;
         const next = { ...tx, ...patch };
+        if (isSmsLedgerTransferTx(next)) {
+          return {
+            ...next,
+            category: 'Transfer',
+            budgetCategory: undefined,
+          };
+        }
         if (
           (Object.prototype.hasOwnProperty.call(patch, 'description') ||
             Object.prototype.hasOwnProperty.call(patch, 'date')) &&
@@ -1404,8 +1473,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const rowCurrency = rowAccount?.currency === 'USD' ? 'USD' : selectedAccountCurrency;
                         const budgetSelectOptions = budgetCategoriesForTransactionDate(tx.date);
                         const isAtmRow = isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0;
+                        const isCcPayRow = isSmsCcPaymentTx(tx);
+                        const isTransferRow = isAtmRow || isCcPayRow;
                         const atmCashTo = parseSmsAtmCashToFromNote(tx.note);
+                        const ccFundedFrom = parseSmsCcFundedFromNote(tx.note);
                         const cashChoicesForRow = physicalCashAccountChoices.filter(
+                          (a) => a.id !== String(tx.accountId || '').trim(),
+                        );
+                        const fundingChoicesForRow = ccFundingAccountChoices.filter(
                           (a) => a.id !== String(tx.accountId || '').trim(),
                         );
                         return (
@@ -1441,7 +1516,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                 <div className="text-xs text-slate-500 mt-0.5">Card ••••{cardLast4}</div>
                               )}
                               {isAtmRow && (
-                                <div className="text-xs text-sky-700 mt-0.5">ATM → cash transfer</div>
+                                <div className="text-xs text-sky-700 mt-0.5">ATM → cash transfer (no budget)</div>
+                              )}
+                              {isCcPayRow && (
+                                <div className="text-xs text-sky-700 mt-0.5">Card payment → transfer (no budget)</div>
                               )}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600 min-w-[160px]">
@@ -1449,23 +1527,40 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                 value={tx.accountId || ''}
                                 onChange={(e) => {
                                   const nextSource = e.target.value;
-                                  if (!isAtmRow) {
-                                    handleExtractedTransactionEdit(index, { accountId: nextSource });
+                                  if (isAtmRow) {
+                                    const prevCash = parseSmsAtmCashToFromNote(tx.note);
+                                    const cashTo =
+                                      prevCash && prevCash !== nextSource
+                                        ? prevCash
+                                        : physicalCashAccountChoices.find((a) => a.id !== nextSource)?.id ?? null;
+                                    handleExtractedTransactionEdit(index, {
+                                      accountId: nextSource,
+                                      note: smsNoteWithAtmMeta(tx.note, {
+                                        kind: 'atm',
+                                        cashToAccountId: cashTo,
+                                      }),
+                                      category: 'Transfer',
+                                      budgetCategory: undefined,
+                                    });
                                     return;
                                   }
-                                  const prevCash = parseSmsAtmCashToFromNote(tx.note);
-                                  const cashTo =
-                                    prevCash && prevCash !== nextSource
-                                      ? prevCash
-                                      : physicalCashAccountChoices.find((a) => a.id !== nextSource)?.id ?? null;
-                                  handleExtractedTransactionEdit(index, {
-                                    accountId: nextSource,
-                                    note: smsNoteWithAtmMeta(tx.note, {
-                                      kind: 'atm',
-                                      cashToAccountId: cashTo,
-                                    }),
-                                    category: 'Transfer',
-                                  });
+                                  if (isCcPayRow) {
+                                    const prevFunding = parseSmsCcFundedFromNote(tx.note);
+                                    const fundedFrom =
+                                      prevFunding && prevFunding !== nextSource
+                                        ? prevFunding
+                                        : ccFundingAccountChoices.find((a) => a.id !== nextSource)?.id ?? null;
+                                    handleExtractedTransactionEdit(index, {
+                                      accountId: nextSource,
+                                      note: smsNoteWithCcPaymentMeta(tx.note, {
+                                        fundedFromAccountId: fundedFrom,
+                                      }),
+                                      category: 'Transfer',
+                                      budgetCategory: undefined,
+                                    });
+                                    return;
+                                  }
+                                  handleExtractedTransactionEdit(index, { accountId: nextSource });
                                 }}
                                 className={`w-full rounded-md border px-2 py-1 text-sm ${
                                   tx.accountId ? 'border-slate-300' : 'border-amber-400 bg-amber-50'
@@ -1492,6 +1587,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                         cashToAccountId: e.target.value || null,
                                       }),
                                       category: 'Transfer',
+                                      budgetCategory: undefined,
                                     })
                                   }
                                   className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
@@ -1510,40 +1606,84 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                   ))}
                                 </select>
                               )}
+                              {isCcPayRow && (
+                                <select
+                                  value={ccFundedFrom || ''}
+                                  onChange={(e) =>
+                                    handleExtractedTransactionEdit(index, {
+                                      note: smsNoteWithCcPaymentMeta(tx.note, {
+                                        fundedFromAccountId: e.target.value || null,
+                                      }),
+                                      category: 'Transfer',
+                                      budgetCategory: undefined,
+                                    })
+                                  }
+                                  className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
+                                    ccFundedFrom && ccFundedFrom !== tx.accountId
+                                      ? 'border-slate-300'
+                                      : 'border-amber-400 bg-amber-50'
+                                  }`}
+                                  aria-label={`Funding account for ${tx.description}`}
+                                >
+                                  <option value="">Paid from…</option>
+                                  {fundingChoicesForRow.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>
+                                      ← {acc.name}
+                                      {acc.accountRole === 'debt_servicing' || acc.accountRole === 'bills_payment'
+                                        ? ' (bills)'
+                                        : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </td>
                             <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                               {tx.amount >= 0 ? '+' : '-'}
                               {formatCurrencyString(Math.abs(tx.amount), { inCurrency: rowCurrency })}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600 min-w-[180px]">
-                              <input
-                                value={tx.category || ''}
-                                onChange={(e) => handleExtractedTransactionEdit(index, { category: e.target.value })}
-                                list={`stmt-category-options-${index}`}
-                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
-                                placeholder="Category"
-                              />
-                              <datalist id={`stmt-category-options-${index}`}>
-                                {transactionCategoryOptions.map((opt) => (
-                                  <option key={opt} value={opt} />
-                                ))}
-                              </datalist>
+                              {isTransferRow ? (
+                                <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-sm text-slate-700">
+                                  Transfer
+                                </span>
+                              ) : (
+                                <>
+                                  <input
+                                    value={tx.category || ''}
+                                    onChange={(e) => handleExtractedTransactionEdit(index, { category: e.target.value })}
+                                    list={`stmt-category-options-${index}`}
+                                    className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                    placeholder="Category"
+                                  />
+                                  <datalist id={`stmt-category-options-${index}`}>
+                                    {transactionCategoryOptions.map((opt) => (
+                                      <option key={opt} value={opt} />
+                                    ))}
+                                  </datalist>
+                                </>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600 min-w-[180px]">
-                              <select
-                                value={tx.budgetCategory || ''}
-                                onChange={(e) => handleExtractedTransactionEdit(index, { budgetCategory: e.target.value || undefined })}
-                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
-                              >
-                                <option value="">No budget link</option>
-                                {budgetSelectOptions.map((opt) => (
-                                  <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                              </select>
-                              {budgetSelectOptions.length === 0 && (
-                                <p className="mt-1 text-[11px] text-amber-700">
-                                  No budget cards for this transaction’s financial month. Create budgets for that month on Budgets, or leave unlinked.
-                                </p>
+                              {isTransferRow ? (
+                                <span className="text-xs text-slate-500">Not applicable (transfer)</span>
+                              ) : (
+                                <>
+                                  <select
+                                    value={tx.budgetCategory || ''}
+                                    onChange={(e) => handleExtractedTransactionEdit(index, { budgetCategory: e.target.value || undefined })}
+                                    className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                  >
+                                    <option value="">No budget link</option>
+                                    {budgetSelectOptions.map((opt) => (
+                                      <option key={opt} value={opt}>{opt}</option>
+                                    ))}
+                                  </select>
+                                  {budgetSelectOptions.length === 0 && (
+                                    <p className="mt-1 text-[11px] text-amber-700">
+                                      No budget cards for this transaction’s financial month. Create budgets for that month on Budgets, or leave unlinked.
+                                    </p>
+                                  )}
+                                </>
                               )}
                             </td>
                             <td className="px-4 py-3 text-center">

@@ -29,14 +29,18 @@ export function parseSmsKindFromNote(note: string | undefined): string | null {
   return m?.[1] ? String(m[1]).trim().toLowerCase() : null;
 }
 
-/** Strip ATM meta tokens while preserving free-form note text. */
+/** Strip SMS transfer meta tokens while preserving free-form note text. */
 export function stripSmsAtmMeta(note: string | undefined): string {
   return String(note || '')
     .replace(/\s*sms:kind=[a-z0-9_-]+\b/gi, '')
     .replace(/\s*sms:cash_to=[A-Za-z0-9_-]+\b/gi, '')
+    .replace(/\s*sms:funded_from=[A-Za-z0-9_-]+\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+/** Alias — strips ATM + CC-payment transfer meta. */
+export const stripSmsTransferMeta = stripSmsAtmMeta;
 
 export function smsNoteWithAtmMeta(
   existingNote: string | undefined,

@@ -52,6 +52,37 @@ describe('statementUploadImportCompletion', () => {
     expect(read('types.ts')).toContain("| 'physical_cash'");
   });
 
+  it('Statement Upload wires سداد CC payment SMS → addTransfer (funding → card) with no budget', () => {
+    const stmt = read('pages/StatementUpload.tsx');
+    expect(stmt).toContain('shouldImportSmsCcPaymentAsTransfer');
+    expect(stmt).toContain('parseSmsCcFundedFromNote');
+    expect(stmt).toContain('selectedCcMissingFunding');
+    expect(stmt).toContain('smsNoteWithCcPaymentMeta');
+    expect(stmt).toContain('Paid from…');
+    expect(stmt).toContain('Not applicable (transfer)');
+    expect(stmt).toContain('isSmsLedgerTransferTx');
+    expect(stmt).toContain("must import as a transfer from a funding account");
+    expect(stmt).toContain("must import as a transfer to Cash");
+    const cc = read('services/smsCcPaymentTransfer.ts');
+    expect(cc).toContain('applySmsCcPaymentTransfers');
+    expect(cc).toContain('resolveCcPaymentFundingAccount');
+    expect(cc).toContain('sms:funded_from');
+    expect(cc).toContain("SMS_CC_PAYMENT_KIND = 'cc_payment'");
+    const parser = read('services/statementParser.ts');
+    expect(parser).toContain('applySmsCcPaymentTransfers');
+    expect(parser).toContain('smsNoteWithCcPaymentMeta');
+    const cat = read('services/importTransactionCategorization.ts');
+    expect(cat).toContain('isSmsLedgerTransferTx');
+    expect(cat).toContain('shouldSkipBudgetForImportedTx');
+    const prepare = read('services/statementImportPrepare.ts');
+    expect(prepare).toContain('isSmsCcPaymentTx');
+    expect(prepare).toContain('Paid-from funding account');
+    expect(prepare).toContain('ATM withdrawal needs a Cash destination');
+    const accounts = read('pages/Accounts.tsx');
+    expect(accounts).toContain('Debt servicing');
+    expect(accounts).toContain('SMS سداد imports');
+  });
+
   it('SMS parser merchant-aware dedupe + amount-aware categories', () => {
     const parser = read('services/statementParser.ts');
     expect(parser).toContain('smsDedupeDescriptionKey');
