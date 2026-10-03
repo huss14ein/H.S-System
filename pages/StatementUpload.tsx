@@ -20,6 +20,13 @@ import {
   type StatementImportContext,
 } from '../services/statementImportPrepare';
 import { parseSmsCardLast4FromNote } from '../services/smsImportRouting';
+import {
+  isSmsAtmWithdrawalTx,
+  parseSmsAtmCashToFromNote,
+  shouldImportSmsAtmAsTransfer,
+  smsNoteWithAtmMeta,
+  stripSmsAtmMeta,
+} from '../services/smsAtmCashTransfer';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
@@ -37,7 +44,7 @@ interface StatementUploadProps {
 }
 
 const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, triggerPageAction, pageAction, clearPageAction }) => {
-  const { data, addTransaction, recordTrade } = useContext(DataContext)!;
+  const { data, addTransaction, addTransfer, recordTrade } = useContext(DataContext)!;
   const confirmAction = useConfirmAction();
   const { commitParsedStatementFromUpload } = useStatementProcessing();
   const { formatCurrencyString } = useFormatCurrency();
@@ -78,6 +85,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
 
   const bankAccounts = (data?.accounts ?? []).filter(a => a.type !== 'Investment');
   const investmentAccounts = (data?.accounts ?? []).filter(a => a.type === 'Investment');
+  const physicalCashAccountChoices = useMemo(
+    () => bankAccounts.filter((a) => a.type === 'Checking' || a.type === 'Savings'),
+    [bankAccounts],
+  );
   const selectedAccountObj = useMemo(
     () => (data?.accounts ?? []).find((a) => a.id === selectedAccount) ?? null,
     [data?.accounts, selectedAccount],
@@ -461,6 +472,22 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return;
       }
 
+      const selectedAtmMissingCash = [...selectedTransactions].filter((idx) => {
+        if (idx >= extractedTransactions.length) return false;
+        const tx = extractedTransactions[idx];
+        if (!isSmsAtmWithdrawalTx(tx) || !(Number(tx.amount) < 0)) return false;
+        const cashTo = parseSmsAtmCashToFromNote(tx.note);
+        if (!cashTo) return true;
+        if (cashTo === String(tx.accountId || '').trim()) return true;
+        return !physicalCashAccountChoices.some((a) => a.id === cashTo);
+      });
+      if (selectedAtmMissingCash.length > 0) {
+        alert(
+          `${selectedAtmMissingCash.length} ATM withdrawal(s) need a Cash account destination (different from the card/account withdrawn from). Set Cash role “Physical cash / wallet” on Accounts, or pick Cash on each ATM row.`,
+        );
+        return;
+      }
+
       const plan = planStatementImport({
         bankTransactions: extractedTransactions,
         investmentTransactions: extractedInvestmentTransactions,
@@ -515,21 +542,44 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
           try {
             for (let attempt = 0; attempt < 2; attempt++) {
               try {
-                await addTransaction({
-                  date: tx.date,
-                  description: tx.description,
-                  amount: tx.amount,
-                  category: tx.category,
-                  accountId: tx.accountId,
-                  budgetCategory: tx.budgetCategory,
-                  subcategory: tx.subcategory,
-                  type: tx.type,
-                  transactionNature: tx.transactionNature,
-                  expenseType: tx.expenseType,
-                  status: tx.status || 'Approved',
-                  statementId: currentStatementId || undefined,
-                  note: tx.note,
-                }, { system: true });
+                const cashTo = parseSmsAtmCashToFromNote(tx.note);
+                if (shouldImportSmsAtmAsTransfer(tx) && cashTo) {
+                  const fromAccountId = String(tx.accountId || '').trim();
+                  const absAmt = Math.abs(Number(tx.amount) || 0);
+                  const transferNote =
+                    stripSmsAtmMeta(tx.note) ||
+                    String(tx.description || '')
+                      .replace(/^ATM\s*→[^·]*·?\s*/i, '')
+                      .trim() ||
+                    'ATM cash withdrawal';
+                  await addTransfer(
+                    fromAccountId,
+                    cashTo,
+                    absAmt,
+                    tx.date,
+                    transferNote,
+                    0,
+                    { system: true },
+                  );
+                } else {
+                  await addTransaction({
+                    date: tx.date,
+                    description: tx.description,
+                    amount: tx.amount,
+                    category: tx.category,
+                    accountId: tx.accountId,
+                    budgetCategory: tx.budgetCategory,
+                    subcategory: tx.subcategory,
+                    type: tx.type,
+                    transactionNature: tx.transactionNature,
+                    expenseType: tx.expenseType,
+                    status: tx.status || 'Approved',
+                    statementId: currentStatementId || undefined,
+                    note: tx.note,
+                    transferGroupId: tx.transferGroupId,
+                    transferRole: tx.transferRole,
+                  }, { system: true });
+                }
                 succeededIndices.add(idx);
                 failedIndices.delete(idx);
                 return;
@@ -1353,6 +1403,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const rowAccount = bankAccounts.find((a) => a.id === tx.accountId);
                         const rowCurrency = rowAccount?.currency === 'USD' ? 'USD' : selectedAccountCurrency;
                         const budgetSelectOptions = budgetCategoriesForTransactionDate(tx.date);
+                        const isAtmRow = isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0;
+                        const atmCashTo = parseSmsAtmCashToFromNote(tx.note);
+                        const cashChoicesForRow = physicalCashAccountChoices.filter(
+                          (a) => a.id !== String(tx.accountId || '').trim(),
+                        );
                         return (
                           <tr
                             key={index}
@@ -1385,11 +1440,33 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                               {cardLast4 && (
                                 <div className="text-xs text-slate-500 mt-0.5">Card ••••{cardLast4}</div>
                               )}
+                              {isAtmRow && (
+                                <div className="text-xs text-sky-700 mt-0.5">ATM → cash transfer</div>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600 min-w-[160px]">
                               <select
                                 value={tx.accountId || ''}
-                                onChange={(e) => handleExtractedTransactionEdit(index, { accountId: e.target.value })}
+                                onChange={(e) => {
+                                  const nextSource = e.target.value;
+                                  if (!isAtmRow) {
+                                    handleExtractedTransactionEdit(index, { accountId: nextSource });
+                                    return;
+                                  }
+                                  const prevCash = parseSmsAtmCashToFromNote(tx.note);
+                                  const cashTo =
+                                    prevCash && prevCash !== nextSource
+                                      ? prevCash
+                                      : physicalCashAccountChoices.find((a) => a.id !== nextSource)?.id ?? null;
+                                  handleExtractedTransactionEdit(index, {
+                                    accountId: nextSource,
+                                    note: smsNoteWithAtmMeta(tx.note, {
+                                      kind: 'atm',
+                                      cashToAccountId: cashTo,
+                                    }),
+                                    category: 'Transfer',
+                                  });
+                                }}
                                 className={`w-full rounded-md border px-2 py-1 text-sm ${
                                   tx.accountId ? 'border-slate-300' : 'border-amber-400 bg-amber-50'
                                 }`}
@@ -1405,6 +1482,34 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                   </option>
                                 ))}
                               </select>
+                              {isAtmRow && (
+                                <select
+                                  value={atmCashTo || ''}
+                                  onChange={(e) =>
+                                    handleExtractedTransactionEdit(index, {
+                                      note: smsNoteWithAtmMeta(tx.note, {
+                                        kind: 'atm',
+                                        cashToAccountId: e.target.value || null,
+                                      }),
+                                      category: 'Transfer',
+                                    })
+                                  }
+                                  className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
+                                    atmCashTo && atmCashTo !== tx.accountId
+                                      ? 'border-slate-300'
+                                      : 'border-amber-400 bg-amber-50'
+                                  }`}
+                                  aria-label={`Cash destination for ${tx.description}`}
+                                >
+                                  <option value="">Cash account…</option>
+                                  {cashChoicesForRow.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>
+                                      → {acc.name}
+                                      {acc.accountRole === 'physical_cash' ? ' (wallet)' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </td>
                             <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                               {tx.amount >= 0 ? '+' : '-'}

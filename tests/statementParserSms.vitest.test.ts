@@ -585,6 +585,7 @@ SAR مبلغ:50.00
       { id: 'a5280', name: 'Visa 5280', type: 'Credit' as const, balance: 0, lastFourDigits: '5280' },
       { id: 'a8529', name: 'Mada 8529', type: 'Checking' as const, balance: 0, lastFourDigits: '8529' },
       { id: 'a3138', name: 'Acct 3138', type: 'Checking' as const, balance: 0, lastFourDigits: '3138' },
+      { id: 'cash-1', name: 'Cash', type: 'Checking' as const, balance: 0, accountRole: 'physical_cash' as const },
     ];
 
     const res = await parseSMSTransactions(sms, '', { accounts });
@@ -627,7 +628,11 @@ SAR مبلغ:50.00
     expect(byAmt(300.58)?.accountId).toBe('a3138');
     expect(byAmt(34.59)?.description.toUpperCase()).toContain('NETLIFY');
     expect(byAmt(450)?.description.toUpperCase()).toContain('ALFALAH');
+    expect(byAmt(450)?.note).toContain('sms:kind=atm');
+    expect(byAmt(450)?.note).toContain('sms:cash_to=cash-1');
+    expect(byAmt(450)?.accountId).toBe('a8529');
     expect(byAmt(1000)?.description.toUpperCase()).toContain('TAMIM');
+    expect(byAmt(1000)?.note).toContain('sms:cash_to=cash-1');
     expect(byAmt(29.59)?.description.toUpperCase()).toContain('UBR');
 
     // No balance / fee / USD ghosts
@@ -761,5 +766,7 @@ SAR مبلغ:50.00
     expect(res.transactions[0].date).toBe('2026-09-13');
     expect(res.transactions[0].description.toUpperCase()).toContain('ALFALAH');
     expect(res.transactions[0].note).toContain('sms:card=8529');
+    expect(res.transactions[0].note).toContain('sms:kind=atm');
+    expect(res.transactions[0].category).toBe('Transfer');
   });
 });

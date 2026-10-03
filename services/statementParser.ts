@@ -7,6 +7,7 @@ import {
   extractSmsCardLast4,
   smsNoteWithMeta,
 } from './smsImportRouting';
+import { applySmsAtmCashTransfers, smsNoteWithAtmMeta } from './smsAtmCashTransfer';
 import type { Account } from '../types';
 
 /** Extract HH:mm from an SMS block (trailing `DD/MM/YY HH:mm` or `في: …`). */
@@ -161,16 +162,18 @@ export async function parseSMSTransactions(
       ...aiTransactions,
     ]);
     const uniqueTransactions = mergeSmsDedupedTransactions(allTransactions);
-    const routed = applySmsAccountRouting(uniqueTransactions, options?.accounts ?? [], accountId);
+    const accounts = options?.accounts ?? [];
+    const routed = applySmsAccountRouting(uniqueTransactions, accounts, accountId);
+    const atmCash = applySmsAtmCashTransfers(routed.transactions, accounts);
     
     // Validate extracted transactions
-    const validation = validateTransactions(routed.transactions);
+    const validation = validateTransactions(atmCash.transactions);
     const routingWarnings = routed.warnings;
     
     return {
-      transactions: validation.isValid ? routed.transactions : routed.transactions.filter((_, i) => {
-        const txDate = new Date(routed.transactions[i].date);
-        return !isNaN(txDate.getTime()) && routed.transactions[i].description && routed.transactions[i].amount !== undefined;
+      transactions: validation.isValid ? atmCash.transactions : atmCash.transactions.filter((_, i) => {
+        const txDate = new Date(atmCash.transactions[i].date);
+        return !isNaN(txDate.getTime()) && atmCash.transactions[i].description && atmCash.transactions[i].amount !== undefined;
       }),
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
@@ -178,6 +181,7 @@ export async function parseSMSTransactions(
         ...(aiTimedOut ? ['AI extraction timed out; pattern/heuristic SMS results only.'] : []),
         ...(validation.warnings ?? []),
         ...routingWarnings,
+        ...atmCash.warnings,
       ],
       validation
     };
@@ -565,6 +569,7 @@ function buildSmsTransactionFromBlock(
 
   const last4 = extractSmsCardLast4(block);
   const clock = extractSmsClockTime(block);
+  const isAtm = /(صراف\s*آلي|\batm\b)/i.test(block);
 
   return {
     id: `${idPrefix}-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
@@ -575,7 +580,9 @@ function buildSmsTransactionFromBlock(
     accountId,
     type: signed < 0 ? 'expense' : 'income',
     status: 'Approved',
-    note: smsNoteWithMeta(undefined, { last4, time: clock }),
+    note: isAtm
+      ? smsNoteWithAtmMeta(undefined, { last4, time: clock, kind: 'atm' })
+      : smsNoteWithMeta(undefined, { last4, time: clock }),
   };
 }
 

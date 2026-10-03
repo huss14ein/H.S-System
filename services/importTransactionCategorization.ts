@@ -30,8 +30,8 @@ export function inferImportTransactionCategory(
   if (/(شراء إنترنت|شراء انترنت|online purchase|e-?commerce|noon|amazon|نون|امازون)/i.test(descRaw)) {
     return 'Shopping';
   }
-  if (/(atm|سحب نقدي|cash withdrawal)/i.test(descRaw)) {
-    return 'Uncategorized';
+  if (/(atm|سحب نقدي|cash withdrawal|صراف\s*آلي)/i.test(descRaw)) {
+    return 'Transfer';
   }
   if (/(حوالة|تحويل\s*صادر|transfer\s*out|local\s*transfer)/i.test(descRaw)) {
     return 'Transfer';
