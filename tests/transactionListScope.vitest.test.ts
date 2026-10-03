@@ -13,13 +13,45 @@ import {
 import type { FinancialData, Transaction } from '../types';
 import { financialMonthRangeFromKey } from '../utils/financialMonth';
 import { computeBudgetSpendWindows } from '../services/budgetViewSpendWindows';
+import { sortByNewestFirst } from '../utils/sortRecency';
 
 describe('transaction list scope', () => {
     it('Transactions page uses ledger view filter helper with admin/collaborator visibility scope', () => {
         const src = readFileSync(join(process.cwd(), 'pages/Transactions.tsx'), 'utf8');
         expect(src).toContain('filterTransactionsForLedgerView');
         expect(src).toContain('ledgerVisibilityScope');
+        expect(src).toContain('sortByNewestFirst(filtered)');
         expect(src).not.toContain('isPermitted = userRole');
+    });
+
+    it('allMonths ledger view sorts newest to oldest across mixed months', () => {
+        const txs = [
+            { id: 'old', accountId: 'a1', amount: -10, date: '2026-07-01', description: 'Jul', type: 'expense', category: 'Food' },
+            { id: 'mid', accountId: 'a1', amount: -20, date: '2026-08-15', description: 'Aug', type: 'expense', category: 'Food' },
+            { id: 'new', accountId: 'a1', amount: -30, date: '2026-09-12', description: 'Sep', type: 'expense', category: 'Food' },
+            { id: 'same-day-older', accountId: 'a1', amount: -5, date: '2026-09-12', created_at: '2026-09-12T08:00:00Z', description: 'Sep AM', type: 'expense', category: 'Food' },
+            { id: 'same-day-newer', accountId: 'a1', amount: -6, date: '2026-09-12', created_at: '2026-09-12T20:00:00Z', description: 'Sep PM', type: 'expense', category: 'Food' },
+        ] as Transaction[];
+        const filtered = filterTransactionsForLedgerView(
+            txs,
+            {
+                accountId: 'all',
+                month: '2026-09',
+                allMonths: true,
+                nature: 'all',
+                expenseType: 'all',
+                budgetCategory: 'all',
+            },
+            28,
+            { mode: 'owner', governanceReady: true },
+        );
+        const ordered = sortByNewestFirst(filtered);
+        expect(ordered.map((t) => t.id)).toEqual(['same-day-newer', 'same-day-older', 'new', 'mid', 'old']);
+        for (let i = 1; i < ordered.length; i++) {
+            const prev = new Date(ordered[i - 1].date).getTime();
+            const cur = new Date(ordered[i].date).getTime();
+            expect(prev).toBeGreaterThanOrEqual(cur);
+        }
     });
 
     it('Transactions page wires fiscal drill-down, governance loading, and hydrate warning', () => {

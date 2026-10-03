@@ -434,6 +434,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
           const category = inferCategoryForSignedAmount(canonicalDescription, signed);
           
+          const last4 = extractSmsCardLast4(line);
           transactions.push({
             id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             date: formatLocalYmd(date),
@@ -442,7 +443,8 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
             category,
             accountId,
             type: isDebit ? 'expense' : 'income',
-            status: 'Approved'
+            status: 'Approved',
+            note: smsNoteWithCardLast4(undefined, last4),
           });
         }
         break; // Found a match, move to next line
@@ -533,6 +535,10 @@ function buildSmsTransactionFromBlock(
     category = 'Income';
   } else if (/(نقاط البيع|شراء\s*PoS|\bPoS\b|شراء إنترنت|شراء انترنت|pos purchase|purchase at|payment at)/i.test(block)) {
     category = 'Shopping';
+  } else if (/سداد/i.test(block)) {
+    category = 'Transfer';
+  } else if (/(صراف\s*آلي|\batm\b)/i.test(block)) {
+    category = 'Transfer';
   }
 
   const last4 = extractSmsCardLast4(block);
@@ -670,6 +676,11 @@ function splitSmsIntoBlocks(smsText: string): string[] {
     /^(?:purchase|payment|transaction|debited|credited|withdrawn|received|transfer|paid|spent|pos|atm)\b/i;
   const startReAr = /^(?:شراء|سحب|خصم|نقاط البيع|تحويل|حوالة|استرداد|سداد|إيداع|ايداع|استلام)/;
   const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{1,4}/;
+  /** Title-like بطاقة lines (سداد / استرداد) — not mid-block بطاقة:7365 masks. */
+  const isCardTitleStarter = (line: string) =>
+    /^بطاقة/.test(line) &&
+    !/\d{4}/.test(line) &&
+    /(?:استرداد|ائتمانية|فيزا|مدى|سداد)/.test(line);
 
   for (const line of lines) {
     const lineStartsTx =
@@ -677,7 +688,7 @@ function splitSmsIntoBlocks(smsText: string): string[] {
       (startReEn.test(line) ||
         startReAr.test(line) ||
         /استرداد/.test(line) ||
-        (/^بطاقة/.test(line) && /استرداد|ائتمانية/.test(line) && /مبلغ|استرداد/.test(line)));
+        isCardTitleStarter(line));
     if (lineStartsTx) {
       blocks.push(current.join('\n').trim());
       current = [line];
@@ -718,17 +729,18 @@ function extractSmsAmount(block: string): number {
     if (Number.isFinite(n) && n > 0) return n;
   }
 
-  // 2) Explicit بـSR / بـSAR on purchase, transfer, or debit title lines (same line or nearby).
+  // 2) Explicit بـSR / بSR / بـSAR on purchase, transfer, سداد, or debit title lines.
   const principalCurrency = String.raw`(?:SAR|SR)`;
+  const biCurrency = String.raw`بـ?\s*${principalCurrency}`;
   const principalSrLineRe = new RegExp(
-    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[^\n]*?بـ\s*${principalCurrency}\s*${amountToken}`,
+    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع|سداد)[^\n]*?${biCurrency}\s*${amountToken}`,
     'i',
   );
   const principalSrAltRe = new RegExp(
-    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[^\n]*?\b${principalCurrency}\s*${amountToken}\b`,
+    String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|سداد)[^\n]*?\b${principalCurrency}\s*${amountToken}\b`,
     'i',
   );
-  const barePrincipalRe = new RegExp(String.raw`بـ\s*${principalCurrency}\s*${amountToken}`, 'i');
+  const barePrincipalRe = new RegExp(String.raw`${biCurrency}\s*${amountToken}`, 'i');
   let principal = 0;
   for (const line of lines) {
     if (isSmsSecondaryAmountLine(line)) continue;
@@ -745,18 +757,18 @@ function extractSmsAmount(block: string): number {
     const arabPrincipalSr =
       compact.match(
         new RegExp(
-          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع)[\s\S]{0,500}?(?:^|\s)بـ\s*${principalCurrency}\s*${amountToken}(?=\s|$)`,
+          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|ايداع|إيداع|سداد)[\s\S]{0,500}?(?:^|\s)${biCurrency}\s*${amountToken}(?=\s|$)`,
           'i',
         ),
       ) ??
       compact.match(
         new RegExp(
-          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد)[\s\S]{0,300}?(?:^|\s)${principalCurrency}\s*${amountToken}(?=\s|$)`,
+          String.raw`(?:شراء|حوالة|تحويل|سحب|خصم|دفع|استرداد|سداد)[\s\S]{0,300}?(?:^|\s)${principalCurrency}\s*${amountToken}(?=\s|$)`,
           'i',
         ),
       ) ??
-      (/(شراء|حوالة|نقاط البيع|\bpos\b)/i.test(compact)
-        ? compact.match(new RegExp(String.raw`بـ\s*${principalCurrency}\s*${amountToken}`, 'i'))
+      (/(شراء|حوالة|نقاط البيع|سداد|\bpos\b)/i.test(compact)
+        ? compact.match(new RegExp(String.raw`${biCurrency}\s*${amountToken}`, 'i'))
         : null);
     if (arabPrincipalSr) {
       const n = parseNum(arabPrincipalSr[1]);
@@ -1018,8 +1030,15 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
 }
 
 function extractSmsDescription(segment: string, idx: number): string {
+  const atmBranch = segment.match(/من\s*([A-Za-z][A-Za-z0-9 .:\-]{3,60})/)?.[1]?.trim();
+  if (atmBranch && /(صراف|atm|سحب)/i.test(segment)) {
+    // Keep branch on one line (do not swallow following date digits).
+    return atmBranch.replace(/\s+\d{1,2}$/, '').trim().slice(0, 120);
+  }
+
+  // Word-bound English "at"/"from" so STATION is not false-split as merchant "ION".
   const merchantFirst =
-    segment.match(/(?:merchant|at|from|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
+    segment.match(/(?:merchant|\bat\b|\bfrom\b|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
       ?.trim() ?? '';
   if (merchantFirst && !/^لـ?\s*sr\b/i.test(merchantFirst) && !/^\d{3,}$/.test(merchantFirst)) {
     const afterSemi = merchantFirst.split(';').slice(1).join(';').trim();
@@ -1028,6 +1047,7 @@ function extractSmsDescription(segment: string, idx: number): string {
     }
     return merchantFirst.slice(0, 120);
   }
+
   const lineBased = segment
     .split('\n')
     .map((line) => line.trim())
@@ -1036,23 +1056,29 @@ function extractSmsDescription(segment: string, idx: number): string {
         /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
         !/^\s*رصيد\s*:/i.test(line) &&
         !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|(?:إ|ا)جمالي|دولة|بطاقة|^\d{1,2}:\d{2}/i.test(line) &&
-        !/^\s*شراء\b/u.test(line) &&
-        !/^\s*حوالة/u.test(line) &&
-        !/^\s*استرداد/u.test(line),
+        !/^\s*(?:شراء|سحب|حوالة|استرداد|سداد|عبر)\b/u.test(line),
     );
   if (lineBased) return lineBased.slice(0, 120);
 
   const transferTitle = segment.match(/حوالة[^\n]{0,48}/)?.[0]?.trim();
-  if (transferTitle) return transferTitle.replace(/\s*بـ\s*SR.*$/i, '').trim().slice(0, 120);
+  if (transferTitle) return transferTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120);
+
+  const sadadTitle = segment.match(/بطاقة[^\n]{0,40}سداد[^\n]{0,40}/)?.[0]?.trim();
+  if (sadadTitle) return sadadTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120) || 'Visa settlement';
 
   const refundTitle = segment.match(/(?:استرداد|بطاقة ائتمانية استرداد)[^\n]{0,48}/)?.[0]?.trim();
   if (refundTitle) return refundTitle.slice(0, 120);
 
+  const atmTitle = segment.match(/سحب[^\n]{0,48}/)?.[0]?.trim();
+  if (atmTitle && /(صراف|atm)/i.test(atmTitle)) {
+    return atmTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120);
+  }
+
   const merchantMatch =
-    segment.match(/(?:merchant|at|from|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
+    segment.match(/(?:merchant|\bat\b|\bfrom\b|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
       ?.trim() ??
     segment
-      .match(/(?:purchase|payment|transaction)\s*(?:at|لدى)?\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]
+      .match(/(?:purchase|payment|transaction)\s*(?:\bat\b|لدى)?\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]
       ?.trim();
   const purchaseLine = segment
     .split('\n')
@@ -1090,11 +1116,11 @@ function normalizeSmsTextForParsing(smsText: string): string {
     )
     // Split before Arabic starters ONLY after a date token (never mid-line after "Apple Pay شراء").
     .replace(
-      /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})(?:[ \t]+\d{1,2}:\d{2})?[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل))/g,
+      /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})(?:[ \t]+\d{1,2}:\d{2})?[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|بطاقة))/g,
       '$1\n',
     )
     .replace(
-      /(\d{1,2}:\d{2}[ \t]+\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل))/g,
+      /(\d{1,2}:\d{2}[ \t]+\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|بطاقة))/g,
       '$1\n',
     )
     .replace(/\n{3,}/g, '\n\n')

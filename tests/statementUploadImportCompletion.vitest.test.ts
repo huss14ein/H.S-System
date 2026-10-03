@@ -21,6 +21,8 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('category: tx.category');
     expect(stmt).toContain('focus-sms-tab');
     expect(stmt).toContain('pageAction');
+    expect(stmt).toContain('financialMonthKeyFromTransactionDate');
+    expect(stmt).toContain('budgetCategoriesForTransactionDate');
   });
 
   it('SMS parser merchant-aware dedupe + amount-aware categories', () => {
@@ -37,18 +39,23 @@ describe('statementUploadImportCompletion', () => {
 
   it('Statement Upload wires SMS card routing + per-row account + import-anyway', () => {
     const stmt = read('pages/StatementUpload.tsx');
-    expect(stmt).toContain('parseSMSTransactions(smsText, selectedAccount,');
+    expect(stmt).toContain('parseSMSTransactions(smsText, fallbackAccountId,');
     expect(stmt).toContain('accounts: data?.accounts');
     expect(stmt).toContain('parseSmsCardLast4FromNote');
     expect(stmt).toContain('requireSameAccount: true');
     expect(stmt).toContain('import anyway');
     expect(stmt).toContain('accountId: e.target.value');
+    expect(stmt).toContain('Default / fallback account (optional)');
+    expect(stmt).toContain('disabled={!smsText.trim() || isProcessingFile}');
+    expect(stmt).not.toContain("alert('Please select an account')");
     const accounts = read('pages/Accounts.tsx');
     expect(accounts).toContain('lastFourDigits');
     expect(accounts).toContain('Card / account last 4');
     const routing = read('services/smsImportRouting.ts');
     expect(routing).toContain('extractSmsCardLast4');
     expect(routing).toContain('applySmsAccountRouting');
+    const prepare = read('services/statementImportPrepare.ts');
+    expect(prepare).toContain('missing account (set Card last-4 or assign in review)');
   });
 
   it('planStatementImport does not reject expenses missing budgetCategory', () => {

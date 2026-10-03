@@ -15,6 +15,7 @@ export function compareByDateDesc(aDate: DateLike, bDate: DateLike): number {
 }
 
 export type RecencyDateFields = {
+  id?: string;
   date?: string;
   transaction_date?: string;
   created_at?: string;
@@ -36,9 +37,22 @@ export function pickItemTimestamp(item: RecencyDateFields): number {
   );
 }
 
+/** Secondary recency for same calendar date: created_at / createdAt, then id. */
+function pickTieBreakTimestamp(item: RecencyDateFields): number {
+  return timestampFromDateLike(item.created_at ?? item.createdAt);
+}
+
+function compareRecencyNewestFirst(a: RecencyDateFields, b: RecencyDateFields): number {
+  const primary = pickItemTimestamp(b) - pickItemTimestamp(a);
+  if (primary !== 0) return primary;
+  const secondary = pickTieBreakTimestamp(b) - pickTieBreakTimestamp(a);
+  if (secondary !== 0) return secondary;
+  return String(b.id ?? '').localeCompare(String(a.id ?? ''), undefined, { sensitivity: 'base' });
+}
+
 /** Return a copy sorted newest → oldest using common date field names. */
 export function sortByNewestFirst<T extends RecencyDateFields>(items: readonly T[]): T[] {
-  return [...items].sort((a, b) => pickItemTimestamp(b) - pickItemTimestamp(a));
+  return [...items].sort(compareRecencyNewestFirst);
 }
 
 const PLAN_PRIORITY_RANK: Record<PlannedTrade['priority'], number> = {

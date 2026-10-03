@@ -80,7 +80,8 @@ export type SmsAccountRoutingResult = {
 
 /**
  * Assign each SMS row to the account whose last-4 matches the SMS card mask.
- * Falls back to `fallbackAccountId` when no match (or multiple matches → warning + fallback).
+ * Uses `fallbackAccountId` when no unique match; when fallback is empty, leaves accountId blank
+ * so the review table can require an explicit assignment before import.
  */
 export function applySmsAccountRouting(
   transactions: Transaction[],
@@ -90,14 +91,25 @@ export function applySmsAccountRouting(
   const warnings: string[] = [];
   const unmatched = new Set<string>();
   let matchedCount = 0;
+  let missingCardLast4Count = 0;
   const cashAccounts = accounts.filter((a) => a.type !== 'Investment');
+  const fallback = String(fallbackAccountId || '').trim();
+
+  const resolveFallbackAccountId = (tx: Transaction): string => {
+    const existing = String(tx.accountId || '').trim();
+    // Parser seeds rows with the fallback id; treat that as unset so last-4 can win.
+    if (existing && existing !== fallback) return existing;
+    return fallback;
+  };
 
   const routed = transactions.map((tx) => {
     const last4 =
       parseSmsCardLast4FromNote(tx.note) ??
       extractSmsCardLast4(`${tx.description}\n${tx.note || ''}`);
     if (!last4) {
-      return { ...tx, accountId: tx.accountId || fallbackAccountId };
+      const accountId = resolveFallbackAccountId(tx);
+      if (!accountId) missingCardLast4Count += 1;
+      return { ...tx, accountId };
     }
 
     const matches = findAccountsByCardLast4(cashAccounts, last4);
@@ -111,17 +123,25 @@ export function applySmsAccountRouting(
     }
     if (matches.length > 1) {
       warnings.push(
-        `Card ••••${last4} matches multiple accounts (${matches.map((a) => a.name).join(', ')}); using the selected account.`,
+        fallback
+          ? `Card ••••${last4} matches multiple accounts (${matches.map((a) => a.name).join(', ')}); using the fallback account.`
+          : `Card ••••${last4} matches multiple accounts (${matches.map((a) => a.name).join(', ')}); assign the account in the review table.`,
       );
     } else {
       unmatched.add(last4);
     }
     return {
       ...tx,
-      accountId: tx.accountId || fallbackAccountId,
+      accountId: resolveFallbackAccountId(tx),
       note: smsNoteWithCardLast4(tx.note, last4),
     };
   });
+
+  if (missingCardLast4Count > 0 && !fallback) {
+    warnings.push(
+      `${missingCardLast4Count} row(s) had no card last-4 in the SMS. Choose a fallback account or assign each row in review.`,
+    );
+  }
 
   const unmatchedLast4 = [...unmatched];
   if (unmatchedLast4.length) {
@@ -138,6 +158,13 @@ export function applySmsAccountRouting(
   if (distinctCards.size > 1) {
     warnings.push(
       `This paste includes ${distinctCards.size} different cards (${[...distinctCards].map((x) => `••••${x}`).join(', ')}). Review each row’s account before importing.`,
+    );
+  }
+
+  const missingAccountCount = routed.filter((t) => !String(t.accountId || '').trim()).length;
+  if (missingAccountCount > 0) {
+    warnings.push(
+      `${missingAccountCount} row(s) have no account assigned. Set Card last-4 on Accounts, choose a fallback account, or pick an account per row before importing.`,
     );
   }
 

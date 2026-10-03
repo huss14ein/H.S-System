@@ -25,6 +25,7 @@ import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
 import {
   financialMonthKey,
+  financialMonthKeyFromTransactionDate,
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
 import { budgetCardCategoryNames } from '../utils/budgetCardCategories';
@@ -85,12 +86,17 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   const selectedAccountCurrency = selectedAccountObj?.currency === 'USD' ? 'USD' : 'SAR';
 
   const monthStartDay = useMemo(() => resolveMonthStartDayFromData(data), [data]);
+  const finalizedNewCategoryNames = useMemo(
+    () =>
+      (data?.budgetRequests ?? [])
+        .filter((r) => r.status === 'Finalized' && r.requestType === 'NewCategory')
+        .map((r) => String(r.categoryName || '').trim())
+        .filter(Boolean),
+    [data?.budgetRequests],
+  );
+  /** Current financial-month cards — used as a fallback when a row has no date. */
   const budgetCategoryOptions = useMemo(() => {
     const viewKey = financialMonthKey(new Date(), monthStartDay);
-    const finalizedNewCategoryNames = (data?.budgetRequests ?? [])
-      .filter((r) => r.status === 'Finalized' && r.requestType === 'NewCategory')
-      .map((r) => String(r.categoryName || '').trim())
-      .filter(Boolean);
     return budgetCardCategoryNames({
       budgets: data?.budgets ?? [],
       viewKey,
@@ -98,7 +104,22 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       userRole: 'Admin',
       finalizedNewCategoryNames,
     });
-  }, [data?.budgets, data?.budgetRequests, monthStartDay]);
+  }, [data?.budgets, finalizedNewCategoryNames, monthStartDay]);
+  /** Budget cards for the financial month that contains the transaction date (not "today"). */
+  const budgetCategoriesForTransactionDate = useCallback(
+    (ymd: string) => {
+      const dateStr = String(ymd || '').trim() || new Date().toISOString().slice(0, 10);
+      const viewKey = financialMonthKeyFromTransactionDate(dateStr, monthStartDay);
+      return budgetCardCategoryNames({
+        budgets: data?.budgets ?? [],
+        viewKey,
+        monthStartDay,
+        userRole: 'Admin',
+        finalizedNewCategoryNames,
+      });
+    },
+    [data?.budgets, finalizedNewCategoryNames, monthStartDay],
+  );
   const transactionCategoryOptions = useMemo(() => {
     const existing = (data?.transactions ?? []).map((t) => String(t.category || '').trim()).filter(Boolean);
     const extracted = extractedTransactions.map((t) => String(t.category || '').trim()).filter(Boolean);
@@ -113,9 +134,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   }, [selectedAccountObj, activeTab]);
 
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
-    const budgetCategoryNames = budgetCategoryOptions;
     const userHistory = data?.transactions ?? [];
     return rows.map((tx) => {
+      const budgetCategoryNames = budgetCategoriesForTransactionDate(tx.date);
       const mapped = categorizeImportedTransaction(tx, { budgetCategoryNames, userHistory });
       return {
         ...tx,
@@ -123,7 +144,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         budgetCategory: mapped.budgetCategory ?? tx.budgetCategory,
       };
     });
-  }, [budgetCategoryOptions, data?.transactions]);
+  }, [budgetCategoriesForTransactionDate, data?.transactions]);
   const setupValidationWarnings = useMemo(() => {
     const warnings: string[] = [];
     if ((activeTab === 'bank' || activeTab === 'sms') && bankAccounts.length === 0) {
@@ -270,10 +291,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       return;
     }
 
-    if (!selectedAccount) {
-      alert('Please select an account');
-      return;
-    }
     if (smsExtractLockRef.current) return;
     smsExtractLockRef.current = true;
 
@@ -286,7 +303,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
 
     try {
       setProcessingProgress(30);
-      const result = await parseSMSTransactions(smsText, selectedAccount, {
+      const fallbackAccountId = selectedAccount || '';
+      const result = await parseSMSTransactions(smsText, fallbackAccountId, {
         accounts: data?.accounts ?? [],
       });
       const mapped = enrichTransactionsWithBudgetMapping(result.transactions);
@@ -298,14 +316,18 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       
       if (mapped.length > 0) {
         try {
+          const primaryAccountId =
+            mapped.find((t) => String(t.accountId || '').trim())?.accountId ||
+            fallbackAccountId ||
+            null;
           const statement = await commitParsedStatementFromUpload({
             file: new File([smsText], `sms-transactions-${Date.now()}.txt`, { type: 'text/plain' }),
             bankInfo: {
               bankName: 'SMS Import',
-              accountNumber: selectedAccount || 'Unknown',
+              accountNumber: primaryAccountId || 'SMS (card last-4)',
               accountType: selectedAccountTypeForStatement,
             },
-            accountId: selectedAccount || null,
+            accountId: primaryAccountId,
             bankTransactions: mapped,
           });
           setCurrentStatementId(statement.id);
@@ -685,13 +707,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         if (i !== index) return tx;
         const next = { ...tx, ...patch };
         if (
-          Object.prototype.hasOwnProperty.call(patch, 'description') &&
+          (Object.prototype.hasOwnProperty.call(patch, 'description') ||
+            Object.prototype.hasOwnProperty.call(patch, 'date')) &&
           !Object.prototype.hasOwnProperty.call(patch, 'category') &&
           !Object.prototype.hasOwnProperty.call(patch, 'budgetCategory')
         ) {
-          const budgetCategoryNames = Array.from(
-            new Set((data?.budgets ?? []).map((b) => String(b.category || '').trim()).filter(Boolean)),
-          );
+          const budgetCategoryNames = budgetCategoriesForTransactionDate(next.date);
           const mapped = categorizeImportedTransaction(next, {
             budgetCategoryNames,
             userHistory: data?.transactions ?? [],
@@ -968,25 +989,30 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
               </p>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2" htmlFor="sms-account-select">
-                  Select Account
+                  Default / fallback account (optional)
                 </label>
                 <select
                   id="sms-account-select"
                   value={selectedAccount}
                   onChange={(e) => setSelectedAccount(e.target.value)}
                   className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
-                  aria-label="Select account for SMS transactions"
+                  aria-label="Optional fallback account for SMS transactions"
                 >
-                  <option value="">Select an account...</option>
+                  <option value="">Auto-detect from card last 4…</option>
                   {bankAccounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>{acc.name}</option>
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name}
+                      {acc.lastFourDigits || acc.platformDetails?.cardLast4
+                        ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
+                        : ''}
+                    </option>
                   ))}
                 </select>
                 {bankAccounts.length === 0 && (
                   <p className="mt-1 text-sm text-amber-700">Add bank accounts in Settings or Accounts first.</p>
                 )}
                 <p className="mt-2 text-xs text-slate-500">
-                  Tip: set each account’s <strong>Card / account last 4</strong> on the Accounts page so multi-card SMS pastes auto-route (e.g. 7365 vs 5280). You can still change the account per row in review.
+                  Rows route automatically when each account’s <strong>Card / account last 4</strong> matches the SMS (بطاقة / عبر / من). Use this fallback only when a message has no card digits or the card is not configured. You can still change the account per row in review.
                 </p>
               </div>
 
@@ -1009,7 +1035,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
               <button
                 type="button"
                 onClick={handleSMSPaste}
-                disabled={!smsText.trim() || !selectedAccount || isProcessingFile}
+                disabled={!smsText.trim() || isProcessingFile}
                 className="w-full px-4 py-3 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed font-medium"
               >
                 {isProcessingFile ? 'Processing...' : 'Extract Transactions'}
@@ -1303,6 +1329,9 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const cardLast4 = parseSmsCardLast4FromNote(tx.note);
                         const rowAccount = bankAccounts.find((a) => a.id === tx.accountId);
                         const rowCurrency = rowAccount?.currency === 'USD' ? 'USD' : selectedAccountCurrency;
+                        const rowBudgetOptions = budgetCategoriesForTransactionDate(tx.date);
+                        const budgetSelectOptions =
+                          rowBudgetOptions.length > 0 ? rowBudgetOptions : budgetCategoryOptions;
                         return (
                           <tr
                             key={index}
@@ -1328,9 +1357,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                               <select
                                 value={tx.accountId || ''}
                                 onChange={(e) => handleExtractedTransactionEdit(index, { accountId: e.target.value })}
-                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                className={`w-full rounded-md border px-2 py-1 text-sm ${
+                                  tx.accountId ? 'border-slate-300' : 'border-amber-400 bg-amber-50'
+                                }`}
                                 aria-label={`Account for ${tx.description}`}
                               >
+                                <option value="">Select account…</option>
                                 {bankAccounts.map((acc) => (
                                   <option key={acc.id} value={acc.id}>
                                     {acc.name}
@@ -1366,7 +1398,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                 className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                               >
                                 <option value="">No budget link</option>
-                                {budgetCategoryOptions.map((opt) => (
+                                {budgetSelectOptions.map((opt) => (
                                   <option key={opt} value={opt}>{opt}</option>
                                 ))}
                               </select>

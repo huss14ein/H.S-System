@@ -89,6 +89,40 @@ describe('smsImportRouting', () => {
     expect(routed.warnings.some((w) => /2 different cards/i.test(w))).toBe(true);
     expect(routed.warnings.some((w) => /No account last-4/i.test(w))).toBe(true);
   });
+
+  it('routes uniquely matched cards with empty fallback and leaves unmatched blank', () => {
+    const accounts: Account[] = [
+      { id: 'acc-7365', name: 'Visa 7365', type: 'Checking', balance: 1000, lastFourDigits: '7365' },
+    ];
+    const txs: Transaction[] = [
+      {
+        id: '1',
+        date: '2026-09-03',
+        description: 'ALJAZIRA',
+        amount: -500,
+        category: 'Shopping',
+        accountId: '',
+        type: 'expense',
+        note: 'sms:card=7365',
+      },
+      {
+        id: '2',
+        date: '2026-09-06',
+        description: 'MADA',
+        amount: -20,
+        category: 'Shopping',
+        accountId: '',
+        type: 'expense',
+        note: 'sms:card=8529',
+      },
+    ];
+    const routed = applySmsAccountRouting(txs, accounts, '');
+    expect(routed.matchedCount).toBe(1);
+    expect(routed.transactions.find((t) => t.description === 'ALJAZIRA')?.accountId).toBe('acc-7365');
+    expect(routed.transactions.find((t) => t.description === 'MADA')?.accountId).toBe('');
+    expect(routed.unmatchedLast4).toEqual(['8529']);
+    expect(routed.warnings.some((w) => /no account assigned/i.test(w))).toBe(true);
+  });
 });
 
 describe('parseSMSTransactions card routing', () => {
