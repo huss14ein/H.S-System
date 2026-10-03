@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildAiPersonalWealthGrounding,
   buildCategorySuggestionGrounding,
+  buildAiPageDelta,
 } from '../services/aiPersonalWealthGrounding';
 import type { FinancialData } from '../types';
 
@@ -25,6 +26,26 @@ describe('aiPersonalWealthGrounding', () => {
     expect(g.promptBlock).toContain('FINOVA GROUND TRUTH');
     expect(g.promptBlock).toContain('Headline net worth');
     expect(g.recentTxLines.length).toBeGreaterThan(0);
+  });
+
+  it('exposes investor-copilot fields (liquidity, concentration, dividends, debt)', () => {
+    const g = buildAiPersonalWealthGrounding({ data: minimalData, exchangeRate: 3.75 });
+    expect(typeof g.investableCashSar).toBe('number');
+    expect(typeof g.emergencyFundMonths).toBe('number');
+    expect(typeof g.topConcentrationPct).toBe('number');
+    expect(typeof g.platformsDailyPnLSar).toBe('number');
+    expect(typeof g.dividendRunRateSar).toBe('number');
+    expect(typeof g.totalDebtSar).toBe('number');
+    expect(typeof g.presentValueSar).toBe('number');
+    expect(g.promptBlock).toContain('Investable / tradable platform cash');
+    expect(g.promptBlock).toContain('Emergency fund months');
+    expect(g.promptBlock).toContain('Top holding concentration');
+  });
+
+  it('buildAiPageDelta emits page-scoped block', () => {
+    const delta = buildAiPageDelta('investments', minimalData, { concentrationWarnings: ['Top holding 30%'] });
+    expect(delta).toContain('PAGE DELTA (investments)');
+    expect(delta).toContain('concentrationWarnings');
   });
 
   it('buildCategorySuggestionGrounding surfaces prior labels for similar descriptions', () => {

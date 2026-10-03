@@ -46,6 +46,7 @@ import Modal from '../components/Modal';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from '../components/AiProxyUnavailableHint';
 import SalaryInvestmentSummaryCard from '../components/SalaryInvestmentSummaryCard';
+import AIAdvisor from '../components/AIAdvisor';
 const getRatingColors = (rating: ReportCardItem['rating']) => {
     switch (rating) {
         case 'Excellent': return { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-500', icon: <CheckCircleIcon className="h-6 w-6 text-green-500" /> };
@@ -671,6 +672,13 @@ const Summary: React.FC<SummaryProps> = ({ setActivePage, triggerPageAction, pag
                     </div>
                 )}
             </div>
+
+            <AIAdvisor
+                pageContext="summary"
+                title="Investor Copilot"
+                subtitle="Wealth-grounded advice with confirmable next steps"
+                buttonLabel="Get summary insights"
+            />
         </PageLayout>
     );
 };

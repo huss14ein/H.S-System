@@ -178,6 +178,17 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
         sarPerUsd,
         portfolioName: selectedPortfolio.name,
         simulatedPrices: liveQuotePrices,
+        data,
+        insightOpts: {
+          exchangeRate: sarPerUsd,
+          getAvailableCashForAccount,
+          simulatedPrices,
+          page: 'rebalancer',
+        },
+        deployableCashSar: canonical?.recoveryPlan?.deployableCashSar,
+        planningNote: canonical
+          ? `Canonical planning deployable cash ${Math.round(canonical.recoveryPlan?.deployableCashSar || 0).toLocaleString()} SAR.`
+          : undefined,
       });
       if (!plan || plan.trim().length === 0) {
         setPlanError('AI returned an empty plan. Please try again.');
@@ -189,7 +200,7 @@ const AIRebalancerView: React.FC<AIRebalancerViewProps> = ({ onNavigateToTab: _o
     } finally {
       setIsLoading(false);
     }
-  }, [selectedPortfolio, riskProfile, trackAction, portfolioBookCurrency, sarPerUsd, liveQuotePrices, totalPortfolioValueBook]);
+  }, [selectedPortfolio, riskProfile, trackAction, portfolioBookCurrency, sarPerUsd, liveQuotePrices, totalPortfolioValueBook, data, getAvailableCashForAccount, simulatedPrices, canonical]);
 
   const runArabicTranslation = useCallback(async () => {
     if (!rebalancingPlan.trim() || !aiActionsEnabled) return;

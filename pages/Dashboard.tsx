@@ -33,6 +33,7 @@ import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, tradableCashBucketToSAR } from '../utils/currencyMath';
 import { scheduleClearPageAction } from '../utils/scheduleClearPageAction';
 import { openPeriodFinancialReportModal } from '../utils/periodFinancialReportOpen';
+import { openLiveAdvisor } from '../utils/openLiveAdvisor';
 import { getSarPerUsdForCalendarDay } from '../services/fxDailySeries';
 import { supabase } from '../services/supabaseClient';
 import { tryAutoCaptureNetWorthSnapshot } from '../services/netWorthSnapshotCapture';
@@ -694,6 +695,14 @@ const DashboardContent: React.FC<{
                     onClick={() => openPeriodFinancialReportModal()}
                 >
                     Period Financial Report
+                </button>
+                <button
+                    type="button"
+                    className="btn-outline text-sm inline-flex items-center gap-1.5"
+                    onClick={() => openLiveAdvisor()}
+                    title="Open Live Advisor copilot"
+                >
+                    Ask Copilot
                 </button>
             </div>
 

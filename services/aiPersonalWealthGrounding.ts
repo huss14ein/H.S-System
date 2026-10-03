@@ -6,7 +6,7 @@ import type { Budget, FinancialData, Holding } from '../types';
 import { toSAR } from '../utils/currencyMath';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
-import { computePersonalHeadlineNetWorthSar } from './personalNetWorth';
+import { computePersonalHeadlineNetWorthSar, computePersonalNetWorthBreakdownSAR } from './personalNetWorth';
 import { computeDashboardKpiSnapshot, financialMonthNetCashflowSar } from './dashboardKpiSnapshot';
 import { presentHeadlineInvestmentGrowth } from './extendedMetricsPresentation';
 import { formatGoalsProgressForPrompt } from './goalResolvedTotals';
@@ -19,11 +19,18 @@ import {
 } from '../utils/financialMonth';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { sortByNewestFirst } from '../utils/sortRecency';
-import { getPersonalTransactions, getPersonalSukukPositions } from '../utils/wealthScope';
+import {
+  getPersonalTransactions,
+  getPersonalSukukPositions,
+  getPersonalLiabilities,
+  getPersonalAccounts,
+} from '../utils/wealthScope';
 import type { SimulatedPriceMap } from './investmentPlatformCardMetrics';
 import { sumRewardsFiatSar, rewardsExpiringWithinDays } from './rewards/rewardsDomain';
 import { buildAvailableLiquiditySnapshot } from './availableLiquidity';
 import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
+import { sumTradableCashSarFromInvestmentAccounts } from './investmentCashLedger';
+import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
 
 export type AiGroundingBuildOptions = {
   data: FinancialData;
@@ -48,13 +55,42 @@ export type AiPersonalWealthGrounding = {
   fundedNotDeployedSar: number;
   roiPct: number;
   netInvestedSar: number;
+  /** Present value of personal investment exposure (SAR). */
+  presentValueSar: number;
   principalFullyRecovered: boolean;
   overspentBudgetLines: string[];
   goalsProgress: string;
   topHoldingsLines: string[];
   recentTxLines: string[];
+  /** Active liability / debt total (SAR). */
+  totalDebtSar: number;
+  /** Tradable cash on investment accounts (SAR). */
+  investableCashSar: number;
+  /** Months of essential expenses covered by liquid cash. */
+  emergencyFundMonths: number;
+  /** Largest holding as % of investment exposure (0–100). */
+  topConcentrationPct: number;
+  /** Sum of platforms daily P/L (SAR). */
+  platformsDailyPnLSar: number;
+  /** Hint when credit-card / loan min-payments look material. */
+  unpaidInstallmentsHint: string | null;
+  /** Rough trailing dividend income run-rate (SAR) when dividend txs exist. */
+  dividendRunRateSar: number;
   promptBlock: string;
 };
+
+export type AiPageDeltaPage =
+  | 'investments'
+  | 'cashflow'
+  | 'plan'
+  | 'liabilities'
+  | 'goals'
+  | 'zakat'
+  | 'recovery'
+  | 'rebalancer'
+  | 'dashboard'
+  | 'summary'
+  | string;
 
 const fmt = (n: number) =>
   Number.isFinite(n) ? Math.round(n).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '0';
@@ -162,12 +198,89 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   const presentedRoi = presentHeadlineInvestmentGrowth(snap?.headlineInvestmentExposure);
   const roiPct = presentedRoi?.roiPct ?? (snap ? snap.roi * 100 : 0);
   const salaryInvestment = computeSalaryInvestmentKpis(data, exchangeRate);
+
+  const nwOptions = getCash ? { getAvailableCashForAccount: getCash, simulatedPrices } : { simulatedPrices };
+  const breakdown = computePersonalNetWorthBreakdownSAR(data, exchangeRate, nwOptions);
+  const totalDebtSar = breakdown.totalDebt ?? 0;
+  const scopeAccounts = getPersonalAccounts(data);
+  const allAccounts = data.accounts ?? scopeAccounts;
+  const investableCashSar = sumTradableCashSarFromInvestmentAccounts(
+    scopeAccounts,
+    allAccounts,
+    headline.sarPerUsd,
+  );
+
+  const emergencyFundMonths =
+    cf.monthlyExpensesSar > 0 ? (snap?.liquidCashSar ?? 0) / cf.monthlyExpensesSar : 0;
+
+  let platformsDailyPnLSar = 0;
+  let investmentsTotalSar = presentedRoi?.presentValueSar ?? snap?.headlineInvestmentExposure?.totalExposureSar ?? 0;
+  if (getCash) {
+    try {
+      const exposure = computeHeadlinePersonalInvestmentRoiDecimal(
+        data,
+        headline.sarPerUsd,
+        getCash,
+        simulatedPrices,
+      );
+      platformsDailyPnLSar = Number(exposure.platformsDailyPnLSar) || 0;
+      investmentsTotalSar = exposure.totalExposureSar || investmentsTotalSar;
+    } catch {
+      /* keep zeros */
+    }
+  }
+
+  const topHoldingSar = (() => {
+    const portfolios =
+      (data as { personalInvestments?: { holdings?: Holding[] }[] }).personalInvestments ??
+      data.investments ??
+      [];
+    let max = 0;
+    for (const p of portfolios) {
+      const book = resolveInvestmentPortfolioCurrency(p);
+      for (const h of p.holdings ?? []) {
+        const curVal = effectiveHoldingValueInBookCurrency(h, book, simulatedPrices, headline.sarPerUsd);
+        const valueSar = toSAR(curVal, book, headline.sarPerUsd);
+        if (valueSar > max) max = valueSar;
+      }
+    }
+    return max;
+  })();
+  const topConcentrationPct =
+    investmentsTotalSar > 0 ? Math.min(100, (topHoldingSar / investmentsTotalSar) * 100) : 0;
+
+  const liabilities = getPersonalLiabilities(data).filter((l) => l.status === 'Active' && l.type !== 'Receivable');
+  const minPaySum = liabilities.reduce((s, l) => s + (Number(l.minPayment) || 0), 0);
+  const unpaidInstallmentsHint =
+    minPaySum > 0
+      ? `Active liabilities with min payments totaling ~${fmt(minPaySum)} SAR/mo across ${liabilities.length} account(s).`
+      : liabilities.length > 0
+        ? `${liabilities.length} active debt account(s); min-payment schedule not set on all.`
+        : null;
+
+  const yearStart = `${now.getFullYear()}-01-01`;
+  let dividendRunRateSar = 0;
+  for (const t of data.investmentTransactions ?? []) {
+    if (String(t.type || '').toLowerCase() !== 'dividend') continue;
+    const d = String(t.date || '').slice(0, 10);
+    if (d < yearStart) continue;
+    const amt = Math.abs(Number((t as { total?: number }).total) || Number((t as { amount?: number }).amount) || 0);
+    dividendRunRateSar += amt;
+  }
+
   const promptBlock = [
     '=== FINOVA GROUND TRUTH (use only these figures for SAR amounts; do not invent) ===',
     `As-of: ${asOfDate}`,
     `Financial month: ${finLabel}`,
     `Headline net worth (SAR): ${fmt(headline.netWorth)}`,
     `Liquid cash (SAR): ${fmt(snap?.liquidCashSar ?? 0)}`,
+    `Investable / tradable platform cash (SAR): ${fmt(investableCashSar)}`,
+    `Total debt (SAR): ${fmt(totalDebtSar)}`,
+    `Emergency fund months (liquid / month expenses): ${emergencyFundMonths.toFixed(1)}`,
+    `Top holding concentration: ${topConcentrationPct.toFixed(1)}% of investments`,
+    `Platforms daily P/L (SAR): ${fmt(platformsDailyPnLSar)}`,
+    unpaidInstallmentsHint ? `Liability payment hint: ${unpaidInstallmentsHint}` : null,
+    dividendRunRateSar > 0 ? `YTD dividend run-rate (SAR, recorded): ${fmt(dividendRunRateSar)}` : null,
     `Available liquidity (SAR): ${fmt(liq.availableLiquiditySar)} (reserved ${fmt(liq.reservedLiquiditySar)}; EF floor ${fmt(liq.emergencyFundFloorSar)})`,
     `Rewards memo (SAR, not cash/Zakat): ${fmt(rewardsSar)}${expiringN ? `; ${expiringN} lot(s) expire ≤30d` : ''}`,
     `This financial month — income ${fmt(cf.monthlyIncomeSar)} SAR, expenses ${fmt(cf.monthlyExpensesSar)} SAR, net ${fmt(cf.monthlyPnLSar)} SAR`,
@@ -181,7 +294,9 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     sukukLines.length ? `Direct Sukuk contracts: ${sukukLines.join('; ')}` : 'Direct Sukuk contracts: none',
     recentTxLines.length ? `Recent transactions (newest first): ${recentTxLines.join(' | ')}` : 'Recent transactions: none',
     '=== END GROUND TRUTH ===',
-  ].join('\n');
+  ]
+    .filter((x): x is string => !!x)
+    .join('\n');
 
   return {
     sarPerUsd: headline.sarPerUsd,
@@ -197,13 +312,60 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
     fundedNotDeployedSar: salaryInvestment?.fundedNotDeployedSar ?? 0,
     roiPct,
     netInvestedSar: presentedRoi?.netInvestedSar ?? 0,
+    presentValueSar: investmentsTotalSar,
     principalFullyRecovered: presentedRoi?.principalFullyRecovered === true,
     overspentBudgetLines,
     goalsProgress,
     topHoldingsLines: holdings,
     recentTxLines,
+    totalDebtSar,
+    investableCashSar,
+    emergencyFundMonths,
+    topConcentrationPct,
+    platformsDailyPnLSar,
+    unpaidInstallmentsHint,
+    dividendRunRateSar,
     promptBlock,
   };
+}
+
+/**
+ * Page-specific delta pack appended after wealth ground truth.
+ * Keep short — page coaches add only facts visible on that surface.
+ */
+export function buildAiPageDelta(
+  page: AiPageDeltaPage,
+  data: FinancialData,
+  extras?: Record<string, unknown> | null,
+): string {
+  const lines: string[] = [`=== PAGE DELTA (${page}) ===`];
+  if (extras) {
+    for (const [k, v] of Object.entries(extras)) {
+      if (v == null) continue;
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+        lines.push(`${k}: ${v}`);
+      } else if (Array.isArray(v)) {
+        lines.push(`${k}: ${JSON.stringify(v).slice(0, 800)}`);
+      } else if (typeof v === 'object') {
+        lines.push(`${k}: ${JSON.stringify(v).slice(0, 800)}`);
+      }
+    }
+  }
+  if (page === 'liabilities') {
+    const debts = getPersonalLiabilities(data)
+      .filter((l) => l.status === 'Active' && l.type !== 'Receivable')
+      .slice(0, 8)
+      .map((l) => `${l.name} (${l.type}): ${fmt(Number(l.amount) || 0)} min ${fmt(Number(l.minPayment) || 0)}`);
+    if (debts.length) lines.push(`Debt lines: ${debts.join('; ')}`);
+  }
+  if (page === 'goals') {
+    lines.push(`Goals count: ${(data.goals ?? []).length}`);
+  }
+  if (page === 'cashflow') {
+    lines.push(`Budgets count: ${(data.budgets ?? []).length}`);
+  }
+  lines.push('=== END PAGE DELTA ===');
+  return lines.join('\n');
 }
 
 export type CategorySuggestionGrounding = {

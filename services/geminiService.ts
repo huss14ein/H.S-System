@@ -27,11 +27,21 @@ import { appendSarGroundingNotice, auditSarGrounding, flattenAiContentsForGround
 import {
     buildAiPersonalWealthGrounding,
     buildCategorySuggestionGrounding,
+    buildAiPageDelta,
     formatAnalysisChartsForPrompt,
     type AiGroundingBuildOptions,
     type AnalysisChartRow,
     type TrendChartRow,
 } from './aiPersonalWealthGrounding';
+import {
+    actionCardsPromptFooter,
+    buildRuleBasedActionCards,
+    feedItemToActionCard,
+    formatInsightWithActionCards,
+    mergeAiActionCards,
+    splitInsightAndActionCards,
+    type AiActionCard,
+} from './aiActionCards';
 
 /** Fallback when no `buildAiPersonalWealthGrounding` opts — cache keys should use `g.sarPerUsd` instead. */
 function sarPerUsdForResolvedGoals(data: FinancialData | null | undefined): number {
@@ -112,7 +122,9 @@ ${PERSONAL_WEALTH_SCOPE}
 
 ${AI_DATA_INTEGRITY_RULES}
 
-Live chat discipline: Lead with one decisive sentence, then **2–3** short bullets unless the user asks for depth. Markdown only (###, **). When the question depends on Finova-held data, **call tools** and cite **only** numbers that appear in tool results or prior tool JSON—never invent positions. Prefer sustainable wealth framing (liquidity cushion, concentration, diversification, fee/behavior drag) when data supports it. Educational decision-support only—not legal, tax, or regulated personalized mandates. No HTML; no filler.`;
+Live chat discipline: Lead with one decisive sentence of advice, then **2–3** short bullets with suggestions, and end with a preferred recommendation. Markdown only (###, **). When the question depends on Finova-held data, **call tools** and cite **only** numbers that appear in tool results or prior tool JSON—never invent positions. Prefer sustainable wealth framing (liquidity cushion, concentration, diversification, fee/behavior drag, goals funding, trading size vs investable cash) when data supports it. Educational decision-support only—not legal, tax, or regulated personalized mandates. No HTML; no filler.
+
+When recommending an in-app next step, append a fenced JSON block with actionCards (kind wealth|goal|trade|budget|debt|recovery|zakat|ops) so the UI can offer confirmable CTAs. Propose only — never claim you wrote the ledger.`;
     if (language === 'ar') {
         return `${base}
 
@@ -946,6 +958,12 @@ export type AiInsightOptions = {
   exchangeRate?: number;
   getAvailableCashForAccount?: AiGroundingBuildOptions['getAvailableCashForAccount'];
   simulatedPrices?: AiGroundingBuildOptions['simulatedPrices'];
+  /** Optional page key for page-delta + rule card seeding. */
+  page?: string;
+  /** Extra page-local facts for buildAiPageDelta. */
+  pageExtras?: Record<string, unknown>;
+  /** Optional full ledger for wealthPromptWithPageDelta when the specialist already has data. */
+  data?: FinancialData;
 };
 
 /** Optional grounding FX — returns null when opts/exchangeRate omitted or invalid. */
@@ -966,24 +984,51 @@ function buildWealthGroundingOrNull(data: FinancialData, opts?: AiInsightOptions
   });
 }
 
+function wealthPromptWithPageDelta(data: FinancialData, opts?: AiInsightOptions | null): {
+  g: ReturnType<typeof buildAiPersonalWealthGrounding>;
+  block: string;
+  seedCards: AiActionCard[];
+} | null {
+  const g = buildWealthGroundingOrNull(data, opts);
+  if (!g) return null;
+  const page = opts?.page;
+  const delta = page ? `\n${buildAiPageDelta(page, data, opts?.pageExtras)}` : '';
+  const seedCards = buildRuleBasedActionCards(g, data, page);
+  return { g, block: `${g.promptBlock}${delta}`, seedCards };
+}
+
+function withAdviceAndActionCards(
+  markdown: string,
+  seedCards: AiActionCard[],
+  modelCards?: AiActionCard[],
+): string {
+  const split = splitInsightAndActionCards(markdown);
+  const cards = mergeAiActionCards(modelCards ?? [], split.actionCards, seedCards);
+  return formatInsightWithActionCards(split.markdown || markdown, cards);
+}
+
 const AI_FX_REQUIRED_MSG =
   'Canonical exchange rate is required for AI wealth insights. Pass useCanonicalSpotFx() / useCanonicalFinancialMetrics().sarPerUsd.';
 
+export type { AiActionCard };
+
 export const getAIFeedInsights = async (data: FinancialData, opts?: AiInsightOptions): Promise<FeedItem[]> => {
-    const g = buildWealthGroundingOrNull(data, opts);
-    if (!g) {
+    const pack = wealthPromptWithPageDelta(data, { ...opts, page: opts?.page ?? 'dashboard' });
+    if (!pack) {
         console.warn('getAIFeedInsights:', AI_FX_REQUIRED_MSG);
         return [];
     }
+    const { g, block, seedCards } = pack;
     const resolvedFp = resolvedGoalAmountsFingerprint(data, g.sarPerUsd);
-    const cacheKey = `getAIFeedInsights:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${(data?.budgets ?? []).length}:${resolvedFp}`;
+    const cacheKey = `getAIFeedInsights:v3:${g.netWorthSar}:${g.monthlyPnLSar}:${(data?.budgets ?? []).length}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
 
     try {
-        const prompt = `You are Finova AI. Return 4–5 feed items as JSON. Each title = one punchy line; each description = one sentence citing a **specific number from GROUND TRUTH only** (SAR amounts must match supplied figures).
-${g.promptBlock}
-Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (one sentence, actionable), emoji (single). Prioritize the highest-impact issue this month (budget pressure, negative P&L, goal gap, concentration). Do not invent metrics.`;
+        const prompt = `You are Finova AI Investor Copilot. Return 4–5 feed items as JSON. Each title = one punchy advice line; each description = one sentence citing a **specific number from GROUND TRUTH only** (SAR amounts must match supplied figures) plus a clear recommendation.
+${block}
+${actionCardsPromptFooter(seedCards)}
+Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (one sentence, actionable), emoji (single), optional actionCards array (0–1 card per item with kind/severity/title/rationale/cta). Prioritize the highest-impact issue this month (budget pressure, negative P&L, goal gap, concentration, idle cash, debt). Do not invent metrics.`;
 
         const response = await invokeAI({
             model: FAST_MODEL,
@@ -1005,11 +1050,37 @@ Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (on
             }
         });
         const items = robustJsonParse(response.text);
-        const result = Array.isArray(items) ? items : [];
+        let result = (Array.isArray(items) ? items : []) as FeedItem[];
+        if (result.length === 0 && seedCards.length) {
+            result = seedCards.slice(0, 4).map((c) => ({
+                type: (c.kind === 'budget' ? 'BUDGET' : c.kind === 'goal' ? 'GOAL' : c.kind === 'trade' || c.kind === 'recovery' ? 'INVESTMENT' : 'SAVINGS') as FeedItem['type'],
+                title: c.title,
+                description: c.rationale,
+                emoji: c.kind === 'budget' ? '⚠️' : c.kind === 'goal' ? '🎯' : '💡',
+            }));
+        }
         setToCache(cacheKey, result);
         return result;
     } catch (error) {
         console.error("Error fetching AI Feed insights:", error);
+        if (seedCards.length) {
+            return seedCards.slice(0, 4).map((c, i) => {
+                const fi = feedItemToActionCard(
+                    {
+                        type: c.kind === 'budget' ? 'BUDGET' : c.kind === 'goal' ? 'GOAL' : c.kind === 'trade' ? 'INVESTMENT' : 'SAVINGS',
+                        title: c.title,
+                        description: c.rationale,
+                    },
+                    i,
+                );
+                return {
+                    type: (fi.kind === 'budget' ? 'BUDGET' : fi.kind === 'goal' ? 'GOAL' : fi.kind === 'trade' ? 'INVESTMENT' : 'SAVINGS') as FeedItem['type'],
+                    title: c.title,
+                    description: `${c.rationale}${c.rulesBased ? ' (Rules-based)' : ''}`,
+                    emoji: '💡',
+                };
+            });
+        }
         throw error;
     }
 };
@@ -1017,40 +1088,48 @@ Each item: type (BUDGET|GOAL|INVESTMENT|SAVINGS), title (short), description (on
 
 /** Dashboard / wealth overview — uses canonical headline NW and financial-month cashflow. */
 export const getAIDashboardInsight = async (data: FinancialData, opts?: AiInsightOptions): Promise<string> => {
-    const g = buildWealthGroundingOrNull(data, opts);
-    if (!g) return AI_FX_REQUIRED_MSG;
-    const cacheKey = `getAIDashboardInsight:v3:${g.netWorthSar}:${g.monthlyPnLSar}:${g.roiPct}:${g.netInvestedSar}:${g.principalFullyRecovered}`;
+    const pack = wealthPromptWithPageDelta(data, { ...opts, page: opts?.page ?? 'dashboard' });
+    if (!pack) return AI_FX_REQUIRED_MSG;
+    const { g, block, seedCards } = pack;
+    const cacheKey = `getAIDashboardInsight:v4:${g.netWorthSar}:${g.monthlyPnLSar}:${g.roiPct}:${g.netInvestedSar}:${g.principalFullyRecovered}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
 
     try {
-        const prompt = `You are Finova AI, expert personal wealth advisor. Write a brief Markdown insight using **only** GROUND TRUTH figures for SAR amounts.
+        const prompt = `You are Finova AI Investor Copilot. Write brief Markdown advice using **only** GROUND TRUTH figures for SAR amounts.
 
-${g.promptBlock}
+${block}
 
 ### Overall
 One sentence on financial health this financial month.
 
-### Key Highlights
-- 2 bullets with exact SAR or % from ground truth (liquid cash, P&L, ROI, goals).
+### Advice
+- 2 bullets with exact SAR or % from ground truth (liquid cash, P&L, ROI, goals, concentration).
 
-### Areas to Watch
-- 1–2 constructive bullets (budget pressure lines, expense trend). No invented data.
+### Suggestions
+- 1–2 constructive options (budget, deploy cash, fund goals, trim concentration).
 
-### Next step
-- One actionable checkpoint tied to the data above.
-Markdown only.`;
+### Recommendation
+- One preferred next Finova action tied to the data above.
+Markdown only.
+${actionCardsPromptFooter(seedCards)}`;
 
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
-            groundingAuditExtra: g.promptBlock,
+            groundingAuditExtra: block,
         });
-        const result = response.text || 'Could not retrieve AI analysis.';
+        const result = withAdviceAndActionCards(response.text || 'Could not retrieve AI analysis.', seedCards);
         setToCache(cacheKey, result);
         return result;
-    } catch (error) {
-        return formatAiError(error);
+    } catch {
+        const fallbackMd = [
+          '### Advice',
+          `- Net worth ${Math.round(g.netWorthSar).toLocaleString()} SAR; month P&L ${Math.round(g.monthlyPnLSar).toLocaleString()} SAR.`,
+          '### Recommendation',
+          '- Use the recommendations below (rules-based while AI is unavailable).',
+        ].join('\n');
+        return withAdviceAndActionCards(fallbackMd, seedCards);
     }
 };
 
@@ -1404,8 +1483,16 @@ Last line exactly: Not personalized financial advice.`;
   }
 };
 
-export const getAITransactionAnalysis = async (transactions: Transaction[], budgets: Budget[]): Promise<string> => {
-    const offline = () => buildDeterministicStatementImportInsight(transactions, budgets);
+export const getAITransactionAnalysis = async (
+    transactions: Transaction[],
+    budgets: Budget[],
+    data?: FinancialData,
+    opts?: AiInsightOptions,
+): Promise<string> => {
+    const pack = data ? wealthPromptWithPageDelta(data, { ...opts, page: opts?.page ?? 'cashflow' }) : null;
+    const seedCards = pack?.seedCards ?? [];
+    const offline = () =>
+        withAdviceAndActionCards(buildDeterministicStatementImportInsight(transactions, budgets), seedCards);
 
     try {
         const spending = new Map<string, number>();
@@ -1427,30 +1514,39 @@ export const getAITransactionAnalysis = async (transactions: Transaction[], budg
             return offline();
         }
 
-        const prompt = `You are Finova AI, expert advisor. Imported transactions (e.g. SMS/statement), SAR. Spending by budget category:
+        const wealthBlock = pack?.block ? `\n${pack.block}\n` : '';
+        const prompt = `You are Finova AI Investor Copilot. Imported transactions (e.g. SMS/statement), SAR. Spending by budget category:
 ${budgetPerformance || '- No totals matched a budget category name yet — infer risks from the import mix.'}
-Brief Markdown. One sentence or 2 bullets per section. Numbers. No filler.
+${wealthBlock}
+Brief Markdown. One sentence or 2 bullets per section. Numbers. No filler. Cite GROUND TRUTH SAR figures when present.
 
 ### Key Spending Insight
 - Main observation (e.g. which category is over/under; quote %).
 
+### Advice
+- What this means for THIS user's month (cashflow / budgets).
+
+### Suggestions
+- 1–2 cut-or-reallocate options.
+
 ### Strategic Recommendation
-- One practical tip. One sentence.
+- One practical Finova next step (Budgets / Accounts). One sentence.
 
 ### Positive Note
 - One area well-managed. One sentence.
-Markdown only.`;
+Markdown only.
+${actionCardsPromptFooter(seedCards)}`;
 
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
-            groundingAuditExtra: budgetPerformance,
+            groundingAuditExtra: pack?.block ?? budgetPerformance,
         });
         const result = extractProxyResponseText(response);
         if (!result.trim()) {
             return offline();
         }
-        return result;
+        return withAdviceAndActionCards(result, seedCards);
     } catch (error) {
         return `${offline()}\n\n---\n\n### AI unavailable\n${formatAiError(error)}`;
     }
@@ -1825,42 +1921,75 @@ export type WatchlistAdviceOptions = {
 export const getAIInvestmentOverviewAnalysis = async (
     portfolioAllocation: { name: string; value: number }[],
     assetClassAllocation: { name: string; value: number }[],
-    topHoldings: { name: string; gainLossPercent: number }[]
+    topHoldings: { name: string; gainLossPercent: number }[],
+    opts?: AiInsightOptions & { data?: FinancialData; concentrationWarnings?: string[] },
 ): Promise<string> => {
-    const cacheKey = `getAIInvestmentOverviewAnalysis:${JSON.stringify(portfolioAllocation)}:${JSON.stringify(assetClassAllocation)}:${JSON.stringify(topHoldings)}`;
+    const data = opts?.data;
+    const pack = data
+        ? wealthPromptWithPageDelta(data, {
+              ...opts,
+              page: opts?.page ?? 'investments',
+              pageExtras: {
+                  ...(opts?.pageExtras ?? {}),
+                  concentrationWarnings: opts?.concentrationWarnings ?? [],
+              },
+          })
+        : null;
+    const seedCards = pack?.seedCards ?? [];
+    const warnings = (opts?.concentrationWarnings ?? []).filter(Boolean);
+    const cacheKey = `getAIInvestmentOverviewAnalysis:v2:${JSON.stringify(portfolioAllocation)}:${JSON.stringify(assetClassAllocation)}:${JSON.stringify(topHoldings)}:${warnings.join('|')}:${pack?.g.netWorthSar ?? ''}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
-    
+
     try {
-        const prompt = `You are Finova AI, a very clever expert investment advisor. Portfolio: ${portfolioAllocation.map(p => `${p.name} ${p.value.toLocaleString()} SAR`).join('; ')}. Asset classes: ${assetClassAllocation.map(a => `${a.name} ${a.value.toLocaleString()}`).join('; ')}. Top holdings performance: ${topHoldings.slice(0, 5).map(h => `${h.name} ${h.gainLossPercent.toFixed(2)}%`).join('; ')}. Return a short SWOT in Markdown only (no HTML). Use ### for each section. Be direct; 1-2 bullets each.
+        const wealthBlock = pack?.block ? `\n${pack.block}\n` : '';
+        const hhiBlock = warnings.length
+            ? `Concentration / HHI warnings from the Investments Overview UI:\n${warnings.map((w) => `- ${w}`).join('\n')}\n`
+            : '';
+        const prompt = `You are Finova AI Investor Copilot. Portfolio: ${portfolioAllocation.map(p => `${p.name} ${p.value.toLocaleString()} SAR`).join('; ')}. Asset classes: ${assetClassAllocation.map(a => `${a.name} ${a.value.toLocaleString()}`).join('; ')}. Top holdings performance: ${topHoldings.slice(0, 5).map(h => `${h.name} ${h.gainLossPercent.toFixed(2)}%`).join('; ')}.
+${wealthBlock}${hhiBlock}
+Return a short SWOT in Markdown only (no HTML). Use ### for each section. Be direct; 1-2 bullets each. **Every SWOT section must end with one Recommendation bullet** (preferred Finova next step). Cite GROUND TRUTH SAR only when present.
 
 ### Strengths
 - Strong points (performers, diversification). Use numbers.
+- Recommendation: …
 
 ### Weaknesses
 - Weak points (concentration, underperformers).
+- Recommendation: …
 
 ### Opportunities
-- 1-2 actions that could improve the portfolio. Educational only.
+- 1-2 actions that could improve the portfolio.
+- Recommendation: …
 
 ### Threats
-- 1-2 external risks. One sentence each. No financial advice. Markdown only.`;
+- 1-2 external risks. One sentence each.
+- Recommendation: …
 
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        const result = response.text || "Could not retrieve analysis.";
+Educational decision-support only. Markdown only.
+${actionCardsPromptFooter(seedCards)}`;
+
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            groundingAuditExtra: pack?.block,
+        });
+        const result = withAdviceAndActionCards(response.text || 'Could not retrieve analysis.', seedCards);
         setToCache(cacheKey, result);
         return result;
 
     } catch (error) {
-        return formatAiError(error);
+        const fallback = `### Strengths\n- Portfolio data is loaded in Finova.\n- Recommendation: Review Overview allocation charts.\n\n### Weaknesses\n- ${warnings[0] || 'AI SWOT unavailable; review concentration manually.'}\n- Recommendation: Open AI Rebalancer if concentration is high.\n\n### Opportunities\n- Deploy idle investable cash deliberately after liquidity check.\n- Recommendation: Open Investment Plan.\n\n### Threats\n- Market and concentration risk remain.\n- Recommendation: Open Recovery Plan after large daily drawdowns.`;
+        return withAdviceAndActionCards(`${fallback}\n\n${formatAiError(error)}`, seedCards);
     }
 };
 
 export const getAIExecutiveSummary = async (data: FinancialData, opts?: AiInsightOptions): Promise<string> => {
-    const g = buildWealthGroundingOrNull(data, opts);
-    if (!g) return AI_FX_REQUIRED_MSG;
+    const pack = wealthPromptWithPageDelta(data, { ...opts, page: opts?.page ?? 'summary' });
+    if (!pack) return AI_FX_REQUIRED_MSG;
+    const { g, block, seedCards } = pack;
     const resolvedFp = resolvedGoalAmountsFingerprint(data, g.sarPerUsd);
-    const cacheKey = `getAIExecutiveSummary:v2:${g.netWorthSar}:${g.monthlyPnLSar}:${resolvedFp}`;
+    const cacheKey = `getAIExecutiveSummary:v3:${g.netWorthSar}:${g.monthlyPnLSar}:${resolvedFp}`;
     const cached = getFromCache(cacheKey);
     if (cached) return cached;
 
@@ -1868,40 +1997,42 @@ export const getAIExecutiveSummary = async (data: FinancialData, opts?: AiInsigh
         ? g.overspentBudgetLines.join('; ')
         : 'None ≥75%';
 
-    const prompt = `You are Finova AI, expert financial and investment advisor. Return a short, direct executive summary in Markdown only. Use **only** SAR figures from GROUND TRUTH below—do not invent net worth, cash, or ROI.
+    const prompt = `You are Finova AI Investor Copilot. Return a short executive summary in Markdown only. Use **only** SAR figures from GROUND TRUTH—do not invent net worth, cash, or ROI.
 
-${g.promptBlock}
+${block}
 
-Use exactly these ### section headers (cite specific numbers from ground truth):
+Use exactly these ### section headers:
 ### Overall Financial Health
 One sentence: standing this financial month (net worth + month P&L).
 
-### Key Highlights
-- 2–3 bullets with exact SAR/% from ground truth (liquid cash, goals, holdings, positive P&L).
+### Advice
+- 2–3 bullets with exact SAR/% from ground truth (liquid cash, goals, holdings, concentration, debt).
 
-### Areas for Attention
-- 1–2 items: budget pressure lines or expense/income imbalance. Constructive tone.
+### Suggestions
+- 1–2 trade-off options (fund goals vs deploy vs rebuild cash).
 
 ### Strategic Recommendation
-- One actionable next step tied to the data (e.g. cap a category, fund a goal, rebalance concentration).
+- One preferred Finova next step with impact.
 
-Output Markdown only.`;
+Output Markdown only.
+${actionCardsPromptFooter(seedCards)}`;
 
     try {
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: prompt,
-            groundingAuditExtra: g.promptBlock,
+            groundingAuditExtra: block,
         });
-        const result = response.text || 'Could not retrieve executive summary.';
+        const result = withAdviceAndActionCards(response.text || 'Could not retrieve executive summary.', seedCards);
         setToCache(cacheKey, result);
         return result;
     } catch {
-        return buildDirectExecutiveFallback(
+        const fallback = buildDirectExecutiveFallback(
             g.monthlyPnLSar,
             overspentLabel,
             g.goalsProgress || 'No goals set',
         );
+        return withAdviceAndActionCards(fallback, seedCards);
     }
 };
 
@@ -1932,12 +2063,21 @@ export interface InvestmentHubAiMeta {
   executionLogCount?: number;
 }
 
-export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: InvestmentHubAiMeta): Promise<string> => {
+export const getInvestmentAIAnalysis = async (
+  holdings: Holding[],
+  meta?: InvestmentHubAiMeta,
+  opts?: AiInsightOptions,
+): Promise<string> => {
+  const packResolved =
+    opts?.data && tryAiExchangeRate(opts) != null
+      ? wealthPromptWithPageDelta(opts.data, { ...opts, page: opts?.page ?? 'investments' })
+      : null;
+  const seedCards = packResolved?.seedCards ?? [];
   const symKey = holdings.map((h) => (h.symbol ?? '') + h.quantity).join(',');
   const metaKey = meta
     ? `${meta.activeTab ?? ''}|${meta.portfolioCount ?? ''}|${meta.holdingCount ?? ''}|${meta.watchlistCount ?? ''}|${meta.totalValueSAR ?? ''}|${meta.unrealizedGainLossSAR ?? ''}|${meta.roiPct ?? ''}|${meta.netInvestedSAR ?? ''}|${meta.capitalSource ?? ''}|${meta.principalFullyRecovered ?? ''}|${meta.dailyPnLSAR ?? ''}|${meta.commoditiesValueSAR ?? ''}|${meta.sukukPositionsValueSAR ?? ''}|${meta.executionLogCount ?? ''}`
     : '';
-  const cacheKey = `getInvestmentAIAnalysis:${symKey}:${metaKey}`;
+  const cacheKey = `getInvestmentAIAnalysis:v2:${symKey}:${metaKey}:${packResolved?.g.netWorthSar ?? ''}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
   try {
@@ -1973,14 +2113,24 @@ export const getInvestmentAIAnalysis = async (holdings: Holding[], meta?: Invest
     }
     const factsBlock = facts.length ? `FACTS (use only these numbers; if something is missing say "not shown in app" — do not invent prices, balances, or returns):\n${facts.join(' ')}\n` : '';
     const symbolsList = holdings.map((h) => h.symbol ?? '').filter(Boolean).join(', ') || '(none)';
-    const prompt = `You are Finova AI. Write for someone who is NOT a finance professional: short sentences, plain words, no jargon without a one-line explanation.
-
+    const wealthBlock = packResolved?.block ? `\n${packResolved.block}\n` : '';
+    const prompt = `You are Finova AI Investor Copilot. Write for someone who is NOT a finance professional: short sentences, plain words, no jargon without a one-line explanation.
+${wealthBlock}
 ${factsBlock}
 Holdings symbols (from the user's data only): ${symbolsList}
 
 Return GitHub-flavored Markdown with exactly these ### sections in order:
 ### Portfolio snapshot
-Reference only the FACTS numbers above for totals and P/L. One short paragraph.
+Reference only the FACTS / GROUND TRUTH numbers above for totals and P/L. One short paragraph.
+
+### Advice
+What the portfolio means for THIS user (liquidity, concentration, ROI vs goals). 2 bullets.
+
+### Suggestions
+1–3 options (trim concentration vs deploy cash vs rebuild emergency fund).
+
+### Recommendation
+One preferred Finova next step with estimable SAR impact when possible.
 
 ### Diversification
 What the mix of symbols suggests (no invented percentages per symbol).
@@ -1991,13 +2141,18 @@ If few symbols or one sector could dominate — stay general unless FACTS imply 
 ### How to use this workspace
 One paragraph: how the Investments tabs (Overview, Plan, etc.) help them stay organized.
 
-Rules: No buy/sell recommendations. No HTML. No tables. Use **bold** sparingly for key terms.`;
-    const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-    const result = response.text || 'Could not retrieve analysis.';
+Rules: Educational decision-support only — propose; user confirms. No HTML. No tables. Use **bold** sparingly for key terms.
+${actionCardsPromptFooter(seedCards)}`;
+    const response = await invokeAI({
+      model: FAST_MODEL,
+      contents: prompt,
+      groundingAuditExtra: packResolved?.block,
+    });
+    const result = withAdviceAndActionCards(response.text || 'Could not retrieve analysis.', seedCards);
     setToCache(cacheKey, result);
     return result;
   } catch (error) {
-    return formatAiError(error);
+    return withAdviceAndActionCards(formatAiError(error), seedCards);
   }
 };
 
@@ -2110,6 +2265,7 @@ export const getAICommoditiesInsight = async (ctx: CommoditiesAiContext): Promis
   }
 };
 
+/** @deprecated Unused orphan — prefer getInvestmentAIAnalysis / Investor Copilot ActionCards. */
 export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gainLoss: number; gainLossPercent: number; })[]): Promise<string> => {
     try {
         const prompt = `You are Finova AI, expert advisor. Unrealized gains/losses for ${holdings.length} assets. Brief Markdown: Key Contributors, Key Detractors, Risk Assessment. Direct. No HTML.`;
@@ -2118,6 +2274,7 @@ export const getPlatformPerformanceAnalysis = async (holdings: (Holding & { gain
     } catch (error) { return formatAiError(error); }
 };
 
+/** @deprecated Unused orphan — prefer Live Advisor + getAIDashboardInsight. */
 export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     try {
         const prompt = `You are Finova AI, expert advisor. Holdings: ${holdings.map(h => h.symbol ?? '').join(', ')}. Brief Markdown: Strategy Assessment, Opportunities. Educational. No buy/sell advice. No HTML.`;
@@ -2126,6 +2283,7 @@ export const getAIStrategy = async (holdings: Holding[]): Promise<string> => {
     } catch (error) { return formatAiError(error); }
 };
 
+/** @deprecated Unused orphan — prefer Watchlist advice / multi-stock analysis with wealth grounding. */
 export const getAIResearchNews = async (stocks: (Holding | WatchlistItem)[]): Promise<{ content: string, groundingChunks: any[] }> => {
     try {
         const finnhubBrief = await buildFinnhubResearchBrief(stocks.map(s => s.symbol ?? '').filter(Boolean));
@@ -2643,9 +2801,21 @@ export const getGoalAIPlan = async (
     } catch (error) { return formatAiError(error); }
 };
 
-export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: number, allData: FinancialData): Promise<string> => {
+export const getAIGoalStrategyAnalysis = async (
+    goals: Goal[],
+    monthlySavings: number,
+    allData: FinancialData,
+    opts?: AiInsightOptions,
+): Promise<string> => {
+    const pack = wealthPromptWithPageDelta(allData, {
+        ...opts,
+        exchangeRate: tryAiExchangeRate(opts) ?? sarPerUsdForResolvedGoals(allData),
+        page: opts?.page ?? 'goals',
+        data: allData,
+    });
+    const seedCards = pack?.seedCards ?? [];
     try {
-        const sar = sarPerUsdForResolvedGoals(allData);
+        const sar = pack?.g.sarPerUsd ?? sarPerUsdForResolvedGoals(allData);
         const resolved = computeGoalResolvedAmountsSar(allData, sar);
         const goalDataWithProgress = goals
             .map((goal) => {
@@ -2658,19 +2828,36 @@ export const getAIGoalStrategyAnalysis = async (goals: Goal[], monthlySavings: n
         const { sumAllGoalMonthlyFundingEnvelopesSar, monthlySurplusForEmergencyFund } = await import('./goalProjectionFunding');
         const mappedGoalFunding = sumAllGoalMonthlyFundingEnvelopesSar(allData, sar);
         const emergencyCapacity = monthlySurplusForEmergencyFund(allData, sar);
-        const prompt = `You are Finova AI, a very clever expert financial advisor. Goal strategy data: rolling monthly net ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR; mapped goal envelopes ${mappedGoalFunding.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo (linked budget when present, else linked investment plan/deposits — not both summed); emergency-fund capacity after goal budgets ${emergencyCapacity.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo; ${goals.length} goals. Progress: ${goalDataWithProgress}. Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct.
+        const wealthBlock = pack?.block ? `\n${pack.block}\n` : '';
+        const prompt = `You are Finova AI Investor Copilot. Goal strategy data: rolling monthly net ${monthlySavings.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR; mapped goal envelopes ${mappedGoalFunding.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo (linked budget when present, else linked investment plan/deposits — not both summed); emergency-fund capacity after goal budgets ${emergencyCapacity.toLocaleString(undefined, {maximumFractionDigits: 0})} SAR/mo; ${goals.length} goals. Progress: ${goalDataWithProgress}.
+${wealthBlock}
+Return a short analysis in Markdown only (no HTML). Use ### for each section. Be direct. Cite GROUND TRUTH SAR only.
 
 ### Overall Assessment
 One sentence: health of their goal strategy.
+
+### Advice
+- What progress means for THIS user (cite resolved % / funding gap).
+
+### Suggestions
+- 1–2 funding prioritization options.
 
 ### Key Insight
 - One crucial observation (e.g. under-using savings, spreading thin). Use numbers.
 
 ### Strategic Recommendation
-- One high-impact, actionable tip. One sentence. Markdown only.`;
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || "Could not generate analysis.";
-    } catch (error) { return formatAiError(error); }
+- One high-impact Finova next step (Goals / Budgets / Investments). One sentence.
+Markdown only.
+${actionCardsPromptFooter(seedCards)}`;
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            groundingAuditExtra: pack?.block,
+        });
+        return withAdviceAndActionCards(response.text || 'Could not generate analysis.', seedCards);
+    } catch (error) {
+        return withAdviceAndActionCards(formatAiError(error), seedCards);
+    }
 };
 
 /** Same shape as MarketDataContext simulated prices — used so AI math matches the Investments UI. */
@@ -2681,6 +2868,13 @@ export interface RebalancingPlanMeta {
     sarPerUsd: number;
     portfolioName?: string;
     simulatedPrices: RebalancingSimulatedPrices;
+    /** Optional full ledger for wealth grounding. */
+    data?: FinancialData;
+    insightOpts?: AiInsightOptions;
+    /** Deployable / investable cash (SAR) for sizing trade ActionCards. */
+    deployableCashSar?: number;
+    /** Short planning note (e.g. canonical planning snapshot summary). */
+    planningNote?: string;
 }
 
 function formatBookCurrencyAmount(amount: number, bookCurrency: TradeCurrency): string {
@@ -2812,10 +3006,31 @@ export const getAIRebalancingPlan = async (
     const holdingsSummary = lines.join('; ') || '(no priced positions)';
 
     try {
+        const wealthPack =
+            meta.data &&
+            wealthPromptWithPageDelta(meta.data, {
+                ...(meta.insightOpts ?? {}),
+                exchangeRate: meta.insightOpts?.exchangeRate ?? meta.sarPerUsd,
+                simulatedPrices: meta.insightOpts?.simulatedPrices ?? (meta.simulatedPrices as AiInsightOptions['simulatedPrices']),
+                page: 'rebalancer',
+                data: meta.data,
+                pageExtras: {
+                    ...(meta.insightOpts?.pageExtras ?? {}),
+                    deployableCashSar: meta.deployableCashSar,
+                    planningNote: meta.planningNote,
+                },
+            });
+        const seedCards = wealthPack?.seedCards ?? [];
+        const deployHint =
+            meta.deployableCashSar != null && Number.isFinite(meta.deployableCashSar)
+                ? `Deployable / investable cash (SAR): **${Math.round(meta.deployableCashSar).toLocaleString()}**. When proposing trade ActionCards, prefer Record Trade prefills sized as a modest % of this cash (e.g. 5–15%), not the full balance.`
+                : '';
+        const planningNote = meta.planningNote ? `Planning note: ${meta.planningNote}` : '';
+        const wealthBlock = wealthPack?.block ? `\n${wealthPack.block}\n` : '';
         const prompt = `${DEFAULT_SYSTEM_INSTRUCTION}
 
 You must ground every numeric claim in the **Ground truth** block below. If a figure is not listed there, do not invent it. Do not restate a different portfolio total, concentration %, or top-holding weight than given.
-
+${wealthBlock}
 **Ground truth (${curLabel} book currency, same as Portfolios / this screen):**
 - Portfolio name: **${portfolioName || 'Selected portfolio'}**
 - Holdings count (priced lines): **${normalized.length}**
@@ -2826,6 +3041,8 @@ You must ground every numeric claim in the **Ground truth** block below. If a fi
 - Second largest: **${h2 ? `${h2.symbol} = ${top2Pct.toFixed(2)}%` : 'N/A (single position)'}**
 - Combined weight of top two lines: **${topTwoCombinedPct.toFixed(2)}%**
 - Example single-name cap (5% of portfolio, educational): **${fivePctAmount}**
+${deployHint ? `- ${deployHint}` : ''}
+${planningNote ? `- ${planningNote}` : ''}
 
 Risk profile selected by user: **${riskProfile}**.
 
@@ -2836,15 +3053,32 @@ Return a short rebalancing analysis in Markdown only (no HTML). Use ### for each
 ### Current Portfolio Analysis
 - Two bullets: cite **exact** concentration using largest line % and combined top-two % from Ground truth. Mention asset-class mix **exactly** as given.
 
+### Advice
+- What drift means for THIS user given liquidity / concentration in GROUND TRUTH when present.
+
 ### Target Allocation (${riskProfile})
 - 2–3 bullets: educational ideas for this profile; do not contradict Ground truth totals.
 
-### Rebalancing Suggestions
-- 3 bullets: practical, educational steps (no specific buy/sell orders). If you mention a position-size example, use **${fivePctAmount}** (${curLabel}) or refer to it as ~5% of the stated total.
+### Suggestions
+- 1–2 trade-off options (trim vs add vs hold cash).
 
-Markdown only.`;
-        const response = await invokeAI({ model: FAST_MODEL, contents: prompt });
-        return response.text || buildRuleBasedRebalancingPlan(holdings, riskProfile, meta);
+### Rebalancing Suggestions
+- 3 bullets: practical, educational steps. Prefer Record Trade ActionCards with amount as % of investable/deployable cash when that figure is given. If you mention a position-size example, use **${fivePctAmount}** (${curLabel}) or refer to it as ~5% of the stated total.
+
+### Recommendation
+- One preferred Finova next step (Record Trade / Investment Plan).
+
+Markdown only.
+${actionCardsPromptFooter(seedCards)}`;
+        const response = await invokeAI({
+            model: FAST_MODEL,
+            contents: prompt,
+            groundingAuditExtra: wealthPack?.block,
+        });
+        return withAdviceAndActionCards(
+            response.text || buildRuleBasedRebalancingPlan(holdings, riskProfile, meta),
+            seedCards,
+        );
     } catch (error) {
         console.warn('[getAIRebalancingPlan] AI unavailable, using deterministic fallback.', error);
         return buildRuleBasedRebalancingPlan(holdings, riskProfile, meta);
@@ -2882,28 +3116,41 @@ async function buildFallbackAnalystReportWithFinnhub(holding: Holding): Promise<
 }
 
 
-export const getAIStockAnalysis = async (holding: Holding, options?: { forceRefresh?: boolean }): Promise<{ content: string, groundingChunks: any[] }> => {
+export const getAIStockAnalysis = async (
+    holding: Holding,
+    options?: {
+        forceRefresh?: boolean;
+        wealthGrounding?: string;
+        investableCashSar?: number;
+    },
+): Promise<{ content: string, groundingChunks: any[] }> => {
     const dayKey = new Date().toISOString().slice(0, 10);
     const positionSnapshotKey = [
         Number(holding.quantity || 0).toFixed(4),
         Number(holding.avgCost || 0).toFixed(2),
         Number(holding.currentValue || 0).toFixed(2),
     ].join(':');
-    const cacheKey = `getAIStockAnalysis:${holding.symbol ?? ''}:${dayKey}:${positionSnapshotKey}`;
+    const cacheKey = `getAIStockAnalysis:v2:${holding.symbol ?? ''}:${dayKey}:${positionSnapshotKey}:${options?.investableCashSar ?? ''}`;
     const cached = getFromCache(cacheKey);
     if (!options?.forceRefresh && cached) return cached;
 
     const approxPrice = Number(holding.quantity || 0) > 0
         ? Number(holding.currentValue || 0) / Number(holding.quantity || 1)
         : Number(holding.avgCost || 0);
-    const primaryPrompt = `You are Finova AI, a very clever expert investment analyst.
+    const wealthBlock = options?.wealthGrounding ? `\n${options.wealthGrounding}\n` : '';
+    const cashHint =
+        options?.investableCashSar != null && Number.isFinite(options.investableCashSar)
+            ? `Investable / tradable cash (SAR): ${Math.round(options.investableCashSar).toLocaleString()}. Size any proposed trade ActionCard as a modest % of this cash.`
+            : '';
+    const primaryPrompt = `You are Finova AI Investor Copilot, a very clever expert investment analyst.
 Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol ?? ''}) using Google Search.
 Treat stale/outdated references as low confidence and prefer latest items.
-
+${wealthBlock}
 Portfolio snapshot context (for relevance only):
 - Shares: ${Number(holding.quantity || 0).toLocaleString()}
 - Avg cost: ${Number(holding.avgCost || 0).toFixed(2)}
 - Approx latest price from portfolio: ${Number.isFinite(approxPrice) ? approxPrice.toFixed(2) : 'N/A'}
+${cashHint ? `- ${cashHint}` : ''}
 
 Return Markdown only (no HTML):
 
@@ -2914,18 +3161,23 @@ Return Markdown only (no HTML):
 - 2-3 bullets on the latest significant news (recent period only). One sentence each.
 
 ### Analyst Sentiment
-- One short paragraph: current sentiment (bullish/bearish/neutral) and why. No buy/sell advice.
+- One short paragraph: current sentiment (bullish/bearish/neutral) and why.
+
+### Portfolio fit advice
+- How this position fits THIS user's liquidity, concentration, and investable cash (cite GROUND TRUTH when present). 2 bullets of suggestions + one preferred recommendation CTA (Record Trade / Recovery / hold).
 
 ### What Changed Recently
-- 1-2 bullets highlighting what is new versus prior narrative.`;
+- 1-2 bullets highlighting what is new versus prior narrative.
+${actionCardsPromptFooter()}`;
 
     try {
         const response = await invokeAI({
             model: FAST_MODEL,
             contents: primaryPrompt,
-            config: { tools: [{ googleSearch: {} }] }
+            config: { tools: [{ googleSearch: {} }] },
+            groundingAuditExtra: options?.wealthGrounding,
         });
-        const content = response.text || "Could not retrieve analysis.";
+        const content = withAdviceAndActionCards(response.text || 'Could not retrieve analysis.', []);
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         const result = { content, groundingChunks };
         setToCache(cacheKey, result);
@@ -2936,8 +3188,8 @@ Return Markdown only (no HTML):
         // Retry once without search tool, using Finnhub brief as context, to keep analyst report available.
         try {
             const finnhubBrief = await buildFinnhubResearchBrief([holding.symbol ?? '']);
-            const fallbackAiPrompt = `You are Finova AI, a very clever expert investment analyst. For ${holding.name} (${holding.symbol ?? ''}), produce a concise Markdown analyst update (no HTML).
-
+            const fallbackAiPrompt = `You are Finova AI Investor Copilot. For ${holding.name} (${holding.symbol ?? ''}), produce a concise Markdown analyst update (no HTML).
+${wealthBlock}
 Structure:
 ### TL;DR
 - One direct sentence with current thesis.
@@ -2948,12 +3200,18 @@ Structure:
 ### Analyst Sentiment
 - One short paragraph (bullish/bearish/neutral) with reasoning.
 
+### Portfolio fit advice
+- How this position fits THIS user; include one Recommendation CTA.
 ${finnhubBrief ? `Use this Finnhub reference when relevant:
-${finnhubBrief}` : 'If live headlines are unavailable, rely on position context and provide a neutral status update.'}`;
+${finnhubBrief}` : 'If live headlines are unavailable, rely on position context and provide a neutral status update.'}
+${actionCardsPromptFooter()}`;
 
             const retry = await invokeAI({ model: FAST_MODEL, contents: fallbackAiPrompt });
             const retryResult = {
-                content: retry.text || await buildFallbackAnalystReportWithFinnhub(holding),
+                content: withAdviceAndActionCards(
+                    retry.text || await buildFallbackAnalystReportWithFinnhub(holding),
+                    [],
+                ),
                 groundingChunks: [],
             };
             setToCache(cacheKey, retryResult);
@@ -3902,6 +4160,12 @@ export async function suggestRecoveryParameters(input: {
     deployableCash: number;
     currentPrice: number;
     avgCost: number;
+    /** Optional wealth grounding prompt block. */
+    wealthGroundingPrompt?: string;
+    /** Top holding concentration % (0–100). */
+    concentrationPct?: number;
+    /** Emergency-fund months / liquidity runway. */
+    runwayMonths?: number;
 }): Promise<{ lossTriggerPct: number; cashCap: number; recoveryEnabled: boolean; notes?: string }> {
     const buildRuleBasedSuggestion = () => {
         const lossMagnitude = Math.max(0, Math.abs(Number(input.plPct) || 0));
@@ -3916,7 +4180,23 @@ export async function suggestRecoveryParameters(input: {
         const cashCap = Number(Math.max(500, Math.min(rawCap, (Number(input.deployableCash) || 0) * 0.35)).toFixed(2));
 
         const recoveryEnabled = input.sleeveType !== 'Spec';
-        const notes = `Rule-based recovery tuning for ${input.symbol}: trigger ${lossTriggerPct}% and cap ${cashCap.toFixed(0)} based on ${input.riskTier} risk tier and ${lossMagnitude.toFixed(1)}% drawdown.`;
+        const runwayNote =
+            input.runwayMonths != null
+                ? ` Liquidity runway ~${Number(input.runwayMonths).toFixed(1)} months.`
+                : '';
+        const concNote =
+            input.concentrationPct != null
+                ? ` Top concentration ~${Number(input.concentrationPct).toFixed(1)}%.`
+                : '';
+        const notes = `### Advice
+Rule-based recovery tuning for ${input.symbol}: trigger ${lossTriggerPct}% and cap ${cashCap.toFixed(0)} based on ${input.riskTier} risk tier and ${lossMagnitude.toFixed(1)}% drawdown.${runwayNote}${concNote}
+
+### Recommendation
+- Prefer Recovery Plan review before new buys if drawdown is material.
+
+\`\`\`json
+{"actionCards":[{"id":"recovery-${input.symbol}","kind":"recovery","severity":"watch","title":"Open Recovery for ${input.symbol}","rationale":"Review ladder / cash cap before averaging down.","cta":{"page":"Recovery Plan","action":"investment-tab:Recovery Plan","label":"Open Recovery"}}]}
+\`\`\``;
 
         return { lossTriggerPct, cashCap, recoveryEnabled, notes };
     };
@@ -3925,13 +4205,14 @@ export async function suggestRecoveryParameters(input: {
     const deployable = Math.max(0, Number(input.deployableCash) || 0);
     if (deployable <= 0) return ruleBased;
 
-    const prompt = `You are a portfolio risk-control optimizer. Propose conservative recovery parameters for one position.
+    const wealthBlock = input.wealthGroundingPrompt ? `\n${input.wealthGroundingPrompt}\n` : '';
+    const prompt = `You are Finova AI Investor Copilot — a portfolio risk-control optimizer. Propose conservative recovery parameters for one position.
 Return JSON with:
 - lossTriggerPct (number between 8 and 30)
 - cashCap (number between 500 and deployableCash*0.35)
 - recoveryEnabled (boolean)
-- notes (short string)
-
+- notes (Markdown string: Advice + Suggestions + Recommendation; optionally append a fenced JSON actionCards block)
+${wealthBlock}
 Context:
 - symbol: ${input.symbol}
 - sleeveType: ${input.sleeveType}
@@ -3940,12 +4221,14 @@ Context:
 - deployableCash: ${deployable.toFixed(2)}
 - currentPrice: ${Number(input.currentPrice || 0).toFixed(4)}
 - avgCost: ${Number(input.avgCost || 0).toFixed(4)}
+- concentrationPct: ${input.concentrationPct != null ? Number(input.concentrationPct).toFixed(1) : 'n/a'}
+- runwayMonths: ${input.runwayMonths != null ? Number(input.runwayMonths).toFixed(1) : 'n/a'}
 
 Priorities:
 1) Avoid oversized averaging and protect cash.
 2) Higher risk tier => smaller cashCap and stricter trigger.
 3) For Spec sleeve, recoveryEnabled should usually be false.
-4) Keep notes specific and practical.`;
+4) Keep notes advice-heavy and practical; cite runway/concentration when given.`;
 
     try {
         const response = await invokeAI({
@@ -3964,6 +4247,7 @@ Priorities:
                     required: ['lossTriggerPct', 'cashCap', 'recoveryEnabled'],
                 },
             },
+            groundingAuditExtra: input.wealthGroundingPrompt,
         });
 
         const parsed = robustJsonParse(response?.text) || {};
@@ -3976,7 +4260,7 @@ Priorities:
         const safeEnabled = typeof parsed.recoveryEnabled === 'boolean' ? parsed.recoveryEnabled : ruleBased.recoveryEnabled;
         const safeNotes = typeof parsed.notes === 'string' && parsed.notes.trim().length > 0
             ? parsed.notes.trim()
-            : `AI-optimized recovery tuning for ${input.symbol}.`;
+            : ruleBased.notes;
 
         return {
             lossTriggerPct: safeTrigger,
@@ -3986,6 +4270,6 @@ Priorities:
         };
     } catch (error) {
         console.warn('suggestRecoveryParameters AI failed; using rule-based fallback.', error);
-        return { ...ruleBased, notes: `${ruleBased.notes} AI unavailable, applied resilient fallback.` };
+        return { ...ruleBased, notes: `${ruleBased.notes}\n\nAI unavailable, applied resilient fallback.` };
     }
 }

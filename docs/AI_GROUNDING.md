@@ -21,23 +21,26 @@ Use this checklist when wiring or auditing AI features.
 
 | Feature | Primary code | Grounding summary |
 |---------|----------------|-------------------|
-| Dashboard executive summary / feed | `getAIExecutiveSummary`, `getAIFeedInsights` | `buildAiPersonalWealthGrounding` + live quotes when passed |
-| Dashboard AI advisor card | `getAIDashboardInsight` via `AIAdvisor` | Same canonical grounding block |
-| Live Advisor chat | `LiveAdvisorModal` + tools | `getNetWorth`, `getGoalsProgress`, `getTopHoldings`, budgets, recent tx |
-| Transaction category sparkle | `getAICategorySuggestion` | Description + amount/date + prior labels + month spend hints |
+| Dashboard executive summary / feed | `getAIExecutiveSummary`, `getAIFeedInsights` | `buildAiPersonalWealthGrounding` + ActionCards (`services/aiActionCards.ts`); rules-based fallback |
+| Dashboard AI advisor / Ask Copilot | `getAIDashboardInsight` + `openLiveAdvisor` | Same canonical grounding; Dashboard CTA opens Live Advisor |
+| Live Advisor chat | `LiveAdvisorModal` + tools | Wealth tools + ROI/allocation/liquidity/budget/rebalance/recovery/dividends/zakat + `propose*` ActionCards |
+| Page coaches | `AIAdvisor` + `AiActionCardsPanel` | Advice/suggestions/recommendations with confirmable CTAs (`aiActionNavigate`) |
+| Transaction category sparkle | `getAICategorySuggestion` | Description + amount/date + prior labels; `TransactionAIContext` uses Gemini when available |
 | Investment plan execution | `executeInvestmentPlanRuleBased` (default) | Deterministic weights; AI execution opt-in via `useAiExecution` only |
-| Dashboard AI (legacy) | `components/AIAdvisor.tsx` | Personal wealth slices from `DataContext` |
-| Investments workspace coach | `Investments.tsx` → `AIAdvisor` | **Overview** sub-tab only; same grounding as hub insights |
+| Investments workspace coach | `Investments.tsx` → `AIAdvisor` | Wealth + hub KPIs → trim/add/harvest ActionCards |
+| Overview SWOT | `getAIInvestmentOverviewAnalysis` | Wealth grounding + concentration warnings; recommendation per quadrant |
+| Holding analyst | `getAIStockAnalysis` | Position + portfolio-fit + investable-cash sizing |
 | Execution History | — | **No AI surface**; logs/export only (avoids duplicate coaching next to static page copy) |
 | Dividend analysis | `services/geminiService.ts` (`getAIDividendAnalysis`) | YTD + trailing-12m actuals + projected annual + top payers (symbols); model must not invent figures |
 | Trade insights | `getAITradeAnalysis` | Last 20 personal `investmentTransactions` + holdings (SAR) + watchlist + plan + `riskProfile` + **as-of** date |
 | Liabilities advisor | `getAILiabilitiesInsight` via `AIAdvisor` (`pageContext="liabilities"`) | Debt metrics + `buildAiPersonalWealthGrounding` |
 | Forecast advisor | `getAIForecastInsight` via `AIAdvisor` (`pageContext="forecast"`) | Slider baseline/projection + scenario presets + trend sample |
-| Zakat advisor | `getAIAnalysisPageInsights` via `AIAdvisor` (`pageContext="zakat"`) | Zakatable/deductible/outstanding + payment trend |
+| Zakat advisor | `getAIAnalysisPageInsights` via `AIAdvisor` (`pageContext="zakat"`) | Zakatable/deductible/outstanding + payment trend; zakat trade advisor seeds |
 | Assets advisor | `getAIAnalysisPageInsights` via `AIAdvisor` (`pageContext="assets"`) | Physical + commodity totals + composition |
 | Watchlist tips | `getAIWatchlistAdvice` | Symbols + names + holdings overlap + personal wealth grounding |
 | Multi-stock analysis | `getAIMultiStockAnalysis`, `buildMultiSymbolMarketGrounding`, `MultiStockAnalysisPanel` | Live quotes + 52w + watchlist fair value; Arabic/English batch compare table; `groundingAuditExtra` — never invent analyst targets |
-| Rebalancer | `getAIRebalancingPlan` | Holdings valued like **Portfolios** (`effectiveHoldingValueInBookCurrency` + `simulatedPrices`), **portfolio book currency** (USD/SAR), `sarPerUsd`, risk profile |
+| Rebalancer | `getAIRebalancingPlan` | Holdings + optional wealth grounding + deployable cash ActionCards to Record Trade |
+| Recovery | `suggestRecoveryParameters` | Position risk + optional wealth grounding prompt |
 | Statement / SMS / trading parse | `invokeAI` in parser paths | Extracted rows + user account mapping (no full PAN) |
 | Research / commodity / hybrid categorization | `geminiService.ts` | Varies by caller; prefer aggregates |
 | Reconciliation hints | `StatementProcessingContext` | Discrepancy list + statement metadata |

@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { ParsedTransaction } from '../services/ocrDocumentParser';
+import { getAICategorySuggestion as geminiCategorySuggestion } from '../services/geminiService';
 
 export interface AIContextType {
   isCategorizing: boolean;
@@ -225,7 +226,7 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
     }
 
     // Use AI-based categorization as fallback
-    const aiSuggestion = await getAICategorySuggestion(description);
+    const aiSuggestion = await getAICategorySuggestion(description, transaction);
     
     return {
       ...transaction,
@@ -237,8 +238,7 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
     };
   };
 
-  const getAICategorySuggestion = async (description: string): Promise<CategorySuggestion & { tags?: string[] }> => {
-    // Simulate AI categorization
+  const keywordCategorySuggestion = (description: string): CategorySuggestion & { tags?: string[] } => {
     const aiCategories: Record<string, { category: string; subcategory: string; tags: string[]; reasoning: string }> = {
       'coffee': { category: 'Food & Dining', subcategory: 'Coffee', tags: ['coffee', 'daily'], reasoning: 'Coffee-related purchase detected' },
       'netflix': { category: 'Entertainment', subcategory: 'Streaming', tags: ['streaming', 'monthly'], reasoning: 'Streaming service subscription' },
@@ -249,8 +249,9 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
       'restaurant': { category: 'Food & Dining', subcategory: 'Restaurants', tags: ['dining', 'food'], reasoning: 'Restaurant purchase identified' }
     };
 
+    const desc = description.toLowerCase();
     for (const [keyword, category] of Object.entries(aiCategories)) {
-      if (description.includes(keyword)) {
+      if (desc.includes(keyword)) {
         return {
           ...category,
           confidence: 0.85
@@ -265,6 +266,55 @@ export const AIProvider: React.FC<AIProviderProps> = ({ children }) => {
       confidence: 0.3,
       reasoning: 'No specific pattern detected'
     };
+  };
+
+  const allowedCategoryNames = (): string[] => {
+    const fromRules = categoryRules.map((r) => r.category);
+    const defaults = [
+      'Food & Dining',
+      'Transportation',
+      'Shopping',
+      'Entertainment',
+      'Bills & Utilities',
+      'Income',
+      'Housing',
+      'Health',
+      'Education',
+      'Uncategorized',
+    ];
+    return [...new Set([...fromRules, ...defaults])];
+  };
+
+  const getAICategorySuggestion = async (
+    description: string,
+    tx?: ParsedTransaction,
+  ): Promise<CategorySuggestion & { tags?: string[] }> => {
+    const fallback = keywordCategorySuggestion(description);
+    const categories = allowedCategoryNames();
+    try {
+      const picked = await geminiCategorySuggestion(description, categories, {
+        amount: tx?.amount,
+        date: tx?.date instanceof Date ? tx.date.toISOString().slice(0, 10) : undefined,
+        type: tx?.type,
+      });
+      if (picked && String(picked).trim()) {
+        const name = String(picked).trim();
+        const matched =
+          categories.find((c) => c === name) ||
+          categories.find((c) => c.toLowerCase() === name.toLowerCase()) ||
+          name;
+        return {
+          category: matched,
+          subcategory: fallback.subcategory !== 'Other' ? fallback.subcategory : 'General',
+          tags: fallback.tags ?? [],
+          confidence: 0.9,
+          reasoning: `AI category suggestion: ${matched}`,
+        };
+      }
+    } catch {
+      /* offline / AI unavailable — keyword stub */
+    }
+    return fallback;
   };
 
   const detectDuplicates = async (transactions: ParsedTransaction[], existingTransactions: any[]): Promise<DuplicateResult[]> => {
