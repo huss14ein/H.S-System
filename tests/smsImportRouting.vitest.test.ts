@@ -9,6 +9,8 @@ import {
   extractSmsCardLast4,
   findAccountsByCardLast4,
   normalizeCardLast4,
+  parseSmsTimeFromNote,
+  smsNoteWithMeta,
 } from '../services/smsImportRouting';
 import { parseSMSTransactions } from '../services/statementParser';
 import type { Account, Transaction } from '../types';
@@ -21,6 +23,14 @@ describe('smsImportRouting', () => {
     expect(extractSmsCardLast4('من3138\nلـ0102;user')).toBe('3138');
     expect(extractSmsCardLast4('بطاقة ائتمانية *3282')).toBe('3282');
     expect(normalizeCardLast4('xx7365yy')).toBe('7365');
+  });
+
+  it('stamps and parses sms:time alongside sms:card in notes', () => {
+    const note = smsNoteWithMeta(undefined, { last4: '8529', time: '19:37' });
+    expect(note).toContain('sms:card=8529');
+    expect(note).toContain('sms:time=19:37');
+    expect(parseSmsTimeFromNote(note)).toBe('19:37');
+    expect(parseSmsTimeFromNote(smsNoteWithMeta(note, { last4: '7365' }))).toBe('19:37');
   });
 
   it('routes SMS rows to accounts by lastFourDigits', () => {
@@ -88,6 +98,40 @@ describe('smsImportRouting', () => {
     expect(routed.unmatchedLast4.sort()).toEqual(['7365', '8529']);
     expect(routed.warnings.some((w) => /2 different cards/i.test(w))).toBe(true);
     expect(routed.warnings.some((w) => /No account last-4/i.test(w))).toBe(true);
+  });
+
+  it('routes uniquely matched cards with empty fallback and leaves unmatched blank', () => {
+    const accounts: Account[] = [
+      { id: 'acc-7365', name: 'Visa 7365', type: 'Checking', balance: 1000, lastFourDigits: '7365' },
+    ];
+    const txs: Transaction[] = [
+      {
+        id: '1',
+        date: '2026-09-03',
+        description: 'ALJAZIRA',
+        amount: -500,
+        category: 'Shopping',
+        accountId: '',
+        type: 'expense',
+        note: 'sms:card=7365',
+      },
+      {
+        id: '2',
+        date: '2026-09-06',
+        description: 'MADA',
+        amount: -20,
+        category: 'Shopping',
+        accountId: '',
+        type: 'expense',
+        note: 'sms:card=8529',
+      },
+    ];
+    const routed = applySmsAccountRouting(txs, accounts, '');
+    expect(routed.matchedCount).toBe(1);
+    expect(routed.transactions.find((t) => t.description === 'ALJAZIRA')?.accountId).toBe('acc-7365');
+    expect(routed.transactions.find((t) => t.description === 'MADA')?.accountId).toBe('');
+    expect(routed.unmatchedLast4).toEqual(['8529']);
+    expect(routed.warnings.some((w) => /no account assigned/i.test(w))).toBe(true);
   });
 });
 

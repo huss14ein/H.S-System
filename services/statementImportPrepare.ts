@@ -118,6 +118,9 @@ function validatePreparedBankRow(tx: Transaction): string[] {
   if (!Number.isFinite(Number(tx.amount)) || Number(tx.amount) === 0) {
     reasons.push('amount must be non-zero');
   }
+  if (!String(tx.accountId || '').trim()) {
+    reasons.push('missing account (set Card last-4 or assign in review)');
+  }
   /** Budget mapping is optional — category alone is enough to import; user can tag later. */
   return reasons;
 }

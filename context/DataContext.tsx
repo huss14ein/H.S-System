@@ -688,6 +688,16 @@ function isAccountsCurrencyColumnMissing(error: { code?: string; message?: strin
     );
 }
 
+/** PostgREST when `public.accounts.platform_details` is missing (run `supabase/migrations/20261003170000_accounts_platform_details_card_last4.sql`). */
+function isAccountsPlatformDetailsColumnMissing(error: { code?: string; message?: string } | null | undefined): boolean {
+    const message = String(error?.message ?? '');
+    return (
+        (error?.code === 'PGRST204' || error?.code === '42703') &&
+        message.includes('platform_details') &&
+        (message.includes('accounts') || message.toLowerCase().includes('schema cache'))
+    );
+}
+
 function buildAccountInsertPayload(platform: Omit<Account, 'id' | 'user_id' | 'balance'> & { balance?: number }): Record<string, unknown> {
     const payload: Record<string, unknown> = {
         name: platform.name,
@@ -4000,6 +4010,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const db = supabase;
         const payload = buildAccountInsertPayload(platform);
         let { data: newPlatform, error } = await db.from('accounts').insert(withUser(payload)).select().single();
+        if (error && isAccountsPlatformDetailsColumnMissing(error) && 'platform_details' in payload) {
+            const { platform_details: _omitPd, ...withoutPlatformDetails } = payload;
+            ({ data: newPlatform, error } = await db.from('accounts').insert(withUser(withoutPlatformDetails)).select().single());
+            if (!error) {
+                console.warn(
+                    '[accounts] Saved without platform_details. Apply supabase/migrations/20261003170000_accounts_platform_details_card_last4.sql to persist Card last-4 for SMS routing.',
+                );
+                toast(
+                    'Account saved, but Card last-4 was not persisted. Apply accounts.platform_details migration (see docs/DB_CHANGES.md).',
+                    'warning',
+                );
+            }
+        }
         if (error && isAccountsCurrencyColumnMissing(error) && 'currency' in payload) {
             const { currency: _omit, ...withoutCurrency } = payload;
             ({ data: newPlatform, error } = await db.from('accounts').insert(withUser(withoutCurrency)).select().single());
@@ -4061,6 +4084,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (platform.bucketType) payload.bucket_type = platform.bucketType;
         
         let { error } = await db.from('accounts').update(payload).match({ id: platform.id, user_id: auth.user.id });
+        if (error && isAccountsPlatformDetailsColumnMissing(error) && 'platform_details' in payload) {
+            const { platform_details: _omitPd, ...withoutPlatformDetails } = payload;
+            ({ error } = await db.from('accounts').update(withoutPlatformDetails).match({ id: platform.id, user_id: auth.user.id }));
+            if (!error) {
+                console.warn(
+                    '[accounts] Updated without platform_details. Apply supabase/migrations/20261003170000_accounts_platform_details_card_last4.sql to persist Card last-4 for SMS routing.',
+                );
+                toast(
+                    'Account updated, but Card last-4 was not persisted. Apply accounts.platform_details migration (see docs/DB_CHANGES.md).',
+                    'warning',
+                );
+            }
+        }
         if (error && isAccountsCurrencyColumnMissing(error) && 'currency' in payload) {
             const { currency: _omit, ...withoutCurrency } = payload;
             ({ error } = await db.from('accounts').update(withoutCurrency).match({ id: platform.id, user_id: auth.user.id }));

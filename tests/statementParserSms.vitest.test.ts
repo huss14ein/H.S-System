@@ -457,4 +457,220 @@ SAR مبلغ:50.00
     expect(byAmt(15.64)?.description.toUpperCase()).toContain('HANAA');
     expect(res.transactions.every((t) => t.type === 'expense' && t.category === 'Shopping')).toBe(true);
   });
+
+  it('parses full Al Rajhi multi-card paste (سداد, PoS, ATM, حوالة, استرداد, FX)', async () => {
+    const sms = `بطاقة فيزا:سداد بـSR 4830.71 
+عبر7365;فيزا
+رصيد:4968.74 SR 
+\u061C31/8/26 22:35
+بطاقة فيزا:سداد بـSR 669.99 
+عبر5280;فيزا
+رصيد:47039.37 SR 
+\u061C31/8/26 22:36
+شراء PoS
+عبر:8529;مدى-ابل باي
+بـSAR 8
+لـDurrat Al
+\u061C2/9/26 19:46
+شراء انترنت
+بطاقة:5280 ;فيزا-ابل باي
+مبلغ: 89.71 SAR
+لدى:CURSOR, A
+رسوم وضريبة: 2.06 SAR
+اجمالي المبلغ المستحق: 91.77 SAR
+دولة:USA
+رصيد:46947.60 SAR
+في:2/9/26 20:46
+شراء عبر نقاط البيع 
+بطاقة:7365 ;فيزا
+لدى:ALJAZIRA T
+مبلغ:500 SAR
+رصيد:4232.62 SAR
+\u061C3/9/26 4:06
+شراء PoS
+عبر:8529;مدى-ابل باي
+بـSAR 210
+لـJWDI ALI E
+\u061C4/9/26 15:22
+شراء إنترنت بـSR 117 
+عبر7365;فيزا-ابل باي
+لـKeeta Tec
+رصيد:4129.07 SR
+\u061C4/9/26 23:23
+بطاقة ائتمانية استرداد مبلغ
+بطاقة: 7365; فيزا
+مبلغ: 13.45 SAR
+التاجر: MAF Carre
+في: 5/9/26 10:37
+شراء عبر نقاط البيع 
+بطاقة:7365 ;فيزا-ابل باي
+لدى:Aramco St
+مبلغ:111.19 SAR
+رصيد:4017.88 SAR
+\u061C5/9/26 16:43
+شراء PoS
+عبر:8529;مدى-ابل باي
+بـSAR 260
+لـMohammed I
+\u061C6/9/26 19:15
+شراء PoS
+عبر:8529;مدى-ابل باي
+بـSAR 3
+لـAl-Imtiaz
+\u061C6/9/26 19:33
+شراء PoS
+عبر:8529;مدى-ابل باي
+بـSAR 15.64
+لـHANAA ROA
+\u061C6/9/26 19:37
+حوالة داخلية صادرة بـSR 5500
+من3138
+لـ1527;محمد ابوصوله
+26/9/6 23:14
+سحب:صراف آلي بSR 100
+عبر8529;مدى
+منCA-PRINCE MAJED BRANCH 1
+\u061C7/9/26 20:18
+بطاقة ائتمانية استرداد مبلغ
+بطاقة: 7365; فيزا
+مبلغ: 500 SAR
+التاجر: ALJAZIRA T
+في: 8/9/26 10:41
+شراء إنترنت بـSR 62.95 
+عبر7365;فيزا
+لـAmazon No
+رصيد:4454.93 SR
+\u061C8/9/26 16:25
+شراء عبر نقاط البيع 
+بطاقة:7365 ;فيزا-أثير
+لدى:ROKN MOSH
+مبلغ:48 SAR
+رصيد:4406.93 SAR
+\u061C9/9/26 8:34
+حوالة محلية صادرة بـSR 300
+من3138
+لـ0102;abdullah alsaggaf
+رسوم:SR 0.58
+26/9/9 20:47
+شراء انترنت 
+بطاقة: 5280 ;فيزا
+مبلغ: 9 USD (33.81 ريال) 
+لدى: NETLIFY
+رسوم وضريبة: 0.78 SAR
+سعر الصرف~ 3.756667
+إجمالي المبلغ المستحق: 34.59 SAR
+دولة: USA
+رصيد: 45993.85 SAR
+\u061C 12/9/26 4:27
+سحب:صراف آلي بSR 450
+عبر8529;مدى
+منCA-ALFALAH BR. 2
+\u061C13/9/26 22:03
+سحب:صراف آلي بSR 1000
+عبر8529;مدى
+منTAMIM STATION
+\u061C13/9/26 22:51
+شراء انترنت
+بطاقة:7365 ;فيزا-ابل باي
+مبلغ: 28.92 SAR
+لدى:UBR* PEND
+رسوم وضريبة: 0.67 SAR
+اجمالي المبلغ المستحق: 29.59 SAR
+دولة:Netherlands
+رصيد:783.13 SAR
+في:13/9/26 8:25`;
+
+    const accounts = [
+      { id: 'a7365', name: 'Visa 7365', type: 'Checking' as const, balance: 0, lastFourDigits: '7365' },
+      { id: 'a5280', name: 'Visa 5280', type: 'Credit' as const, balance: 0, lastFourDigits: '5280' },
+      { id: 'a8529', name: 'Mada 8529', type: 'Checking' as const, balance: 0, lastFourDigits: '8529' },
+      { id: 'a3138', name: 'Acct 3138', type: 'Checking' as const, balance: 0, lastFourDigits: '3138' },
+    ];
+
+    const res = await parseSMSTransactions(sms, '', { accounts });
+    expect(res.transactions.length).toBe(22);
+
+    const byAmt = (n: number, sign: 1 | -1 = -1) =>
+      res.transactions.find((t) => Math.abs(t.amount - sign * n) < 0.02);
+
+    expect(byAmt(4830.71)?.date).toBe('2026-08-31');
+    expect(byAmt(4830.71)?.accountId).toBe('a7365');
+    expect(byAmt(4830.71)?.note).toContain('sms:card=7365');
+
+    expect(byAmt(669.99)?.accountId).toBe('a5280');
+    expect(byAmt(8)?.description.toLowerCase()).toContain('durrat');
+    expect(byAmt(8)?.accountId).toBe('a8529');
+    expect(byAmt(91.77)?.description.toUpperCase()).toContain('CURSOR');
+    expect(byAmt(91.77)?.accountId).toBe('a5280');
+    expect(byAmt(500)?.description.toUpperCase()).toContain('ALJAZIRA');
+    expect(byAmt(210)?.description.toLowerCase()).toContain('jwdi');
+    expect(byAmt(117)?.description.toLowerCase()).toContain('keeta');
+    expect(byAmt(13.45, 1)?.type).toBe('income');
+    expect(byAmt(13.45, 1)?.description.toUpperCase()).toContain('MAF');
+    expect(byAmt(111.19)?.description.toUpperCase()).toContain('ARAMCO');
+    expect(byAmt(260)?.description.toLowerCase()).toContain('mohammed');
+    expect(byAmt(3)?.description).toMatch(/Al-Imtiaz/i);
+    expect(byAmt(15.64)?.description.toUpperCase()).toContain('HANAA');
+    expect(byAmt(5500)?.type).toBe('expense');
+    expect(byAmt(5500)?.accountId).toBe('a3138');
+    expect(byAmt(5500)?.date).toBe('2026-09-06');
+    expect(byAmt(100)?.accountId).toBe('a8529');
+    expect(byAmt(100)?.description.toUpperCase()).toContain('PRINCE');
+    expect(byAmt(500, 1)?.type).toBe('income');
+    expect(byAmt(62.95)?.description.toLowerCase()).toContain('amazon');
+    expect(byAmt(48)?.description.toUpperCase()).toContain('ROKN');
+    expect(byAmt(300.58)?.amount).toBeCloseTo(-300.58, 2);
+    expect(byAmt(300.58)?.accountId).toBe('a3138');
+    expect(byAmt(34.59)?.description.toUpperCase()).toContain('NETLIFY');
+    expect(byAmt(450)?.description.toUpperCase()).toContain('ALFALAH');
+    expect(byAmt(1000)?.description.toUpperCase()).toContain('TAMIM');
+    expect(byAmt(29.59)?.description.toUpperCase()).toContain('UBR');
+
+    // No balance / fee / USD ghosts
+    const absAmts = res.transactions.map((t) => Math.abs(t.amount));
+    expect(absAmts.every((a) => a !== 9)).toBe(true);
+    expect(absAmts.every((a) => Math.abs(a - 0.78) > 0.01)).toBe(true);
+    expect(absAmts.every((a) => Math.abs(a - 2.06) > 0.01)).toBe(true);
+    expect(absAmts.every((a) => Math.abs(a - 4968.74) > 0.01)).toBe(true);
+    expect(absAmts.every((a) => Math.abs(a - 45993.85) > 0.01)).toBe(true);
+
+    // Empty fallback still routes every row when last-4 is configured
+    expect(res.transactions.every((t) => String(t.accountId || '').trim())).toBe(true);
+
+    // Same-day SMS clock times stamped for newest-first ordering
+    expect(byAmt(15.64)?.note).toContain('sms:time=19:37');
+    expect(byAmt(260)?.note).toContain('sms:time=19:15');
+    expect(byAmt(4830.71)?.note).toContain('sms:time=22:35');
+  });
+
+  it('parses Visa سداد settlement SMS as separate expense rows', async () => {
+    const sms = `بطاقة فيزا:سداد بـSR 4830.71
+عبر7365;فيزا
+رصيد:4968.74 SR
+31/8/26 22:35
+بطاقة فيزا:سداد بـSR 669.99
+عبر5280;فيزا
+رصيد:47039.37 SR
+31/8/26 22:36`;
+    const res = await parseSMSTransactions(sms, 'acc-sadad');
+    expect(res.transactions.length).toBe(2);
+    expect(res.transactions.some((t) => Math.abs(t.amount + 4830.71) < 0.01)).toBe(true);
+    expect(res.transactions.some((t) => Math.abs(t.amount + 669.99) < 0.01)).toBe(true);
+    expect(res.transactions.every((t) => t.type === 'expense')).toBe(true);
+    expect(res.transactions.every((t) => Math.abs(Math.abs(t.amount) - 4968.74) > 0.01)).toBe(true);
+  });
+
+  it('parses ATM withdrawal with بSR (no tatweel) and branch line', async () => {
+    const sms = `سحب:صراف آلي بSR 450
+عبر8529;مدى
+منCA-ALFALAH BR. 2
+13/9/26 22:03`;
+    const res = await parseSMSTransactions(sms, 'acc-atm');
+    expect(res.transactions.length).toBe(1);
+    expect(res.transactions[0].amount).toBeCloseTo(-450, 2);
+    expect(res.transactions[0].type).toBe('expense');
+    expect(res.transactions[0].date).toBe('2026-09-13');
+    expect(res.transactions[0].description.toUpperCase()).toContain('ALFALAH');
+    expect(res.transactions[0].note).toContain('sms:card=8529');
+  });
 });

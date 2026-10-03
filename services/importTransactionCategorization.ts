@@ -99,11 +99,20 @@ export function categorizeImportedTransaction(
   if (historyMatch?.category && historyMatch.category !== 'Uncategorized') {
     category = historyMatch.category;
   }
-  if (historyMatch?.budgetCategory && tx.type === 'expense') {
-    return { category, budgetCategory: historyMatch.budgetCategory };
+
+  const namesProvided = Array.isArray(opts?.budgetCategoryNames);
+  const budgetNames = opts?.budgetCategoryNames ?? [];
+  const historyBudget = String(historyMatch?.budgetCategory || '').trim();
+  // Reuse history budget only when it is on the target month's cards (or names were not scoped).
+  if (historyBudget && tx.type === 'expense') {
+    if (!namesProvided) {
+      return { category, budgetCategory: historyBudget };
+    }
+    if (budgetNames.includes(historyBudget)) {
+      return { category, budgetCategory: historyBudget };
+    }
   }
 
-  const budgetNames = opts?.budgetCategoryNames ?? [];
   const budgetCategory =
     tx.type === 'expense'
       ? resolveBudgetCategoryForImportedExpense({ ...tx, category }, budgetNames)

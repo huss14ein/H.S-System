@@ -17,4 +17,20 @@ describe('budget card category surface coverage', () => {
     expect(read('pages/StatementUpload.tsx')).toContain('budgetCardCategoryNames');
     expect(read('pages/Dashboard.tsx')).toContain('budgetCardCategoryNames');
   });
+
+  it('Statement Upload budgets are keyed by transaction date (not only current month)', () => {
+    const src = read('pages/StatementUpload.tsx');
+    expect(src).toContain('financialMonthKeyFromTransactionDate');
+    expect(src).toContain('budgetCategoriesForTransactionDate');
+    expect(src).toContain('budgetCategoriesForTransactionDate(tx.date)');
+    expect(src).toContain('budgetCategoriesForTransactionDate(next.date)');
+    expect(src).toContain('type="date"');
+    expect(src).toContain('No budget cards for this transaction');
+    // Must not fall back to current-month cards when the tx month has none.
+    expect(src).not.toContain('rowBudgetOptions.length > 0 ? rowBudgetOptions : budgetCategoryOptions');
+    // Must not map every imported row against a single "now" month key only.
+    expect(src).not.toMatch(
+      /enrichTransactionsWithBudgetMapping[\s\S]*?budgetCategoryNames = budgetCategoryOptions/,
+    );
+  });
 });

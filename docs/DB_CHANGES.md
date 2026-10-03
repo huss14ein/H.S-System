@@ -22,6 +22,19 @@ This project includes SQL scripts for sharing features. Run them in Supabase SQL
 
 - **Wealth Ultra DB defaults:** If you use `full_schema_for_app.sql`, the app now **reads** `wealth_ultra_config` (user-specific row first, then `user_id` null global row) into `data.wealthUltraConfig` for Settings / Wealth Ultra flows.
 
+## Required for SMS card last-4 routing
+
+Run **`supabase/migrations/20261003170000_accounts_platform_details_card_last4.sql`** once (idempotent) — adds:
+
+- **accounts.platform_details** (jsonb) — stores `cardLast4` (and optional investment metadata). Without this column, saving Card / account last 4 on Accounts fails or is stripped, and SMS multi-card auto-routing cannot persist after reload.
+
+```sql
+alter table if exists public.accounts
+  add column if not exists platform_details jsonb;
+```
+
+After applying, refresh the PostgREST schema cache (or wait briefly).
+
 ## Optional columns (app-compatible)
 
 Run **`supabase/migrations/add_optional_schema_extras.sql`** once (idempotent) — adds:

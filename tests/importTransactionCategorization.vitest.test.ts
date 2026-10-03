@@ -42,4 +42,65 @@ describe('importTransactionCategorization', () => {
     expect(mapped.category).toBe('Food & Dining');
     expect(mapped.budgetCategory).toBe('Food & Dining');
   });
+
+  it('does not reuse history budget when it is outside the target month card names', () => {
+    const mapped = categorizeImportedTransaction(
+      {
+        type: 'expense',
+        description: 'STARBUCKS RIYADH',
+        amount: -32,
+        category: 'Uncategorized',
+        budgetCategory: 'Old Month Only',
+      },
+      {
+        budgetCategoryNames: ['Shopping', 'Transport'],
+        userHistory: [
+          {
+            id: '1',
+            type: 'expense',
+            description: 'STARBUCKS OLAYA',
+            amount: -28,
+            category: 'Food & Dining',
+            budgetCategory: 'Food & Dining',
+            accountId: 'a',
+            date: '2026-01-01',
+            status: 'Approved',
+          },
+        ],
+      },
+    );
+    expect(mapped.budgetCategory).not.toBe('Food & Dining');
+    expect(mapped.budgetCategory === undefined || ['Shopping', 'Transport'].includes(mapped.budgetCategory)).toBe(
+      true,
+    );
+  });
+
+  it('returns no budget link when the month has zero budget cards', () => {
+    const mapped = categorizeImportedTransaction(
+      {
+        type: 'expense',
+        description: 'STARBUCKS RIYADH',
+        amount: -32,
+        category: 'Shopping',
+        budgetCategory: 'Food & Dining',
+      },
+      {
+        budgetCategoryNames: [],
+        userHistory: [
+          {
+            id: '1',
+            type: 'expense',
+            description: 'STARBUCKS OLAYA',
+            amount: -28,
+            category: 'Food & Dining',
+            budgetCategory: 'Food & Dining',
+            accountId: 'a',
+            date: '2026-01-01',
+            status: 'Approved',
+          },
+        ],
+      },
+    );
+    expect(mapped.budgetCategory).toBeUndefined();
+  });
 });
