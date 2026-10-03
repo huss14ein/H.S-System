@@ -24,7 +24,6 @@ import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 import { summarizeStatementImportForConfirm } from '../utils/recordConfirmMessages';
 import {
-  financialMonthKey,
   financialMonthKeyFromTransactionDate,
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
@@ -94,17 +93,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         .filter(Boolean),
     [data?.budgetRequests],
   );
-  /** Current financial-month cards — used as a fallback when a row has no date. */
-  const budgetCategoryOptions = useMemo(() => {
-    const viewKey = financialMonthKey(new Date(), monthStartDay);
-    return budgetCardCategoryNames({
-      budgets: data?.budgets ?? [],
-      viewKey,
-      monthStartDay,
-      userRole: 'Admin',
-      finalizedNewCategoryNames,
-    });
-  }, [data?.budgets, finalizedNewCategoryNames, monthStartDay]);
   /** Budget cards for the financial month that contains the transaction date (not "today"). */
   const budgetCategoriesForTransactionDate = useCallback(
     (ymd: string) => {
@@ -126,12 +114,18 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     return Array.from(new Set([...existing, ...extracted])).sort((a, b) => a.localeCompare(b));
   }, [data?.transactions, extractedTransactions]);
   const selectedAccountTypeForStatement = useMemo<'checking' | 'savings' | 'credit' | 'investment'>(() => {
-    if (!selectedAccountObj) return activeTab === 'trading' ? 'investment' : 'checking';
-    if (selectedAccountObj.type === 'Savings') return 'savings';
-    if (selectedAccountObj.type === 'Credit') return 'credit';
-    if (selectedAccountObj.type === 'Investment') return 'investment';
+    const routedPrimary =
+      extractedTransactions.find((t) => String(t.accountId || '').trim())?.accountId ||
+      selectedAccount ||
+      '';
+    const accountObj =
+      (data?.accounts ?? []).find((a) => a.id === routedPrimary) ?? selectedAccountObj;
+    if (!accountObj) return activeTab === 'trading' ? 'investment' : 'checking';
+    if (accountObj.type === 'Savings') return 'savings';
+    if (accountObj.type === 'Credit') return 'credit';
+    if (accountObj.type === 'Investment') return 'investment';
     return 'checking';
-  }, [selectedAccountObj, activeTab]);
+  }, [selectedAccountObj, activeTab, extractedTransactions, selectedAccount, data?.accounts]);
 
   const enrichTransactionsWithBudgetMapping = useCallback((rows: Transaction[]): Transaction[] => {
     const userHistory = data?.transactions ?? [];
@@ -446,6 +440,19 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return;
       }
 
+      const selectedMissingAccount = [...selectedTransactions].filter((idx) => {
+        if (idx < extractedTransactions.length) {
+          return !String(extractedTransactions[idx]?.accountId || '').trim();
+        }
+        return false;
+      });
+      if (selectedMissingAccount.length > 0) {
+        alert(
+          `${selectedMissingAccount.length} selected row(s) have no account. Assign an account in the review table (or set Card last-4 on Accounts) before importing.`,
+        );
+        return;
+      }
+
       const plan = planStatementImport({
         bankTransactions: extractedTransactions,
         investmentTransactions: extractedInvestmentTransactions,
@@ -513,6 +520,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                   expenseType: tx.expenseType,
                   status: tx.status || 'Approved',
                   statementId: currentStatementId || undefined,
+                  note: tx.note,
                 }, { system: true });
                 succeededIndices.add(idx);
                 failedIndices.delete(idx);
@@ -1329,9 +1337,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const cardLast4 = parseSmsCardLast4FromNote(tx.note);
                         const rowAccount = bankAccounts.find((a) => a.id === tx.accountId);
                         const rowCurrency = rowAccount?.currency === 'USD' ? 'USD' : selectedAccountCurrency;
-                        const rowBudgetOptions = budgetCategoriesForTransactionDate(tx.date);
-                        const budgetSelectOptions =
-                          rowBudgetOptions.length > 0 ? rowBudgetOptions : budgetCategoryOptions;
+                        const budgetSelectOptions = budgetCategoriesForTransactionDate(tx.date);
                         return (
                           <tr
                             key={index}
@@ -1346,7 +1352,19 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                 title={isDuplicate ? 'Duplicate — tick to import anyway' : undefined}
                               />
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-900">{new Date(tx.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-3 text-sm text-slate-900 min-w-[140px]">
+                              <input
+                                type="date"
+                                value={String(tx.date || '').slice(0, 10)}
+                                onChange={(e) =>
+                                  handleExtractedTransactionEdit(index, {
+                                    date: e.target.value || tx.date,
+                                  })
+                                }
+                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                aria-label={`Date for ${tx.description}`}
+                              />
+                            </td>
                             <td className="px-4 py-3 text-sm text-slate-900">
                               <div>{tx.description}</div>
                               {cardLast4 && (
@@ -1402,6 +1420,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                   <option key={opt} value={opt}>{opt}</option>
                                 ))}
                               </select>
+                              {budgetSelectOptions.length === 0 && (
+                                <p className="mt-1 text-[11px] text-amber-700">
+                                  No budget cards for this transaction’s financial month. Create budgets for that month on Budgets, or leave unlinked.
+                                </p>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-center">
                               {isDuplicate ? (

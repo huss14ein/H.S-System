@@ -1,5 +1,12 @@
 -- Optional columns referenced by the app (DataContext / holdings). Idempotent.
 
+-- SMS card last-4 persistence (also in 20261003170000_accounts_platform_details_card_last4.sql)
+alter table if exists public.accounts
+  add column if not exists platform_details jsonb;
+
+comment on column public.accounts.platform_details is
+  'JSON metadata for cash accounts (features, assetTypes, fees, cardLast4). cardLast4 mirrors Account.lastFourDigits for SMS auto-routing.';
+
 -- Budget surplus/deficit routing (see docs/DB_CHANGES.md)
 alter table if exists public.budgets
   add column if not exists destination_account_id uuid references public.accounts(id) on delete set null;

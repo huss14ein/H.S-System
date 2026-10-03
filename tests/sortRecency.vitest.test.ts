@@ -32,6 +32,15 @@ describe('sortByNewestFirst', () => {
     ];
     expect(sortByNewestFirst(rows).map((r) => r.id)).toEqual(['d', 'c', 'b', 'a']);
   });
+
+  it('breaks same-date ties by sms:time in note before created_at', () => {
+    const rows = [
+      { id: 'am', date: '2026-09-06', note: 'sms:card=8529 sms:time=19:15', created_at: '2026-10-01T00:00:00Z' },
+      { id: 'pm', date: '2026-09-06', note: 'sms:card=8529 sms:time=19:37', created_at: '2026-09-01T00:00:00Z' },
+      { id: 'noon', date: '2026-09-06', note: 'sms:time=12:00' },
+    ];
+    expect(sortByNewestFirst(rows).map((r) => r.id)).toEqual(['pm', 'am', 'noon']);
+  });
 });
 
 describe('comparePlannedTradesNewestFirst', () => {

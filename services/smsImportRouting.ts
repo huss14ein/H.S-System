@@ -63,12 +63,43 @@ export function parseSmsCardLast4FromNote(note: string | undefined): string | nu
   return m ? normalizeCardLast4(m[1]) : null;
 }
 
-export function smsNoteWithCardLast4(existingNote: string | undefined, last4: string | null): string | undefined {
-  const without = String(existingNote || '')
+/** Clock time from SMS note (`sms:time=HH:mm`) for same-day newest-first ordering. */
+export function parseSmsTimeFromNote(note: string | undefined): string | null {
+  const m = String(note || '').match(/sms:time=(\d{1,2}):(\d{2})\b/i);
+  if (!m) return null;
+  const hh = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+  const mm = Math.min(59, Math.max(0, parseInt(m[2], 10)));
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+/** Minutes since midnight for `sms:time=HH:mm`, or -1 when absent. */
+export function smsTimeMinutesFromNote(note: string | undefined): number {
+  const t = parseSmsTimeFromNote(note);
+  if (!t) return -1;
+  const [hh, mm] = t.split(':').map((x) => parseInt(x, 10));
+  return hh * 60 + mm;
+}
+
+export function smsNoteWithMeta(
+  existingNote: string | undefined,
+  opts: { last4?: string | null; time?: string | null },
+): string | undefined {
+  let without = String(existingNote || '')
     .replace(/\s*sms:card=\d{4}\b/gi, '')
+    .replace(/\s*sms:time=\d{1,2}:\d{2}\b/gi, '')
     .trim();
-  if (!last4) return without || undefined;
-  return without ? `${without} sms:card=${last4}` : `sms:card=${last4}`;
+  const last4 = normalizeCardLast4(opts.last4 ?? null);
+  const time = opts.time ? parseSmsTimeFromNote(`sms:time=${opts.time}`) : parseSmsTimeFromNote(existingNote);
+  const parts: string[] = [];
+  if (without) parts.push(without);
+  if (last4) parts.push(`sms:card=${last4}`);
+  if (time) parts.push(`sms:time=${time}`);
+  return parts.length ? parts.join(' ') : undefined;
+}
+
+export function smsNoteWithCardLast4(existingNote: string | undefined, last4: string | null): string | undefined {
+  return smsNoteWithMeta(existingNote, { last4, time: parseSmsTimeFromNote(existingNote) });
 }
 
 export type SmsAccountRoutingResult = {

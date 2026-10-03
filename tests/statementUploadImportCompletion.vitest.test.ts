@@ -23,6 +23,9 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('pageAction');
     expect(stmt).toContain('financialMonthKeyFromTransactionDate');
     expect(stmt).toContain('budgetCategoriesForTransactionDate');
+    expect(stmt).toContain('note: tx.note');
+    expect(stmt).toContain('selectedMissingAccount');
+    expect(stmt).toContain('type="date"');
   });
 
   it('SMS parser merchant-aware dedupe + amount-aware categories', () => {
@@ -56,6 +59,13 @@ describe('statementUploadImportCompletion', () => {
     expect(routing).toContain('applySmsAccountRouting');
     const prepare = read('services/statementImportPrepare.ts');
     expect(prepare).toContain('missing account (set Card last-4 or assign in review)');
+    const ctx = read('context/DataContext.tsx');
+    expect(ctx).toContain('isAccountsPlatformDetailsColumnMissing');
+    expect(ctx).toContain('20261003170000_accounts_platform_details_card_last4.sql');
+    expect(read('supabase/migrations/20261003170000_accounts_platform_details_card_last4.sql')).toContain(
+      'platform_details',
+    );
+    expect(read('docs/DB_CHANGES.md')).toContain('accounts.platform_details');
   });
 
   it('planStatementImport does not reject expenses missing budgetCategory', () => {

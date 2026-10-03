@@ -636,6 +636,11 @@ SAR مبلغ:50.00
 
     // Empty fallback still routes every row when last-4 is configured
     expect(res.transactions.every((t) => String(t.accountId || '').trim())).toBe(true);
+
+    // Same-day SMS clock times stamped for newest-first ordering
+    expect(byAmt(15.64)?.note).toContain('sms:time=19:37');
+    expect(byAmt(260)?.note).toContain('sms:time=19:15');
+    expect(byAmt(4830.71)?.note).toContain('sms:time=22:35');
   });
 
   it('parses Visa سداد settlement SMS as separate expense rows', async () => {

@@ -9,6 +9,8 @@ import {
   extractSmsCardLast4,
   findAccountsByCardLast4,
   normalizeCardLast4,
+  parseSmsTimeFromNote,
+  smsNoteWithMeta,
 } from '../services/smsImportRouting';
 import { parseSMSTransactions } from '../services/statementParser';
 import type { Account, Transaction } from '../types';
@@ -21,6 +23,14 @@ describe('smsImportRouting', () => {
     expect(extractSmsCardLast4('من3138\nلـ0102;user')).toBe('3138');
     expect(extractSmsCardLast4('بطاقة ائتمانية *3282')).toBe('3282');
     expect(normalizeCardLast4('xx7365yy')).toBe('7365');
+  });
+
+  it('stamps and parses sms:time alongside sms:card in notes', () => {
+    const note = smsNoteWithMeta(undefined, { last4: '8529', time: '19:37' });
+    expect(note).toContain('sms:card=8529');
+    expect(note).toContain('sms:time=19:37');
+    expect(parseSmsTimeFromNote(note)).toBe('19:37');
+    expect(parseSmsTimeFromNote(smsNoteWithMeta(note, { last4: '7365' }))).toBe('19:37');
   });
 
   it('routes SMS rows to accounts by lastFourDigits', () => {

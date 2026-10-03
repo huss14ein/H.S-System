@@ -2,6 +2,16 @@ import type { PlannedTrade } from '../types';
 
 export type DateLike = string | number | Date | null | undefined;
 
+/** Minutes since midnight from `sms:time=HH:mm` in a note; -1 when absent. */
+function smsTimeMinutesFromNote(note: string | undefined): number {
+  const m = String(note || '').match(/sms:time=(\d{1,2}):(\d{2})\b/i);
+  if (!m) return -1;
+  const hh = parseInt(m[1], 10);
+  const mm = parseInt(m[2], 10);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh > 23 || mm > 59) return -1;
+  return hh * 60 + mm;
+}
+
 /** Parse a date-like value to epoch ms; invalid → 0. */
 export function timestampFromDateLike(value: DateLike): number {
   if (value == null || value === '') return 0;
@@ -23,6 +33,7 @@ export type RecencyDateFields = {
   timestamp?: string | number;
   at?: string;
   uploadedAt?: Date | string;
+  note?: string;
 };
 
 export function pickItemTimestamp(item: RecencyDateFields): number {
@@ -37,7 +48,7 @@ export function pickItemTimestamp(item: RecencyDateFields): number {
   );
 }
 
-/** Secondary recency for same calendar date: created_at / createdAt, then id. */
+/** Secondary recency for same calendar date: SMS clock → created_at / createdAt → id. */
 function pickTieBreakTimestamp(item: RecencyDateFields): number {
   return timestampFromDateLike(item.created_at ?? item.createdAt);
 }
@@ -45,6 +56,8 @@ function pickTieBreakTimestamp(item: RecencyDateFields): number {
 function compareRecencyNewestFirst(a: RecencyDateFields, b: RecencyDateFields): number {
   const primary = pickItemTimestamp(b) - pickItemTimestamp(a);
   if (primary !== 0) return primary;
+  const smsTime = smsTimeMinutesFromNote(b.note) - smsTimeMinutesFromNote(a.note);
+  if (smsTime !== 0) return smsTime;
   const secondary = pickTieBreakTimestamp(b) - pickTieBreakTimestamp(a);
   if (secondary !== 0) return secondary;
   return String(b.id ?? '').localeCompare(String(a.id ?? ''), undefined, { sensitivity: 'base' });

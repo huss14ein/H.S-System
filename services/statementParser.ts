@@ -5,9 +5,24 @@ import { inferImportTransactionCategory } from './importTransactionCategorizatio
 import {
   applySmsAccountRouting,
   extractSmsCardLast4,
-  smsNoteWithCardLast4,
+  smsNoteWithMeta,
 } from './smsImportRouting';
 import type { Account } from '../types';
+
+/** Extract HH:mm from an SMS block (trailing `DD/MM/YY HH:mm` or `في: …`). */
+function extractSmsClockTime(block: string): string | null {
+  const text = String(block || '');
+  const m =
+    text.match(/(?:^|\s)(\d{1,2}:\d{2})(?:\s*$|\s+\d{1,2}[\/\.-])/m) ||
+    text.match(/(?:في\s*[:\-]?\s*)?(?:\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4}\s+)(\d{1,2}:\d{2})\b/) ||
+    text.match(/\b(\d{1,2}:\d{2})\b/);
+  if (!m?.[1]) return null;
+  const [hhRaw, mmRaw] = m[1].split(':');
+  const hh = parseInt(hhRaw, 10);
+  const mm = parseInt(mmRaw, 10);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh > 23 || mm > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
 
 export interface ParseResult {
   transactions: Transaction[];
@@ -435,6 +450,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           const category = inferCategoryForSignedAmount(canonicalDescription, signed);
           
           const last4 = extractSmsCardLast4(line);
+          const clock = extractSmsClockTime(line);
           transactions.push({
             id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             date: formatLocalYmd(date),
@@ -444,7 +460,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
             accountId,
             type: isDebit ? 'expense' : 'income',
             status: 'Approved',
-            note: smsNoteWithCardLast4(undefined, last4),
+            note: smsNoteWithMeta(undefined, { last4, time: clock }),
           });
         }
         break; // Found a match, move to next line
@@ -542,6 +558,7 @@ function buildSmsTransactionFromBlock(
   }
 
   const last4 = extractSmsCardLast4(block);
+  const clock = extractSmsClockTime(block);
 
   return {
     id: `${idPrefix}-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
@@ -552,7 +569,7 @@ function buildSmsTransactionFromBlock(
     accountId,
     type: signed < 0 ? 'expense' : 'income',
     status: 'Approved',
-    note: smsNoteWithCardLast4(undefined, last4),
+    note: smsNoteWithMeta(undefined, { last4, time: clock }),
   };
 }
 
@@ -2126,7 +2143,10 @@ export function validateTransactions(
     }
 
     if (!tx.accountId) {
-      txErrors.push(`Transaction ${index + 1}: Missing account ID`);
+      // SMS last-4 routing may leave account blank until review — warn, do not invalidate the parse.
+      txWarnings.push(
+        `Transaction ${index + 1}: No account assigned yet (set Card last-4 on Accounts, choose a fallback, or pick an account in review)`,
+      );
     }
 
     // Check for duplicates within the statement
