@@ -7,6 +7,7 @@ import {
   parseSmsTimeFromNote,
   smsNoteWithMeta,
 } from './smsImportRouting';
+import { smsTextLooksLikeAtmWithdrawal } from './smsBankTransferPatterns';
 
 const ATM_KIND = 'atm';
 
@@ -16,7 +17,7 @@ const PHYSICAL_CASH_NAME_RE =
 export function isSmsAtmWithdrawalTx(tx: Pick<Transaction, 'note' | 'description' | 'category'>): boolean {
   if (/sms:kind=atm\b/i.test(String(tx.note || ''))) return true;
   const blob = `${tx.description || ''}\n${tx.category || ''}\n${tx.note || ''}`;
-  return /(صراف\s*آلي|\batm\b|سحب\s*نقد|cash\s*withdrawal)/i.test(blob);
+  return smsTextLooksLikeAtmWithdrawal(blob);
 }
 
 export function parseSmsAtmCashToFromNote(note: string | undefined): string | null {

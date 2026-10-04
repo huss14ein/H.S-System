@@ -68,12 +68,25 @@ describe('statementUploadImportCompletion', () => {
     expect(cc).toContain('resolveCcPaymentFundingAccount');
     expect(cc).toContain('sms:funded_from');
     expect(cc).toContain("SMS_CC_PAYMENT_KIND = 'cc_payment'");
+    expect(cc).toContain('smsTextLooksLikeCardSettlement');
+    const patterns = read('services/smsBankTransferPatterns.ts');
+    expect(patterns).toContain('SMS_ATM_WITHDRAWAL_RE');
+    expect(patterns).toContain('SMS_CARD_SETTLEMENT_RE');
+    expect(patterns).toContain('credit\\s*card\\s*(?:payment|settlement|paid)');
+    expect(patterns).toContain('تم\\s*سداد');
+    expect(patterns).toContain('smsLooksLikeCardSettlementCredit');
+    expect(read('tests/smsBankTransferPatterns.vitest.test.ts')).toContain('SNB-style English');
+    expect(read('tests/smsBankTransferPatterns.vitest.test.ts')).toContain('Alinma-style');
+    expect(read('tests/smsBankTransferPatterns.vitest.test.ts')).toContain('SABB/BSF-style');
     const parser = read('services/statementParser.ts');
     expect(parser).toContain('applySmsCcPaymentTransfers');
     expect(parser).toContain('smsNoteWithCcPaymentMeta');
+    expect(parser).toContain('smsTextLooksLikeAtmWithdrawal');
+    expect(parser).toContain('smsTextLooksLikeCardSettlement');
     const cat = read('services/importTransactionCategorization.ts');
     expect(cat).toContain('isSmsLedgerTransferTx');
     expect(cat).toContain('shouldSkipBudgetForImportedTx');
+    expect(cat).toContain('smsTextLooksLikeAtmWithdrawal');
     const prepare = read('services/statementImportPrepare.ts');
     expect(prepare).toContain('isSmsCcPaymentTx');
     expect(prepare).toContain('Paid-from funding account');
@@ -92,6 +105,8 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('إجمالي');
     expect(parser).toContain('pruneSmsSatelliteTransactions');
     expect(parser).toContain('applySmsAccountRouting');
+    expect(parser).toContain('mergeSmsTransferMetaFromGroup');
+    expect(parser).toContain('sms:kind=(?:atm|cc_payment)');
     expect(parser).not.toMatch(/const key = `\$\{date\}\|\$\{mag\}`;/);
   });
 

@@ -7,6 +7,10 @@ import {
   shouldImportSmsCcPaymentAsTransfer,
   smsNoteWithCcPaymentMeta,
 } from '../services/smsCcPaymentTransfer';
+import {
+  parseSmsAtmCashToFromNote,
+  shouldImportSmsAtmAsTransfer,
+} from '../services/smsAtmCashTransfer';
 import { categorizeImportedTransaction } from '../services/importTransactionCategorization';
 import { parseSMSTransactions } from '../services/statementParser';
 import { planStatementImport } from '../services/statementImportPrepare';
@@ -230,6 +234,88 @@ describe('smsCcPaymentTransfer', () => {
       expect(row.tx.category).toBe('Transfer');
       expect(row.tx.budgetCategory).toBeUndefined();
     }
+  });
+});
+
+describe('SMS transfer import decisions (ATM + سداد)', () => {
+  it('full paste: ATM and سداد ready for addTransfer; PoS still expense with optional budget', async () => {
+    const accounts: Account[] = [
+      { id: 'a7365', name: 'Visa 7365', type: 'Credit', balance: -2000, lastFourDigits: '7365' },
+      { id: 'a8529', name: 'Mada 8529', type: 'Checking', balance: 5000, lastFourDigits: '8529' },
+      {
+        id: 'a3138',
+        name: 'Main',
+        type: 'Checking',
+        balance: 20000,
+        lastFourDigits: '3138',
+        accountRole: 'debt_servicing',
+      },
+      { id: 'cash-1', name: 'Cash', type: 'Checking', balance: 100, accountRole: 'physical_cash' },
+    ];
+    const sms = `بطاقة فيزا:سداد بـSR 1000
+عبر7365;فيزا
+رصيد:1035.48 SR
+25/9/26 21:25
+سحب:صراف آلي بSR 450
+عبر8529;مدى
+منCA-ALFALAH BR. 2
+13/9/26 22:03
+شراء PoS
+عبر:8529;مدى
+بـSAR 8
+لـDurrat Al
+2/9/26 19:46`;
+    const res = await parseSMSTransactions(sms, '', { accounts });
+    const mapped = res.transactions.map((tx) => {
+      const c = categorizeImportedTransaction(tx, {
+        budgetCategoryNames: ['Food & Dining', 'Shopping'],
+      });
+      return { ...tx, category: c.category, budgetCategory: c.budgetCategory };
+    });
+
+    const sadad = mapped.find((t) => Math.abs(Number(t.amount) - 1000) < 0.01)!;
+    const atm = mapped.find((t) => Math.abs(Number(t.amount) + 450) < 0.01)!;
+    const pos = mapped.find((t) => Math.abs(Number(t.amount) + 8) < 0.01)!;
+
+    expect(sadad).toBeDefined();
+    expect(atm).toBeDefined();
+    expect(pos).toBeDefined();
+
+    expect(sadad.category).toBe('Transfer');
+    expect(sadad.budgetCategory).toBeUndefined();
+    expect(shouldImportSmsCcPaymentAsTransfer(sadad)).toBe(true);
+    expect(parseSmsCcFundedFromNote(sadad.note)).toBe('a3138');
+
+    expect(atm.category).toBe('Transfer');
+    expect(atm.budgetCategory).toBeUndefined();
+    expect(shouldImportSmsAtmAsTransfer(atm)).toBe(true);
+    expect(parseSmsAtmCashToFromNote(atm.note)).toBe('cash-1');
+
+    expect(pos.category).not.toBe('Transfer');
+    // PoS may or may not auto-map budget; it must NOT be forced Transfer.
+    expect(shouldImportSmsAtmAsTransfer(pos)).toBe(false);
+    expect(shouldImportSmsCcPaymentAsTransfer(pos)).toBe(false);
+
+    const plan = planStatementImport({
+      bankTransactions: mapped,
+      investmentTransactions: [],
+      selectedIndices: new Set(mapped.map((_, i) => i)),
+      duplicateIndices: new Set(),
+      ctx: {
+        accounts,
+        portfolios: [],
+        existingBankTransactions: [],
+        existingInvestmentTransactions: [],
+        sarPerUsd: 3.75,
+      },
+    });
+    expect(plan.skippedValidation).toBe(0);
+    expect(plan.importableBankRows.length).toBe(mapped.length);
+    const transferRows = plan.importableBankRows.filter(
+      (r) => shouldImportSmsAtmAsTransfer(r.tx) || shouldImportSmsCcPaymentAsTransfer(r.tx),
+    );
+    expect(transferRows.length).toBe(2);
+    expect(transferRows.every((r) => r.tx.budgetCategory === undefined)).toBe(true);
   });
 });
 

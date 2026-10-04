@@ -4,6 +4,7 @@
  */
 import type { Account, Transaction } from '../types';
 import {
+  extractSmsCardLast4,
   parseSmsCardLast4FromNote,
   parseSmsTimeFromNote,
 } from './smsImportRouting';
@@ -12,11 +13,12 @@ import {
   smsNoteWithAtmMeta,
   stripSmsAtmMeta,
 } from './smsAtmCashTransfer';
+import {
+  smsLooksLikeCardSettlementCredit,
+  smsTextLooksLikeCardSettlement,
+} from './smsBankTransferPatterns';
 
 export const SMS_CC_PAYMENT_KIND = 'cc_payment';
-
-const CC_SETTLEMENT_BLOB_RE =
-  /(?:بطاقة[^\n]{0,80}سداد|(?:فيزا|visa|مدى)[^\n]{0,40}سداد|card\s*payment|cc\s*payment|credit\s*card\s*(?:payment|settlement))/i;
 
 /** Prefer debt/bills/operating/salary roles when auto-picking the funding account. */
 const FUNDING_ROLE_PRIORITY: ReadonlyArray<string> = [
@@ -29,11 +31,27 @@ const FUNDING_ROLE_PRIORITY: ReadonlyArray<string> = [
 export function isSmsCcPaymentTx(
   tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount'>,
 ): boolean {
+  // Settlement always credits the card (positive). Never treat a debit as سداد payment.
+  if (!(Number(tx.amount) > 0)) return false;
   if (/sms:kind=cc_payment\b/i.test(String(tx.note || ''))) return true;
   const blob = `${tx.description || ''}\n${tx.category || ''}\n${tx.note || ''}`;
-  if (!CC_SETTLEMENT_BLOB_RE.test(blob)) return false;
-  // Settlement credits the card (positive). Debit "سداد" purchase-like rows are not CC payments.
-  return Number(tx.amount) > 0;
+  return smsTextLooksLikeCardSettlement(blob);
+}
+
+/** Like isSmsCcPaymentTx, but also accepts soft credits when the account is Credit. */
+export function isSmsCcPaymentTxForAccount(
+  tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount' | 'accountId'>,
+  accounts: Array<Pick<Account, 'id' | 'type'>>,
+): boolean {
+  if (!(Number(tx.amount) > 0)) return false;
+  if (/sms:kind=cc_payment\b/i.test(String(tx.note || ''))) return true;
+  const blob = `${tx.description || ''}\n${tx.category || ''}\n${tx.note || ''}`;
+  const acct = accounts.find((a) => a.id === String(tx.accountId || '').trim());
+  return smsLooksLikeCardSettlementCredit({
+    text: blob,
+    amount: Number(tx.amount),
+    accountType: acct?.type,
+  });
 }
 
 export function parseSmsCcFundedFromNote(note: string | undefined): string | null {
@@ -135,18 +153,43 @@ export function applySmsCcPaymentTransfers(
 
   const out = transactions.map((tx) => {
     const blob = `${tx.description || ''}\n${tx.note || ''}`;
+    const cardId = String(tx.accountId || '').trim();
+    const cardAccount = accounts.find((a) => a.id === cardId);
     const isSettlement =
-      parseSmsKindFromNote(tx.note) === SMS_CC_PAYMENT_KIND || CC_SETTLEMENT_BLOB_RE.test(blob);
+      parseSmsKindFromNote(tx.note) === SMS_CC_PAYMENT_KIND ||
+      smsLooksLikeCardSettlementCredit({
+        text: blob,
+        amount: Number(tx.amount),
+        accountType: cardAccount?.type,
+      });
     if (!isSettlement || !(Number(tx.amount) > 0)) return tx;
 
-    const cardId = String(tx.accountId || '').trim();
+    const last4 =
+      parseSmsCardLast4FromNote(tx.note) ??
+      extractSmsCardLast4(blob) ??
+      extractSmsCardLast4(String(tx.description || ''));
+    // If routing missed the card, recover account from last-4 on Credit accounts.
+    let effectiveCardId = cardId;
+    let effectiveCardAccount = cardAccount;
+    if (!effectiveCardId && last4) {
+      const byLast4 = accounts.filter(
+        (a) =>
+          a.type === 'Credit' &&
+          String(a.lastFourDigits || a.platformDetails?.cardLast4 || '').replace(/\D/g, '').slice(-4) ===
+            last4,
+      );
+      if (byLast4.length === 1) {
+        effectiveCardId = byLast4[0].id;
+        effectiveCardAccount = byLast4[0];
+      }
+    }
+
     const resolved = resolveCcPaymentFundingAccount(accounts, {
-      excludeAccountIds: cardId ? [cardId] : [],
+      excludeAccountIds: effectiveCardId ? [effectiveCardId] : [],
     });
-    const last4 = parseSmsCardLast4FromNote(tx.note);
     const time = parseSmsTimeFromNote(tx.note);
     const cardLabel =
-      accounts.find((a) => a.id === cardId)?.name ||
+      effectiveCardAccount?.name ||
       (last4 ? `••••${last4}` : 'Credit card');
 
     if (!resolved.account) {
@@ -164,6 +207,7 @@ export function applySmsCcPaymentTransfers(
       }
       return {
         ...tx,
+        accountId: effectiveCardId || tx.accountId,
         category: 'Transfer',
         type: 'income' as const,
         budgetCategory: undefined,
@@ -178,6 +222,7 @@ export function applySmsCcPaymentTransfers(
     const fromName = resolved.account.name;
     return {
       ...tx,
+      accountId: effectiveCardId || tx.accountId,
       category: 'Transfer',
       type: 'income' as const,
       budgetCategory: undefined,

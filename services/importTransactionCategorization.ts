@@ -4,6 +4,10 @@
 import { classifyTransaction } from './hybridBudgetCategorization';
 import { resolveBudgetCategoryForImportedExpense } from './budgetCategoryResolve';
 import { shouldSkipBudgetForImportedTx, isSmsLedgerTransferTx } from './smsImportTransferGuards';
+import {
+  smsTextLooksLikeAtmWithdrawal,
+  smsTextLooksLikeCardSettlement,
+} from './smsBankTransferPatterns';
 import type { Transaction } from '../types';
 
 function normalizeMerchantKey(v: string): string {
@@ -31,10 +35,10 @@ export function inferImportTransactionCategory(
   if (/(شراء إنترنت|شراء انترنت|online purchase|e-?commerce|noon|amazon|نون|امازون)/i.test(descRaw)) {
     return 'Shopping';
   }
-  if (/(atm|سحب نقدي|cash withdrawal|صراف\s*آلي)/i.test(descRaw)) {
+  if (smsTextLooksLikeAtmWithdrawal(descRaw)) {
     return 'Transfer';
   }
-  if (/(بطاقة[^\n]{0,80}سداد|(?:فيزا|visa|مدى)[^\n]{0,40}سداد|cc\s*payment|card\s*payment)/i.test(descRaw)) {
+  if (smsTextLooksLikeCardSettlement(descRaw)) {
     return 'Transfer';
   }
   if (/(حوالة|تحويل\s*صادر|transfer\s*out|local\s*transfer)/i.test(descRaw)) {
