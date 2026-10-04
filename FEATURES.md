@@ -2,6 +2,8 @@
 
 This document reflects features and functionalities implemented in the codebase. It serves as the single source of truth for what the platform delivers.
 
+**4.0.0.0 rollout:** Footer/Settings version **4.0.0.0**. SMS import treats ATM withdrawals and credit-card settlements (سداد / card payment) as internal transfers across Al Rajhi, Alinma, SNB, SABB and English KSA templates — no budget prompts; Cash / Paid-from counterparties required.
+
 **3.2.2.0 rollout:** Footer/Settings version **3.2.2.0**. Balance-vs-ledger Keep stored / Reconcile dismissals stay sticky (`account_id`-safe nets, observed post-apply ack, hydrate merge of `ui_acks`); personal transaction slice keeps snake_case rows; hybrid net capital falls back to scoped capital when the platform pass sums to zero.
 
 **3.2.1.0 rollout:** Hybrid investment ROI when only some portfolios have deposit/withdrawal history (incomplete sleeves floor at cost + cash); Netlify AI proxy falls back through `gemini-3-flash-preview`; Safari `Load failed` mapped to a clear network error; Live Advisor / Watchlist / Commodities / Assets gated on AI proxy health; footer/Settings version **3.2.1.0**.
