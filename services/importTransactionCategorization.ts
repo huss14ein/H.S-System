@@ -3,6 +3,11 @@
  */
 import { classifyTransaction } from './hybridBudgetCategorization';
 import { resolveBudgetCategoryForImportedExpense } from './budgetCategoryResolve';
+import { shouldSkipBudgetForImportedTx, isSmsLedgerTransferTx } from './smsImportTransferGuards';
+import {
+  smsTextLooksLikeAtmWithdrawal,
+  smsTextLooksLikeCardSettlement,
+} from './smsBankTransferPatterns';
 import type { Transaction } from '../types';
 
 function normalizeMerchantKey(v: string): string {
@@ -30,8 +35,11 @@ export function inferImportTransactionCategory(
   if (/(شراء إنترنت|شراء انترنت|online purchase|e-?commerce|noon|amazon|نون|امازون)/i.test(descRaw)) {
     return 'Shopping';
   }
-  if (/(atm|سحب نقدي|cash withdrawal)/i.test(descRaw)) {
-    return 'Uncategorized';
+  if (smsTextLooksLikeAtmWithdrawal(descRaw)) {
+    return 'Transfer';
+  }
+  if (smsTextLooksLikeCardSettlement(descRaw)) {
+    return 'Transfer';
   }
   if (/(حوالة|تحويل\s*صادر|transfer\s*out|local\s*transfer)/i.test(descRaw)) {
     return 'Transfer';
@@ -65,12 +73,17 @@ export function inferImportTransactionCategory(
 
 /** Map parser row → { category, budgetCategory } using budgets + prior user labels. */
 export function categorizeImportedTransaction(
-  tx: Pick<Transaction, 'type' | 'description' | 'amount' | 'category' | 'budgetCategory'>,
+  tx: Pick<Transaction, 'type' | 'description' | 'amount' | 'category' | 'budgetCategory' | 'note'>,
   opts?: {
     budgetCategoryNames?: string[];
     userHistory?: Transaction[];
   },
 ): { category: string; budgetCategory?: string } {
+  // ATM withdrawals + card سداد are internal transfers — never budget / never reclassify from history.
+  if (isSmsLedgerTransferTx(tx) || shouldSkipBudgetForImportedTx(tx)) {
+    return { category: 'Transfer', budgetCategory: undefined };
+  }
+
   const history = opts?.userHistory ?? [];
   const descKey = normalizeMerchantKey(tx.description || '');
   const historyMatch = history.find((h) => {
@@ -98,6 +111,11 @@ export function categorizeImportedTransaction(
 
   if (historyMatch?.category && historyMatch.category !== 'Uncategorized') {
     category = historyMatch.category;
+  }
+
+  // After refinement, transfer-like categories still must not get budgets.
+  if (shouldSkipBudgetForImportedTx({ ...tx, category })) {
+    return { category: 'Transfer', budgetCategory: undefined };
   }
 
   const namesProvided = Array.isArray(opts?.budgetCategoryNames);

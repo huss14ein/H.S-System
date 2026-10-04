@@ -7,6 +7,13 @@ import {
   extractSmsCardLast4,
   smsNoteWithMeta,
 } from './smsImportRouting';
+import { applySmsAtmCashTransfers, smsNoteWithAtmMeta } from './smsAtmCashTransfer';
+import { applySmsCcPaymentTransfers, smsNoteWithCcPaymentMeta } from './smsCcPaymentTransfer';
+import {
+  SMS_CARD_SETTLEMENT_RE,
+  smsTextLooksLikeAtmWithdrawal,
+  smsTextLooksLikeCardSettlement,
+} from './smsBankTransferPatterns';
 import type { Account } from '../types';
 
 /** Extract HH:mm from an SMS block (trailing `DD/MM/YY HH:mm` or `في: …`). */
@@ -161,16 +168,19 @@ export async function parseSMSTransactions(
       ...aiTransactions,
     ]);
     const uniqueTransactions = mergeSmsDedupedTransactions(allTransactions);
-    const routed = applySmsAccountRouting(uniqueTransactions, options?.accounts ?? [], accountId);
+    const accounts = options?.accounts ?? [];
+    const routed = applySmsAccountRouting(uniqueTransactions, accounts, accountId);
+    const atmCash = applySmsAtmCashTransfers(routed.transactions, accounts);
+    const ccPay = applySmsCcPaymentTransfers(atmCash.transactions, accounts);
     
     // Validate extracted transactions
-    const validation = validateTransactions(routed.transactions);
+    const validation = validateTransactions(ccPay.transactions);
     const routingWarnings = routed.warnings;
     
     return {
-      transactions: validation.isValid ? routed.transactions : routed.transactions.filter((_, i) => {
-        const txDate = new Date(routed.transactions[i].date);
-        return !isNaN(txDate.getTime()) && routed.transactions[i].description && routed.transactions[i].amount !== undefined;
+      transactions: validation.isValid ? ccPay.transactions : ccPay.transactions.filter((_, i) => {
+        const txDate = new Date(ccPay.transactions[i].date);
+        return !isNaN(txDate.getTime()) && ccPay.transactions[i].description && ccPay.transactions[i].amount !== undefined;
       }),
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
@@ -178,6 +188,8 @@ export async function parseSMSTransactions(
         ...(aiTimedOut ? ['AI extraction timed out; pattern/heuristic SMS results only.'] : []),
         ...(validation.warnings ?? []),
         ...routingWarnings,
+        ...atmCash.warnings,
+        ...ccPay.warnings,
       ],
       validation
     };
@@ -447,10 +459,23 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
           let date = parseSmsDate(dateStr || formatLocalYmd(new Date()));
           if (Number.isNaN(date.getTime())) date = new Date();
           const signed = isDebit ? -Math.abs(amount) : Math.abs(amount);
-          const category = inferCategoryForSignedAmount(canonicalDescription, signed);
+          let category = inferCategoryForSignedAmount(canonicalDescription, signed);
           
           const last4 = extractSmsCardLast4(line);
           const clock = extractSmsClockTime(line);
+          const lineBlob = `${line}\n${canonicalDescription}`;
+          const isAtm = smsTextLooksLikeAtmWithdrawal(lineBlob);
+          const isCcSettlement = smsTextLooksLikeCardSettlement(lineBlob);
+          let note: string | undefined;
+          if (isAtm) {
+            category = 'Transfer';
+            note = smsNoteWithAtmMeta(undefined, { last4, time: clock, kind: 'atm' });
+          } else if (isCcSettlement) {
+            category = 'Transfer';
+            note = smsNoteWithCcPaymentMeta(undefined, { last4, time: clock, fundedFromAccountId: null });
+          } else {
+            note = smsNoteWithMeta(undefined, { last4, time: clock });
+          }
           transactions.push({
             id: `sms-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             date: formatLocalYmd(date),
@@ -460,7 +485,7 @@ function extractTransactionsFromSMS(smsText: string, accountId: string): Transac
             accountId,
             type: isDebit ? 'expense' : 'income',
             status: 'Approved',
-            note: smsNoteWithMeta(undefined, { last4, time: clock }),
+            note,
           });
         }
         break; // Found a match, move to next line
@@ -477,7 +502,7 @@ const SMS_AMOUNT_TOKEN = String.raw`((?:[\d]{1,3}(?:,[\d]{3})+|[\d]+)(?:\.\d{1,4
 const SMS_DEBIT_RE =
   /debited|withdrawn|purchase|payment|paid|spent|pos|atm|transfer\s*out|outgoing|sent|شراء|سحب|خصم|دفع|نقاط البيع|حوالة|صادرة|تحويل\s*صادر|سداد|محفظة/i;
 const SMS_CREDIT_RE =
-  /credited|refund|received|deposit|transfer\s*in|incoming|استرداد|واردة|تحويل\s*وارد|ايداع|إيداع|استلام/i;
+  /credited|refund|received|deposit|transfer\s*in|incoming|استرداد|عكس\s*عملية|واردة|تحويل\s*وارد|ايداع|إيداع|استلام/i;
 const SMS_SECONDARY_AMOUNT_RE =
   /رسوم|ضريبة|سعر\s*الصرف|exchange\s*rate|\bfee\b|\bvat\b|\btax\b|fx\s*rate/i;
 
@@ -490,9 +515,18 @@ const SMS_TOTAL_DUE_LABEL_RE = new RegExp(SMS_TOTAL_DUE_LABEL, 'i');
 /** Any إجمالي / اجمالي word (exclude matching مبلغ lines that are actually totals). */
 const SMS_IJMALI_WORD_RE = /(?:إ|ا)جمالي/i;
 
-/** Credit keywords win (e.g. استرداد) so refunds never book as expenses. */
+/** Credit keywords win (e.g. استرداد / بطاقة فيزا:سداد) so refunds & card payments never book as expenses. */
 function classifySmsIsDebit(text: string): boolean {
   const sample = String(text || '');
+  // Card settlement increases available / reduces debt on the card ledger (overrides generic سداد debit).
+  if (smsTextLooksLikeCardSettlement(sample)) return false;
+  // Soft English credit markers when the SMS clearly mentions a card.
+  if (
+    /(?:credit\s*card|بطاقة)/i.test(sample) &&
+    /(?:payment\s*received|has\s+been\s+credited|credited\s+with|تم\s*سداد)/i.test(sample)
+  ) {
+    return false;
+  }
   if (SMS_CREDIT_RE.test(sample)) return false;
   return SMS_DEBIT_RE.test(sample);
 }
@@ -545,20 +579,34 @@ function buildSmsTransactionFromBlock(
   // Seed category with block title keywords (نقاط البيع / شراء إنترنت) — merchant-only desc loses them.
   const categorySeed = `${block.split('\n').slice(0, 3).join(' ')} ${description}`;
   let category = inferCategoryForSignedAmount(categorySeed, signed);
-  if (/(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block)) {
+  if (SMS_CARD_SETTLEMENT_RE.test(block)) {
     category = 'Transfer';
-  } else if (/(استرداد|refund)/i.test(block) && signed > 0) {
+  } else if (/(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block)) {
+    category = 'Transfer';
+  } else if (/(استرداد|عكس\s*عملية|refund|reversal)/i.test(block) && signed > 0) {
     category = 'Income';
   } else if (/(نقاط البيع|شراء\s*PoS|\bPoS\b|شراء إنترنت|شراء انترنت|pos purchase|purchase at|payment at)/i.test(block)) {
     category = 'Shopping';
-  } else if (/سداد/i.test(block)) {
+  } else if (smsTextLooksLikeCardSettlement(block) || /سداد\s*بطاقة|سداد/i.test(block)) {
     category = 'Transfer';
-  } else if (/(صراف\s*آلي|\batm\b)/i.test(block)) {
+  } else if (smsTextLooksLikeAtmWithdrawal(block)) {
     category = 'Transfer';
   }
 
   const last4 = extractSmsCardLast4(block);
   const clock = extractSmsClockTime(block);
+  const isAtm = smsTextLooksLikeAtmWithdrawal(block);
+  const isCcSettlement = smsTextLooksLikeCardSettlement(block);
+
+  let note: string | undefined;
+  if (isAtm) {
+    note = smsNoteWithAtmMeta(undefined, { last4, time: clock, kind: 'atm' });
+  } else if (isCcSettlement) {
+    note = smsNoteWithCcPaymentMeta(undefined, { last4, time: clock, fundedFromAccountId: null });
+    category = 'Transfer';
+  } else {
+    note = smsNoteWithMeta(undefined, { last4, time: clock });
+  }
 
   return {
     id: `${idPrefix}-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
@@ -569,7 +617,8 @@ function buildSmsTransactionFromBlock(
     accountId,
     type: signed < 0 ? 'expense' : 'income',
     status: 'Approved',
-    note: smsNoteWithMeta(undefined, { last4, time: clock }),
+    note,
+    ...(isAtm || isCcSettlement ? { budgetCategory: undefined } : {}),
   };
 }
 
@@ -690,21 +739,30 @@ function splitSmsIntoBlocks(smsText: string): string[] {
   let current: string[] = [];
   // Do NOT use bare `عملية` — it false-splits on `مبلغ العملية`.
   const startReEn =
-    /^(?:purchase|payment|transaction|debited|credited|withdrawn|received|transfer|paid|spent|pos|atm)\b/i;
-  const startReAr = /^(?:شراء|سحب|خصم|نقاط البيع|تحويل|حوالة|استرداد|سداد|إيداع|ايداع|استلام)/;
+    /^(?:purchase|payment|transaction|debited|credited|withdrawn|received|transfer|paid|spent|pos|atm|reversal)\b/i;
+  const startReAr = /^(?:شراء|سحب|خصم|نقاط البيع|تحويل|حوالة|استرداد|سداد|عكس|إيداع|ايداع|استلام)/;
   const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{1,4}/;
-  /** Title-like بطاقة lines (سداد / استرداد) — not mid-block بطاقة:7365 masks. */
-  const isCardTitleStarter = (line: string) =>
-    /^بطاقة/.test(line) &&
-    !/\d{4}/.test(line) &&
-    /(?:استرداد|ائتمانية|فيزا|مدى|سداد)/.test(line);
+  /**
+   * Title-like بطاقة lines (سداد / استرداد) — not mid-block card masks (`بطاقة:7365`, `*3282`).
+   * Amounts on the title (`بـSR 1000`) must NOT disqualify settlement starters.
+   */
+  const isCardTitleStarter = (line: string) => {
+    if (!/^بطاقة/.test(line)) return false;
+    // Settlement / refund titles may include the amount on the same line.
+    if (/(?:استرداد|سداد)/.test(line)) return true;
+    // Other card banners without an embedded last-4 / *mask.
+    if (/(?:ائتمانية|فيزا|مدى)/.test(line) && !/بطاقة\s*[:\-]?\s*\d{4}/.test(line) && !/\*\s*\d{4}/.test(line)) {
+      return true;
+    }
+    return false;
+  };
 
   for (const line of lines) {
     const lineStartsTx =
       current.length > 0 &&
       (startReEn.test(line) ||
         startReAr.test(line) ||
-        /استرداد/.test(line) ||
+        /استرداد|عكس\s*عملية/.test(line) ||
         isCardTitleStarter(line));
     if (lineStartsTx) {
       blocks.push(current.join('\n').trim());
@@ -1048,7 +1106,7 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
 
 function extractSmsDescription(segment: string, idx: number): string {
   const atmBranch = segment.match(/من\s*([A-Za-z][A-Za-z0-9 .:\-]{3,60})/)?.[1]?.trim();
-  if (atmBranch && /(صراف|atm|سحب)/i.test(segment)) {
+  if (atmBranch && smsTextLooksLikeAtmWithdrawal(segment)) {
     // Keep branch on one line (do not swallow following date digits).
     return atmBranch.replace(/\s+\d{1,2}$/, '').trim().slice(0, 120);
   }
@@ -1073,7 +1131,7 @@ function extractSmsDescription(segment: string, idx: number): string {
         /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
         !/^\s*رصيد\s*:/i.test(line) &&
         !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|(?:إ|ا)جمالي|دولة|بطاقة|^\d{1,2}:\d{2}/i.test(line) &&
-        !/^\s*(?:شراء|سحب|حوالة|استرداد|سداد|عبر)\b/u.test(line),
+        !/^\s*(?:شراء|سحب|حوالة|استرداد|سداد|عكس|عبر)\b/u.test(line),
     );
   if (lineBased) return lineBased.slice(0, 120);
 
@@ -1081,14 +1139,32 @@ function extractSmsDescription(segment: string, idx: number): string {
   if (transferTitle) return transferTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120);
 
   const sadadTitle = segment.match(/بطاقة[^\n]{0,40}سداد[^\n]{0,40}/)?.[0]?.trim();
-  if (sadadTitle) return sadadTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120) || 'Visa settlement';
+  if (sadadTitle) {
+    const cleaned = sadadTitle.replace(/\s*بـ?\s*(?:SR|SAR).*$/i, '').trim();
+    return (cleaned || 'Card payment').slice(0, 120);
+  }
+
+  const reversalTitle = segment.match(/عكس\s*عملية[^\n]{0,48}/)?.[0]?.trim();
+  if (reversalTitle) {
+    const merchant =
+      segment.match(/(?:لدى|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]?.trim();
+    if (merchant) return merchant.slice(0, 120);
+    return reversalTitle.slice(0, 120);
+  }
 
   const refundTitle = segment.match(/(?:استرداد|بطاقة ائتمانية استرداد)[^\n]{0,48}/)?.[0]?.trim();
   if (refundTitle) return refundTitle.slice(0, 120);
 
-  const atmTitle = segment.match(/سحب[^\n]{0,48}/)?.[0]?.trim();
-  if (atmTitle && /(صراف|atm)/i.test(atmTitle)) {
-    return atmTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120);
+  const atmTitleAr = segment.match(/سحب[^\n]{0,48}/)?.[0]?.trim();
+  if (atmTitleAr && smsTextLooksLikeAtmWithdrawal(atmTitleAr)) {
+    return atmTitleAr.replace(/\s*بـ?\s*(?:SR|SAR).*$/i, '').trim().slice(0, 120);
+  }
+  const atmTitleEn = segment
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => smsTextLooksLikeAtmWithdrawal(l) && /(?:SAR|SR|withdraw)/i.test(l));
+  if (atmTitleEn) {
+    return atmTitleEn.replace(/\s*(?:SAR|SR).*$/i, '').trim().slice(0, 120);
   }
 
   const merchantMatch =
@@ -1133,11 +1209,11 @@ function normalizeSmsTextForParsing(smsText: string): string {
     )
     // Split before Arabic starters ONLY after a date token (never mid-line after "Apple Pay شراء").
     .replace(
-      /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})(?:[ \t]+\d{1,2}:\d{2})?[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|بطاقة))/g,
+      /(\d{4}-\d{2}-\d{2}|\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})(?:[ \t]+\d{1,2}:\d{2})?[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|عكس|بطاقة))/g,
       '$1\n',
     )
     .replace(
-      /(\d{1,2}:\d{2}[ \t]+\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|بطاقة))/g,
+      /(\d{1,2}:\d{2}[ \t]+\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{1,4})[ \t]+(?=(?:شراء|سحب|خصم|دفع|إيداع|ايداع|حوالة|استرداد|تحويل|سداد|عكس|بطاقة))/g,
       '$1\n',
     )
     .replace(/\n{3,}/g, '\n\n')
@@ -2317,8 +2393,62 @@ function smsTransactionPreferenceScore(tx: Transaction): number {
   s += Math.min(24, desc.length / 6);
   const cat = String(tx.category ?? '').trim();
   if (cat && cat !== 'Uncategorized') s += 2;
+  if (cat.toLowerCase() === 'transfer') s += 3;
   if (/^sms-heur|^sms-anchor|^sms-ccy|^sms-/.test(id)) s += 4;
+  const note = String(tx.note ?? '');
+  // Keep ATM / سداد transfer meta from being discarded when AI emits a parallel row.
+  if (/sms:kind=(?:atm|cc_payment)\b/i.test(note)) s += 10;
+  if (/sms:cash_to=[A-Za-z0-9_-]+\b/i.test(note) || /sms:funded_from=[A-Za-z0-9_-]+\b/i.test(note)) s += 4;
   return s;
+}
+
+/** Merge SMS transfer meta (kind / cash_to / funded_from / card / time) from siblings onto the winner. */
+function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]): Transaction {
+  const notes = group.map((t) => String(t.note || '')).filter(Boolean);
+  if (notes.length === 0) return best;
+  const pick = (re: RegExp): string | null => {
+    for (const n of notes) {
+      const m = n.match(re);
+      if (m?.[1]) return String(m[1]).trim();
+    }
+    return null;
+  };
+  const kind = (pick(/sms:kind=([a-z0-9_-]+)\b/i) || '').toLowerCase();
+  const cashTo = pick(/sms:cash_to=([A-Za-z0-9_-]+)\b/i);
+  const fundedFrom = pick(/sms:funded_from=([A-Za-z0-9_-]+)\b/i);
+  const last4 = pick(/sms:card=(\d{4})\b/i);
+  const time = pick(/sms:time=(\d{1,2}:\d{2})\b/i);
+  if (!kind && !cashTo && !fundedFrom && !last4 && !time) return best;
+
+  const blob = `${best.description || ''}\n${notes.join('\n')}`;
+  const isAtm = kind === 'atm' || Boolean(cashTo) || smsTextLooksLikeAtmWithdrawal(blob);
+  const isCcPay =
+    kind === 'cc_payment' || Boolean(fundedFrom) || smsTextLooksLikeCardSettlement(blob);
+
+  let note = best.note;
+  if (isAtm) {
+    note = smsNoteWithAtmMeta(note, {
+      last4,
+      time,
+      kind: 'atm',
+      cashToAccountId: cashTo,
+    });
+  } else if (isCcPay) {
+    note = smsNoteWithCcPaymentMeta(note, {
+      last4,
+      time,
+      fundedFromAccountId: fundedFrom,
+    });
+  } else if (last4 || time) {
+    note = smsNoteWithMeta(note, { last4, time });
+  }
+
+  const preferTransfer = isAtm || isCcPay || String(best.category || '').toLowerCase() === 'transfer';
+  return {
+    ...best,
+    note,
+    ...(preferTransfer ? { category: 'Transfer', budgetCategory: undefined } : {}),
+  };
 }
 
 function smsDedupeDescriptionKey(description: string | undefined): string {
@@ -2367,7 +2497,8 @@ function mergeSmsDedupedTransactions(transactions: Transaction[]): Transaction[]
       if (st > sb) best = tx;
       else if (st === sb && String(tx.description ?? '').length > String(best.description ?? '').length) best = tx;
     }
-    resolved.push(best);
+    // Prefer transfer meta from any sibling so AI duplicates cannot strip ATM/سداد kinds.
+    resolved.push(mergeSmsTransferMetaFromGroup(best, pool));
   }
 
   return dedupeTxByDateAmount(resolved);

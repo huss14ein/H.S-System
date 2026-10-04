@@ -188,7 +188,9 @@ export function normalizeUiAcks(raw: unknown): UiAcks {
 
 /**
  * Merge a partial uiAcks update onto the latest known state without dropping sibling maps.
- * Provided maps replace wholesale (so clears work); omitted keys keep previous.
+ * Holdings / investment / daily prefs: provided maps replace wholesale (so clears work).
+ * Cash balance drift: merge per account by newest `at` so concurrent Keep stored clicks cannot
+ * drop a sibling account’s dismissal when two upserts race.
  */
 export function mergeUiAcks(previous: UiAcks | null | undefined, incoming: UiAcks | null | undefined): UiAcks {
   const prev = normalizeUiAcks(previous ?? {});
@@ -199,7 +201,9 @@ export function mergeUiAcks(previous: UiAcks | null | undefined, incoming: UiAck
         ? next.holdingsQtyIntegrity
         : prev.holdingsQtyIntegrity,
     cashBalanceDrift:
-      incoming && 'cashBalanceDrift' in incoming ? next.cashBalanceDrift : prev.cashBalanceDrift,
+      incoming && 'cashBalanceDrift' in incoming
+        ? mergeCashBalanceDriftAckMapsByAt(prev.cashBalanceDrift ?? {}, next.cashBalanceDrift ?? {})
+        : prev.cashBalanceDrift,
     investmentCashLedgerDrift:
       incoming && 'investmentCashLedgerDrift' in incoming
         ? next.investmentCashLedgerDrift
@@ -399,6 +403,9 @@ export function expectedPostReconcileCashState(args: {
   };
 }
 
+/** Serialize Keep stored / post-reconcile acks so multi-card dismissals cannot clobber each other. */
+let cashBalanceDriftAckChain: Promise<unknown> = Promise.resolve();
+
 /** Hide cash/credit drift until balance/net fingerprint changes (Apply or Keep stored). */
 export async function acknowledgeCashBalanceDriftDurable(args: {
   userId?: string | null;
@@ -408,31 +415,40 @@ export async function acknowledgeCashBalanceDriftDurable(args: {
   currentUiAcks?: UiAcks | null;
   persistUiAcks?: PersistUiAcksFn;
 }): Promise<CashBalanceDriftAckMap> {
-  const fp = cashBalanceDriftFingerprint(args.storedBalance, args.transactionNet);
-  const base = resolveCashBalanceDriftAcks(
-    args.userId,
-    { uiAcks: args.currentUiAcks ?? undefined },
-    { writeThrough: true },
-  );
-  const map: CashBalanceDriftAckMap = pruneByAt(
-    {
-      ...base,
-      [String(args.accountId).slice(0, 128)]: {
-        accountId: String(args.accountId).slice(0, 128),
-        balanceFp: fp.balanceFp,
-        netFp: fp.netFp,
-        at: new Date().toISOString(),
+  const run = async (): Promise<CashBalanceDriftAckMap> => {
+    const fp = cashBalanceDriftFingerprint(args.storedBalance, args.transactionNet);
+    /** Always re-read localStorage inside the chain — never trust a stale React closure alone. */
+    const base = resolveCashBalanceDriftAcks(
+      args.userId,
+      { uiAcks: args.currentUiAcks ?? undefined },
+      { writeThrough: true },
+    );
+    const map: CashBalanceDriftAckMap = pruneByAt(
+      {
+        ...base,
+        [String(args.accountId).slice(0, 128)]: {
+          accountId: String(args.accountId).slice(0, 128),
+          balanceFp: fp.balanceFp,
+          netFp: fp.netFp,
+          at: new Date().toISOString(),
+        },
       },
-    },
-    UI_ACKS_MAX_ENTRIES,
+      UI_ACKS_MAX_ENTRIES,
+    );
+    saveCashBalanceDriftAcks(args.userId, map);
+    if (args.persistUiAcks) {
+      await args.persistUiAcks({
+        cashBalanceDrift: map,
+      });
+    }
+    return map;
+  };
+  const pending = cashBalanceDriftAckChain.then(run, run);
+  cashBalanceDriftAckChain = pending.then(
+    () => undefined,
+    () => undefined,
   );
-  saveCashBalanceDriftAcks(args.userId, map);
-  if (args.persistUiAcks) {
-    await args.persistUiAcks({
-      cashBalanceDrift: map,
-    });
-  }
-  return map;
+  return pending;
 }
 
 /** Convenience: ack the post-apply fingerprint for a cash/credit reconcile. */

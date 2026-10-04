@@ -14,6 +14,16 @@ import {
 } from './dividendLedgerGuards';
 import { resolvePortfolioForDividendSymbol } from './dividendSmsParser';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
+import {
+  isSmsAtmWithdrawalTx,
+  parseSmsAtmCashToFromNote,
+  shouldImportSmsAtmAsTransfer,
+} from './smsAtmCashTransfer';
+import {
+  isSmsCcPaymentTx,
+  parseSmsCcFundedFromNote,
+  shouldImportSmsCcPaymentAsTransfer,
+} from './smsCcPaymentTransfer';
 
 export type StatementImportContext = {
   accounts: Account[];
@@ -111,7 +121,7 @@ export function validatePreparedStatementInvestmentRow(tx: InvestmentTransaction
   return reasons;
 }
 
-function validatePreparedBankRow(tx: Transaction): string[] {
+function validatePreparedBankRow(tx: Transaction, accounts?: Account[]): string[] {
   const reasons: string[] = [];
   if (!tx.date) reasons.push('missing date');
   if (!tx.description) reasons.push('missing description');
@@ -121,7 +131,47 @@ function validatePreparedBankRow(tx: Transaction): string[] {
   if (!String(tx.accountId || '').trim()) {
     reasons.push('missing account (set Card last-4 or assign in review)');
   }
-  /** Budget mapping is optional — category alone is enough to import; user can tag later. */
+
+  const accountIds = new Set((accounts ?? []).map((a) => String(a.id || '').trim()).filter(Boolean));
+  const isKnownAccount = (id: string | null | undefined) => {
+    const v = String(id || '').trim();
+    if (!v) return false;
+    // When account list is unavailable, only require the id to be non-empty.
+    if (!accounts || accounts.length === 0) return true;
+    return accountIds.has(v);
+  };
+
+  // ATM withdrawals must import as transfers (source → cash) — never as budgeted expenses.
+  if (isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0) {
+    const cashTo = parseSmsAtmCashToFromNote(tx.note);
+    const sourceId = String(tx.accountId || '').trim();
+    if (!cashTo) {
+      reasons.push('ATM withdrawal needs a Cash destination (pick Cash account on the row)');
+    } else if (cashTo === sourceId) {
+      reasons.push('ATM Cash destination must differ from the withdrawn account');
+    } else if (!isKnownAccount(cashTo)) {
+      reasons.push('ATM Cash destination account not found');
+    } else if (!shouldImportSmsAtmAsTransfer(tx)) {
+      reasons.push('ATM withdrawal is not ready to import as a transfer');
+    }
+  }
+
+  // Card سداد settlements must import as transfers (funding → card) — never as income/expense.
+  if (isSmsCcPaymentTx(tx)) {
+    const fundedFrom = parseSmsCcFundedFromNote(tx.note);
+    const cardId = String(tx.accountId || '').trim();
+    if (!fundedFrom) {
+      reasons.push('Card payment (سداد) needs a Paid-from funding account');
+    } else if (fundedFrom === cardId) {
+      reasons.push('Card payment funding account must differ from the card');
+    } else if (!isKnownAccount(fundedFrom)) {
+      reasons.push('Card payment funding account not found');
+    } else if (!shouldImportSmsCcPaymentAsTransfer(tx)) {
+      reasons.push('Card payment is not ready to import as a transfer');
+    }
+  }
+
+  /** Budget mapping is optional for normal expenses — category alone is enough; user can tag later. */
   return reasons;
 }
 
@@ -228,13 +278,18 @@ export function planStatementImport(args: {
       amount: Number(raw.amount) || 0,
       type: raw.type === 'income' ? 'income' : 'expense',
     } as Transaction;
-    const reasons = validatePreparedBankRow(tx);
+    const reasons = validatePreparedBankRow(tx, args.ctx.accounts);
     if (reasons.length > 0) {
       skippedValidation += 1;
       validationMessages.push(`Bank row #${idx + 1}: ${reasons.join(', ')}`);
       return;
     }
-    importableBankRows.push({ tx, idx, displayIdx: idx + 1 });
+    // Never persist a budget link on SMS ledger transfers (ATM / سداد).
+    const cleanedTx =
+      isSmsAtmWithdrawalTx(tx) || isSmsCcPaymentTx(tx)
+        ? ({ ...tx, category: 'Transfer', budgetCategory: undefined } as Transaction)
+        : tx;
+    importableBankRows.push({ tx: cleanedTx, idx, displayIdx: idx + 1 });
   });
 
   args.investmentTransactions.forEach((raw, invIdx) => {

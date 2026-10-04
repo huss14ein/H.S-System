@@ -32,6 +32,70 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).not.toContain('budgetCategory: mapped.budgetCategory ?? tx.budgetCategory');
   });
 
+  it('Statement Upload wires ATM SMS → addTransfer (source debit + cash credit)', () => {
+    const stmt = read('pages/StatementUpload.tsx');
+    expect(stmt).toContain('addTransfer');
+    expect(stmt).toContain('shouldImportSmsAtmAsTransfer');
+    expect(stmt).toContain('parseSmsAtmCashToFromNote');
+    expect(stmt).toContain('selectedAtmMissingCash');
+    expect(stmt).toContain('smsNoteWithAtmMeta');
+    expect(stmt).toContain('Cash account…');
+    const atm = read('services/smsAtmCashTransfer.ts');
+    expect(atm).toContain('applySmsAtmCashTransfers');
+    expect(atm).toContain('resolvePhysicalCashAccount');
+    expect(atm).toContain('physical_cash');
+    const parser = read('services/statementParser.ts');
+    expect(parser).toContain('applySmsAtmCashTransfers');
+    const accounts = read('pages/Accounts.tsx');
+    expect(accounts).toContain('physical_cash');
+    expect(accounts).toContain('Physical cash / wallet');
+    expect(read('types.ts')).toContain("| 'physical_cash'");
+  });
+
+  it('Statement Upload wires سداد CC payment SMS → addTransfer (funding → card) with no budget', () => {
+    const stmt = read('pages/StatementUpload.tsx');
+    expect(stmt).toContain('shouldImportSmsCcPaymentAsTransfer');
+    expect(stmt).toContain('parseSmsCcFundedFromNote');
+    expect(stmt).toContain('selectedCcMissingFunding');
+    expect(stmt).toContain('smsNoteWithCcPaymentMeta');
+    expect(stmt).toContain('Paid from…');
+    expect(stmt).toContain('Not applicable (transfer)');
+    expect(stmt).toContain('isSmsLedgerTransferTx');
+    expect(stmt).toContain("must import as a transfer from a funding account");
+    expect(stmt).toContain("must import as a transfer to Cash");
+    const cc = read('services/smsCcPaymentTransfer.ts');
+    expect(cc).toContain('applySmsCcPaymentTransfers');
+    expect(cc).toContain('resolveCcPaymentFundingAccount');
+    expect(cc).toContain('sms:funded_from');
+    expect(cc).toContain("SMS_CC_PAYMENT_KIND = 'cc_payment'");
+    expect(cc).toContain('smsTextLooksLikeCardSettlement');
+    const patterns = read('services/smsBankTransferPatterns.ts');
+    expect(patterns).toContain('SMS_ATM_WITHDRAWAL_RE');
+    expect(patterns).toContain('SMS_CARD_SETTLEMENT_RE');
+    expect(patterns).toContain('credit\\s*card\\s*(?:payment|settlement|paid)');
+    expect(patterns).toContain('تم\\s*سداد');
+    expect(patterns).toContain('smsLooksLikeCardSettlementCredit');
+    expect(read('tests/smsBankTransferPatterns.vitest.test.ts')).toContain('SNB-style English');
+    expect(read('tests/smsBankTransferPatterns.vitest.test.ts')).toContain('Alinma-style');
+    expect(read('tests/smsBankTransferPatterns.vitest.test.ts')).toContain('SABB/BSF-style');
+    const parser = read('services/statementParser.ts');
+    expect(parser).toContain('applySmsCcPaymentTransfers');
+    expect(parser).toContain('smsNoteWithCcPaymentMeta');
+    expect(parser).toContain('smsTextLooksLikeAtmWithdrawal');
+    expect(parser).toContain('smsTextLooksLikeCardSettlement');
+    const cat = read('services/importTransactionCategorization.ts');
+    expect(cat).toContain('isSmsLedgerTransferTx');
+    expect(cat).toContain('shouldSkipBudgetForImportedTx');
+    expect(cat).toContain('smsTextLooksLikeAtmWithdrawal');
+    const prepare = read('services/statementImportPrepare.ts');
+    expect(prepare).toContain('isSmsCcPaymentTx');
+    expect(prepare).toContain('Paid-from funding account');
+    expect(prepare).toContain('ATM withdrawal needs a Cash destination');
+    const accounts = read('pages/Accounts.tsx');
+    expect(accounts).toContain('Debt servicing');
+    expect(accounts).toContain('SMS سداد imports');
+  });
+
   it('SMS parser merchant-aware dedupe + amount-aware categories', () => {
     const parser = read('services/statementParser.ts');
     expect(parser).toContain('smsDedupeDescriptionKey');
@@ -41,6 +105,8 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('إجمالي');
     expect(parser).toContain('pruneSmsSatelliteTransactions');
     expect(parser).toContain('applySmsAccountRouting');
+    expect(parser).toContain('mergeSmsTransferMetaFromGroup');
+    expect(parser).toContain('sms:kind=(?:atm|cc_payment)');
     expect(parser).not.toMatch(/const key = `\$\{date\}\|\$\{mag\}`;/);
   });
 
@@ -51,7 +117,7 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('parseSmsCardLast4FromNote');
     expect(stmt).toContain('requireSameAccount: true');
     expect(stmt).toContain('import anyway');
-    expect(stmt).toContain('accountId: e.target.value');
+    expect(stmt).toContain('handleExtractedTransactionEdit(index, { accountId: nextSource })');
     expect(stmt).toContain('Default / fallback account (optional)');
     expect(stmt).toContain('disabled={!smsText.trim() || isProcessingFile}');
     expect(stmt).not.toContain("alert('Please select an account')");

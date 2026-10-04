@@ -205,6 +205,7 @@ const AccountModal: React.FC<{
                         <select value={accountRole} onChange={(e) => setAccountRole(e.target.value as AccountRole | '')} className="select-base">
                             <option value="">— Not set —</option>
                             <option value="operating_cash">Operating cash</option>
+                            <option value="physical_cash">Physical cash / wallet</option>
                             <option value="salary_receiving">Salary receiving</option>
                             <option value="bills_payment">Bills payment</option>
                             <option value="emergency_reserve">Emergency reserve</option>
@@ -214,7 +215,7 @@ const AccountModal: React.FC<{
                             <option value="debt_servicing">Debt servicing</option>
                         </select>
                         <p className="mt-1 text-xs text-slate-500">
-                            Use <strong>Salary receiving</strong> and <strong>Investment funding</strong> on your main cash accounts to improve salary-invest attribution confidence.
+                            Use <strong>Physical cash / wallet</strong> for ATM withdrawal credits. Use <strong>Debt servicing</strong> or <strong>Bills payment</strong> on the Checking/Savings that pays credit cards (SMS سداد imports). Use <strong>Salary receiving</strong> and <strong>Investment funding</strong> on your main cash accounts to improve salary-invest attribution confidence.
                         </p>
                     </div>
                 )}

@@ -352,12 +352,14 @@ describe('uiAcks durable reconcile dismissals', () => {
     const banner = read('components/accounts/CashBalanceDriftBanner.tsx');
     expect(banner).toContain('acknowledgeCashBalanceDriftDurable');
     expect(banner).toContain('Keep stored balance');
-    expect(banner).toContain('await ctx.updateSettings({ uiAcks: partial })');
+    expect(banner).toContain('persistChainRef');
+    expect(banner).toContain('mergeUiAcks(latest, partial)');
+    expect(banner).toContain('isBackgroundSyncing');
     expect(banner).toContain('setAcks(next)');
     expect(banner).toContain('writeThrough: true');
-    expect(banner).not.toContain('mergeUiAcks(data.settings?.uiAcks');
     expect(read('pages/Accounts.tsx')).toContain('CashBalanceDriftBanner');
     expect(read('services/uiAcks.ts')).toContain('mergeCashBalanceDriftAckMapsByAt');
+    expect(read('services/uiAcks.ts')).toContain('cashBalanceDriftAckChain');
 
     const notif = read('context/NotificationsContext.tsx');
     expect(notif).toContain('filterUnackedCashDriftWarnings');

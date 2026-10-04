@@ -43,7 +43,8 @@ export function extractSmsCardLast4(block: string): string | null {
     /عبر\s*[:\-]?\s*(\d{4})(?!\d)/,
     /من\s*[:\-]?\s*(\d{4})(?!\d)/,
     /\*(\d{4})(?!\d)/,
-    /card\s*(?:ending|no\.?|#)?\s*[:\-]?\s*(\d{4})(?!\d)/i,
+    /card\s*(?:ending|no\.?|#|number)?\s*[:\-]?\s*(\d{4})(?!\d)/i,
+    /(?:ending|آخر\s*4)\s*[:\-]?\s*(\d{4})(?!\d)/i,
   ];
   for (const re of patterns) {
     const m = text.match(re);

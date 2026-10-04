@@ -68,6 +68,7 @@ export type ApprovalStatus = 'Pending' | 'Approved' | 'Rejected';
 /** Account role for cash allocation and sweep logic (logic layer). */
 export type AccountRole =
   | 'operating_cash'
+  | 'physical_cash'
   | 'salary_receiving'
   | 'bills_payment'
   | 'emergency_reserve'

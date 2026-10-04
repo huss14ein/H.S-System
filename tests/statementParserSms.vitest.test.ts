@@ -585,6 +585,7 @@ SAR مبلغ:50.00
       { id: 'a5280', name: 'Visa 5280', type: 'Credit' as const, balance: 0, lastFourDigits: '5280' },
       { id: 'a8529', name: 'Mada 8529', type: 'Checking' as const, balance: 0, lastFourDigits: '8529' },
       { id: 'a3138', name: 'Acct 3138', type: 'Checking' as const, balance: 0, lastFourDigits: '3138' },
+      { id: 'cash-1', name: 'Cash', type: 'Checking' as const, balance: 0, accountRole: 'physical_cash' as const },
     ];
 
     const res = await parseSMSTransactions(sms, '', { accounts });
@@ -593,11 +594,15 @@ SAR مبلغ:50.00
     const byAmt = (n: number, sign: 1 | -1 = -1) =>
       res.transactions.find((t) => Math.abs(t.amount - sign * n) < 0.02);
 
-    expect(byAmt(4830.71)?.date).toBe('2026-08-31');
-    expect(byAmt(4830.71)?.accountId).toBe('a7365');
-    expect(byAmt(4830.71)?.note).toContain('sms:card=7365');
+    expect(byAmt(4830.71, 1)?.date).toBe('2026-08-31');
+    expect(byAmt(4830.71, 1)?.accountId).toBe('a7365');
+    expect(byAmt(4830.71, 1)?.type).toBe('income');
+    expect(byAmt(4830.71, 1)?.category).toBe('Transfer');
+    expect(byAmt(4830.71, 1)?.note).toContain('sms:card=7365');
 
-    expect(byAmt(669.99)?.accountId).toBe('a5280');
+    expect(byAmt(669.99, 1)?.accountId).toBe('a5280');
+    expect(byAmt(669.99, 1)?.type).toBe('income');
+    expect(byAmt(669.99, 1)?.category).toBe('Transfer');
     expect(byAmt(8)?.description.toLowerCase()).toContain('durrat');
     expect(byAmt(8)?.accountId).toBe('a8529');
     expect(byAmt(91.77)?.description.toUpperCase()).toContain('CURSOR');
@@ -623,7 +628,11 @@ SAR مبلغ:50.00
     expect(byAmt(300.58)?.accountId).toBe('a3138');
     expect(byAmt(34.59)?.description.toUpperCase()).toContain('NETLIFY');
     expect(byAmt(450)?.description.toUpperCase()).toContain('ALFALAH');
+    expect(byAmt(450)?.note).toContain('sms:kind=atm');
+    expect(byAmt(450)?.note).toContain('sms:cash_to=cash-1');
+    expect(byAmt(450)?.accountId).toBe('a8529');
     expect(byAmt(1000)?.description.toUpperCase()).toContain('TAMIM');
+    expect(byAmt(1000)?.note).toContain('sms:cash_to=cash-1');
     expect(byAmt(29.59)?.description.toUpperCase()).toContain('UBR');
 
     // No balance / fee / USD ghosts
@@ -640,10 +649,10 @@ SAR مبلغ:50.00
     // Same-day SMS clock times stamped for newest-first ordering
     expect(byAmt(15.64)?.note).toContain('sms:time=19:37');
     expect(byAmt(260)?.note).toContain('sms:time=19:15');
-    expect(byAmt(4830.71)?.note).toContain('sms:time=22:35');
+    expect(byAmt(4830.71, 1)?.note).toContain('sms:time=22:35');
   });
 
-  it('parses Visa سداد settlement SMS as separate expense rows', async () => {
+  it('parses Visa سداد settlement SMS as credit (payment onto the card), not expense', async () => {
     const sms = `بطاقة فيزا:سداد بـSR 4830.71
 عبر7365;فيزا
 رصيد:4968.74 SR
@@ -654,10 +663,95 @@ SAR مبلغ:50.00
 31/8/26 22:36`;
     const res = await parseSMSTransactions(sms, 'acc-sadad');
     expect(res.transactions.length).toBe(2);
-    expect(res.transactions.some((t) => Math.abs(t.amount + 4830.71) < 0.01)).toBe(true);
-    expect(res.transactions.some((t) => Math.abs(t.amount + 669.99) < 0.01)).toBe(true);
-    expect(res.transactions.every((t) => t.type === 'expense')).toBe(true);
+    expect(res.transactions.some((t) => Math.abs(t.amount - 4830.71) < 0.01)).toBe(true);
+    expect(res.transactions.some((t) => Math.abs(t.amount - 669.99) < 0.01)).toBe(true);
+    expect(res.transactions.every((t) => t.type === 'income')).toBe(true);
+    expect(res.transactions.every((t) => t.category === 'Transfer')).toBe(true);
     expect(res.transactions.every((t) => Math.abs(Math.abs(t.amount) - 4968.74) > 0.01)).toBe(true);
+  });
+
+  it('parses عكس عملية reversal as income with merchant name', async () => {
+    const sms = `عكس عملية
+بطاقة:7365;فيزا
+مبلغ:17.62 SAR
+لدى:Panda onl
+رصيد:336.53 SAR
+14/9/26 14:32`;
+    const res = await parseSMSTransactions(sms, 'acc-aks');
+    expect(res.transactions.length).toBe(1);
+    expect(res.transactions[0].amount).toBeCloseTo(17.62, 2);
+    expect(res.transactions[0].type).toBe('income');
+    expect(res.transactions[0].category).toBe('Income');
+    expect(res.transactions[0].description.toLowerCase()).toContain('panda');
+    expect(res.transactions[0].date).toBe('2026-09-14');
+  });
+
+  it('parses user Sept paste: سداد +1000 credit, d/m and y/m/d dates, totals with fees', async () => {
+    const sms = `شراء PoS
+عبر:8529;مدى-ابل باي
+بـSAR 8
+لـDurrat Al
+\u061C2/9/26 19:46
+حوالة داخلية صادرة بـSR 5500
+من3138
+لـ1527;محمد ابوصوله
+26/9/6 23:14
+حوالة محلية صادرة بـSR 300
+من3138
+لـ0102;abdullah alsaggaf
+رسوم:SR 0.58
+26/9/9 20:47
+عكس عملية
+بطاقة:7365;فيزا
+مبلغ:17.62 SAR
+لدى:Panda onl
+رصيد:336.53 SAR
+\u061C14/9/26 14:32
+بطاقة فيزا:سداد بـSR 1000 
+عبر7365;فيزا
+رصيد:1035.48 SR 
+\u061C25/9/26 21:25
+شراء إنترنت بـSR 85.1 
+عبر7365;فيزا
+لـKeeta
+رصيد:950.38 SR
+\u061C25/9/26 21:25
+شراء انترنت
+بطاقة:5280 ;فيزا
+مبلغ: 926.16 SAR
+لدى:AGODA.COM
+رسوم وضريبة: 21.30 SAR
+اجمالي المبلغ المستحق: 947.46 SAR
+دولة:UK
+رصيد:45046.39 SAR
+في:20/9/26 23:40`;
+    const accounts = [
+      { id: 'a7365', name: 'Visa 7365', type: 'Credit' as const, balance: 0, lastFourDigits: '7365' },
+      { id: 'a5280', name: 'Visa 5280', type: 'Credit' as const, balance: 0, lastFourDigits: '5280' },
+      { id: 'a8529', name: 'Mada 8529', type: 'Checking' as const, balance: 0, lastFourDigits: '8529' },
+      { id: 'a3138', name: 'Acct 3138', type: 'Checking' as const, balance: 0, lastFourDigits: '3138' },
+    ];
+    const res = await parseSMSTransactions(sms, 'fallback', { accounts });
+    expect(res.transactions.length).toBe(7);
+
+    const sadad = res.transactions.find((t) => Math.abs(t.amount - 1000) < 0.01);
+    expect(sadad).toBeDefined();
+    expect(sadad!.type).toBe('income');
+    expect(sadad!.category).toBe('Transfer');
+    expect(sadad!.accountId).toBe('a7365');
+    expect(sadad!.date).toBe('2026-09-25');
+    expect(sadad!.note).toContain('sms:time=21:25');
+
+    expect(res.transactions.find((t) => Math.abs(t.amount + 8) < 0.01)?.date).toBe('2026-09-02');
+    expect(res.transactions.find((t) => Math.abs(t.amount + 5500) < 0.01)?.date).toBe('2026-09-06');
+    expect(res.transactions.find((t) => Math.abs(t.amount + 300.58) < 0.01)?.date).toBe('2026-09-09');
+    expect(res.transactions.find((t) => Math.abs(t.amount - 17.62) < 0.01)?.type).toBe('income');
+    expect(res.transactions.find((t) => Math.abs(t.amount + 85.1) < 0.01)?.accountId).toBe('a7365');
+    expect(res.transactions.find((t) => Math.abs(t.amount + 947.46) < 0.01)?.accountId).toBe('a5280');
+    // Must not book سداد as a second -1000 expense
+    expect(res.transactions.filter((t) => Math.abs(t.amount + 1000) < 0.01).length).toBe(0);
+    // Balance ghost
+    expect(res.transactions.every((t) => Math.abs(Math.abs(t.amount) - 1035.48) > 0.01)).toBe(true);
   });
 
   it('parses ATM withdrawal with بSR (no tatweel) and branch line', async () => {
@@ -672,5 +766,7 @@ SAR مبلغ:50.00
     expect(res.transactions[0].date).toBe('2026-09-13');
     expect(res.transactions[0].description.toUpperCase()).toContain('ALFALAH');
     expect(res.transactions[0].note).toContain('sms:card=8529');
+    expect(res.transactions[0].note).toContain('sms:kind=atm');
+    expect(res.transactions[0].category).toBe('Transfer');
   });
 });

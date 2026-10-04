@@ -51,6 +51,7 @@ function digestNormalizeAccount(raw: Record<string, unknown>): Account {
   const roleRaw = String(raw.accountRole ?? raw.account_role ?? '').trim();
   const knownRoles = new Set([
     'operating_cash',
+    'physical_cash',
     'salary_receiving',
     'bills_payment',
     'emergency_reserve',
