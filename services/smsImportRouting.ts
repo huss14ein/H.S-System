@@ -34,16 +34,29 @@ export function withAccountCardLast4(
 
 /**
  * Extract card/account last-4 from a single SMS block.
- * Supports: بطاقة:7365, عبر:8529, عبر7365, من3138, *3282
+ * Prefers card masks (بطاقة / عبر / مدى) over bare حساب / * masks.
+ * Never treats لحساب / لـ#### destination masks as the source account.
  */
 export function extractSmsCardLast4(block: string): string | null {
-  const text = String(block || '');
+  const text = String(block || '')
+    // Destination-only masks must not route the debiting/source account.
+    .replace(/لحساب\s*\*{0,2}\d{4}/gi, ' ')
+    .replace(/لـ\s*\d{4}(?!\d)/g, ' ');
+
   const patterns = [
-    /بطاقة\s*[:\-]?\s*(\d{4})(?!\d)/,
+    // Credit / debit card lines (Alinma: بطاقة ائتمانية **3282 / البطاقة الائتمانية: **3282)
+    /البطاقة\s*الائتمانية\s*[:\-]?\s*\*{0,2}(\d{4})(?!\d)/,
+    /بطاقة(?:\s*ائتمانية)?\s*[:\-]?\s*\*{0,2}(\d{4})(?!\d)/,
     /عبر\s*[:\-]?\s*(\d{4})(?!\d)/,
+    // Mada POS title: شراء POS-مدى 4136*-أثير
+    /مدى\s*(\d{4})\s*\*/,
+    /(\d{4})\s*\*(?:-أثير)?/,
+    // Al Rajhi source account: من3138
     /من\s*[:\-]?\s*(\d{4})(?!\d)/,
-    /\*(\d{4})(?!\d)/,
-    /card\s*(?:ending|no\.?|#|number)?\s*[:\-]?\s*(\d{4})(?!\d)/i,
+    // Generic *mask / حساب *mask (lower priority; transfers without a card line)
+    /حساب\s*\*{0,2}(\d{4})(?!\d)/,
+    /\*{1,2}(\d{4})(?!\d)/,
+    /card\s*(?:ending|no\.?|#|number)?\s*[:\-]?\s*\*{0,2}(\d{4})(?!\d)/i,
     /(?:ending|آخر\s*4)\s*[:\-]?\s*(\d{4})(?!\d)/i,
   ];
   for (const re of patterns) {

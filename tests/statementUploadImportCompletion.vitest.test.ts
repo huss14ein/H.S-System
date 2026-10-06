@@ -80,6 +80,8 @@ describe('statementUploadImportCompletion', () => {
     const guards = read('services/smsImportTransferGuards.ts');
     expect(guards).toContain('isSmsAccountTransferTx');
     expect(read('tests/smsAccountTransfer.vitest.test.ts')).toContain('حوالة محلية صادرة');
+    expect(read('tests/smsAlinmaFullPaste.vitest.test.ts')).toContain('parses all 28 rows');
+    expect(read('tests/smsAlinmaPaste.vitest.test.ts')).toContain('لحساب *7000');
   });
 
   it('Statement Upload wires سداد CC payment SMS → addTransfer (funding → card) with no budget', () => {
@@ -133,6 +135,9 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('inferImportTransactionCategory');
     expect(parser).toContain('classifySmsIsDebit');
     expect(parser).toContain('إجمالي');
+    expect(parser).toContain('المبلغ\\s*المستحق');
+    expect(parser).toContain('isSmsTrailingMetaLine');
+    expect(parser).toContain('cleanSmsMerchantLabel');
     expect(parser).toContain('pruneSmsSatelliteTransactions');
     expect(parser).toContain('applySmsAccountRouting');
     expect(parser).toContain('mergeSmsTransferMetaFromGroup');
@@ -157,6 +162,8 @@ describe('statementUploadImportCompletion', () => {
     const routing = read('services/smsImportRouting.ts');
     expect(routing).toContain('extractSmsCardLast4');
     expect(routing).toContain('applySmsAccountRouting');
+    expect(routing).toContain('لحساب');
+    expect(routing).toContain('مدى\\s*(\\d{4})');
     const prepare = read('services/statementImportPrepare.ts');
     expect(prepare).toContain('missing account (set Card last-4 or assign in review)');
     const ctx = read('context/DataContext.tsx');

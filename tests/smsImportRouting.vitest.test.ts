@@ -22,6 +22,9 @@ describe('smsImportRouting', () => {
     expect(extractSmsCardLast4('عبر7365;فيزا-ابل باي')).toBe('7365');
     expect(extractSmsCardLast4('من3138\nلـ0102;user')).toBe('3138');
     expect(extractSmsCardLast4('بطاقة ائتمانية *3282')).toBe('3282');
+    expect(extractSmsCardLast4('بطاقة ائتمانية **3282\nحساب **0001')).toBe('3282');
+    expect(extractSmsCardLast4('شراء POS-مدى 4136*-أثير')).toBe('4136');
+    expect(extractSmsCardLast4('لحساب *7000\nلـ فاطمه')).toBeNull();
     expect(normalizeCardLast4('xx7365yy')).toBe('7365');
   });
 
