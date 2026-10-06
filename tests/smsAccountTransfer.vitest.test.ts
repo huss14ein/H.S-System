@@ -146,7 +146,7 @@ describe('parseSMSTransactions — حوالة as account transfer', () => {
 });
 
 describe('applySmsAccountTransfers', () => {
-  it('attaches transfer_to when destination last-4 uniquely matches', () => {
+  it('attaches transfer_to when source is known and destination last-4 uniquely matches', () => {
     const result = applySmsAccountTransfers(
       [
         {
@@ -166,6 +166,31 @@ describe('applySmsAccountTransfers', () => {
     expect(result.expandedCount).toBe(1);
     expect(parseSmsAccountTransferToFromNote(result.transactions[0].note)).toBe('sav-0001');
     expect(result.transactions[0].description).toMatch(/Transfer → Savings 0001/);
+  });
+
+  it('does not auto-internal when only destination last-4 matches (external payee collision)', () => {
+    const result = applySmsAccountTransfers(
+      [
+        {
+          id: 't-ext',
+          date: '2026-08-29',
+          description: 'فاطمه فهمي محمد السقاف',
+          amount: -500,
+          category: 'Transfer',
+          accountId: '',
+          type: 'expense',
+          status: 'Approved',
+          note: 'sms:time=21:31 sms:kind=account_transfer sms:to_card=0001',
+        },
+      ],
+      accounts,
+    );
+    expect(result.expandedCount).toBe(0);
+    expect(parseSmsAccountTransferToFromNote(result.transactions[0].note)).toBeNull();
+    expect(result.transactions[0].note).toContain('sms:xfer_scope=external');
+    expect(result.transactions[0].description).toMatch(/فاطمه/);
+    expect(result.transactions[0].description).not.toMatch(/Transfer →/);
+    expect(result.warnings.some((w) => /matches/i.test(w))).toBe(true);
   });
 });
 

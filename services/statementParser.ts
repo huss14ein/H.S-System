@@ -1174,6 +1174,8 @@ function cleanSmsMerchantLabel(raw: string): string {
     .replace(/^[A-Z]{2}\s*\/\s*/i, '')
     .replace(/^[A-Z]{2}-\s+/i, '')
     .replace(/^\/\s*/, '')
+    // Bank SMS often truncates merchant with a trailing *
+    .replace(/\*+\s*$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

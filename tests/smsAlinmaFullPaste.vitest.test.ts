@@ -6,7 +6,7 @@ vi.mock('../services/geminiService', () => ({
 
 import { parseSMSTransactions } from '../services/statementParser';
 import { invokeAI } from '../services/geminiService';
-import { shouldImportSmsAccountAsTransfer } from '../services/smsAccountTransfer';
+import { parseSmsAccountTransferToFromNote, shouldImportSmsAccountAsTransfer } from '../services/smsAccountTransfer';
 import { planStatementImport } from '../services/statementImportPrepare';
 import type { Account } from '../types';
 
@@ -209,9 +209,19 @@ describe('Alinma full user paste regression', () => {
 
     const out500 = res.transactions.find((t) => Math.abs(t.amount + 500) < 0.01)!;
     expect(out500.accountId).not.toBe('chk-7000');
-    expect(out500.note).toContain('sms:transfer_to=chk-7000');
+    expect(out500.note).toContain('sms:to_card=7000');
+    expect(out500.note).toContain('sms:xfer_scope=external');
+    expect(out500.note).not.toMatch(/sms:transfer_to=/);
     expect(out500.description).toMatch(/فاطمه/);
+    expect(out500.description).not.toMatch(/Transfer →|Savings 7000/i);
+    expect(out500.category).toBe('Other');
     expect(shouldImportSmsAccountAsTransfer(out500)).toBe(false);
+
+    const out1046 = res.transactions.find((t) => Math.abs(t.amount + 1046) < 0.01)!;
+    expect(out1046.note).toContain('sms:xfer_scope=external');
+    expect(out1046.note).not.toMatch(/sms:transfer_to=/);
+    expect(out1046.description).toMatch(/فاطمه/);
+    expect(out1046.accountId).not.toBe('chk-7000');
 
     const in2500 = res.transactions.filter((t) => Math.abs(t.amount - 2500) < 0.01);
     expect(in2500).toHaveLength(2);
@@ -236,9 +246,10 @@ describe('Alinma full user paste regression', () => {
 
     const luxury = res.transactions.find((t) => Math.abs(t.amount + 400) < 0.01)!;
     expect(luxury.description).toMatch(/Luxury Car/i);
+    expect(luxury.description).not.toMatch(/\*$/);
     expect(luxury.accountId).toBe('cc-3282');
 
-    // Assign source on outgoing حوالة; unpaired واردة defaults to external income.
+    // Outgoing Alinma حوالة is external expense — only needs a source account (not Transfer-to).
     const prepared = res.transactions.map((t) => {
       if (
         /sms:kind=account_transfer\b/i.test(String(t.note || '')) &&
@@ -249,6 +260,13 @@ describe('Alinma full user paste regression', () => {
       }
       return t;
     });
+    // No row should credit destination 7000 as if it were the user's savings transfer.
+    for (const t of prepared) {
+      if (/sms:kind=account_transfer\b/i.test(String(t.note || '')) && !/account_transfer_in/.test(String(t.note || ''))) {
+        expect(parseSmsAccountTransferToFromNote(t.note)).toBeNull();
+        expect(shouldImportSmsAccountAsTransfer(t)).toBe(false);
+      }
+    }
     const plan = planStatementImport({
       bankTransactions: prepared,
       investmentTransactions: [],

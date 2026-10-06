@@ -68,7 +68,7 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
     expect(smsTextLooksLikeAccountTransferOut('حوالة واردة محلية')).toBe(false);
   });
 
-  it('parses outgoing لحساب *7000 without debiting the destination', async () => {
+  it('parses outgoing لحساب *7000 as external expense (never auto-credit own *7000)', async () => {
     const sms = `حوالة صادرة داخلية
 مبلغ 500.00 ريال
 لـ فاطمه فهمي محمد السقاف
@@ -78,21 +78,20 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
     expect(res.transactions).toHaveLength(1);
     const tx = res.transactions[0];
     expect(tx.amount).toBeCloseTo(-500, 2);
-    expect(tx.category).toBe('Transfer');
+    expect(tx.type).toBe('expense');
+    expect(tx.category).toBe('Other');
     expect(tx.accountId).not.toBe('chk-7000');
     expect(tx.description).toMatch(/فاطمه/);
+    expect(tx.description).not.toMatch(/Savings 7000|Transfer →/i);
     expect(tx.note).toContain('sms:to_card=7000');
-    expect(tx.note).toContain('sms:transfer_to=chk-7000');
+    expect(tx.note).toContain('sms:xfer_scope=external');
+    expect(tx.note).not.toMatch(/sms:transfer_to=/);
     expect(tx.note).not.toMatch(/sms:card=7000/);
-    // Needs a source account before addTransfer.
     expect(shouldImportSmsAccountAsTransfer(tx)).toBe(false);
-    const ready = {
-      ...tx,
-      accountId: 'chk-0001',
-      note: `${tx.note} `.replace(/\s+$/, ''),
-    };
-    // With source assigned, transfer_to remains.
-    expect(parseSmsAccountTransferToFromNote(ready.note)).toBe('chk-7000');
+    // Even after assigning a source, dest-only SMS stays external until user picks Between my accounts.
+    const withSource = { ...tx, accountId: 'chk-0001' };
+    expect(parseSmsAccountTransferToFromNote(withSource.note)).toBeNull();
+    expect(shouldImportSmsAccountAsTransfer(withSource)).toBe(false);
   });
 
   it('parses unpaired حوالة واردة as external income (switch to From my account for transfer)', async () => {

@@ -82,6 +82,8 @@ describe('statementUploadImportCompletion', () => {
     expect(acct).toContain('sms:transfer_from');
     expect(acct).toContain('sms:xfer_scope');
     expect(acct).toContain('resolveSmsAccountTransferScope');
+    expect(acct).toContain('canAutoInternal');
+    expect(acct).toContain('never credit the user');
     expect(acct).toContain('resolveAccountTransferDestination');
     const patterns = read('services/smsBankTransferPatterns.ts');
     expect(patterns).toContain('SMS_ACCOUNT_TRANSFER_OUT_RE');

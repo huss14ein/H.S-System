@@ -279,8 +279,12 @@ export type SmsAccountTransferResult = {
 };
 
 /**
- * After last-4 routing: mark outgoing حوالة rows and attach `sms:transfer_to` when the
- * destination last-4 uniquely matches one of the user's accounts.
+ * After last-4 routing: mark outgoing حوالة rows.
+ *
+ * Auto-internal (addTransfer) ONLY when the SMS source account is known AND the
+ * destination last-4 uniquely matches a different owned account. Dest-only matches
+ * (common Alinma `لحساب *####` to an external payee) must stay external expenses —
+ * never credit the user's account that happens to share the same last-4.
  */
 export function applySmsAccountTransfers(
   transactions: Transaction[],
@@ -290,6 +294,7 @@ export function applySmsAccountTransfers(
   let expandedCount = 0;
   let unresolvedCount = 0;
   let warnedAmbiguous = false;
+  let warnedDestOnlyMatch = false;
 
   const out = transactions.map((tx) => {
     const blob = `${tx.description || ''}\n${tx.note || ''}`;
@@ -312,17 +317,25 @@ export function applySmsAccountTransfers(
     });
 
     const beneficiary = String(tx.description || '').trim() || 'Transfer';
+    const cleanDesc =
+      beneficiary.replace(/^Transfer\s*(→[^·]*·?\s*|·\s*)?/i, '').trim() || beneficiary;
 
-    if (!resolved.account) {
+    // Strong signal only: known source + unique dest among own accounts.
+    const canAutoInternal = Boolean(sourceId && resolved.account && resolved.account.id !== sourceId);
+
+    if (!canAutoInternal) {
       unresolvedCount += 1;
       if (resolved.reason === 'ambiguous' && !warnedAmbiguous) {
         warnedAmbiguous = true;
         warnings.push(
-          `Destination ••••${destLast4} matches multiple accounts (${resolved.candidates.map((a) => a.name).join(', ')}). Pick “Between my accounts” + Transfer to, or leave as External expense.`,
+          `Destination ••••${destLast4} matches multiple accounts (${resolved.candidates.map((a) => a.name).join(', ')}). Pick “Between my accounts” + Transfer to only if that is your account.`,
+        );
+      } else if (resolved.account && !sourceId && !warnedDestOnlyMatch) {
+        warnedDestOnlyMatch = true;
+        warnings.push(
+          `Destination ••••${destLast4} also matches “${resolved.account.name}”, but the SMS has no source account. Left as External expense — switch to “Between my accounts” only if you sent this to yourself.`,
         );
       }
-      // Unmatched destination defaults to external expense (budgetable), not a forced Transfer.
-      const cleanDesc = beneficiary.replace(/^Transfer\s*(→[^·]*·?\s*|·\s*)?/i, '').trim() || beneficiary;
       return {
         ...tx,
         category: 'Other',
@@ -340,17 +353,17 @@ export function applySmsAccountTransfers(
     }
 
     expandedCount += 1;
-    const toName = resolved.account.name;
+    const toName = resolved.account!.name;
     return {
       ...tx,
       category: 'Transfer',
       budgetCategory: undefined,
-      description: `Transfer → ${toName}${beneficiary && !/^Transfer\b/i.test(beneficiary) ? ` · ${beneficiary}` : ''}`,
+      description: `Transfer → ${toName}${cleanDesc && !/^Transfer\b/i.test(cleanDesc) ? ` · ${cleanDesc}` : ''}`,
       note: smsNoteWithAccountTransferMeta(tx.note, {
         last4,
         time,
         destLast4,
-        transferToAccountId: resolved.account.id,
+        transferToAccountId: resolved.account!.id,
         feeAmount: fee,
         scope: 'internal',
       }),
