@@ -7,14 +7,19 @@ import {
   isSmsCcPaymentTx,
   shouldImportSmsCcPaymentAsTransfer,
 } from './smsCcPaymentTransfer';
+import {
+  isSmsAccountTransferTx,
+  shouldImportSmsAccountAsTransfer,
+} from './smsAccountTransfer';
 import { isInternalTransferTransaction } from './transactionFilters';
 
-/** ATM withdrawal or card سداد settlement — never spending, never budget. */
+/** ATM / سداد / حوالة ledger transfers — never spending, never budget. */
 export function isSmsLedgerTransferTx(
   tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount'>,
 ): boolean {
   if (isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0) return true;
   if (isSmsCcPaymentTx(tx)) return true;
+  if (isSmsAccountTransferTx(tx)) return true;
   return false;
 }
 
@@ -31,5 +36,9 @@ export function shouldSkipBudgetForImportedTx(
 export function shouldImportSmsRowAsTransfer(
   tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount' | 'accountId'>,
 ): boolean {
-  return shouldImportSmsAtmAsTransfer(tx) || shouldImportSmsCcPaymentAsTransfer(tx);
+  return (
+    shouldImportSmsAtmAsTransfer(tx) ||
+    shouldImportSmsCcPaymentAsTransfer(tx) ||
+    shouldImportSmsAccountAsTransfer(tx)
+  );
 }

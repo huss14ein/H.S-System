@@ -52,6 +52,36 @@ describe('statementUploadImportCompletion', () => {
     expect(read('types.ts')).toContain("| 'physical_cash'");
   });
 
+  it('Statement Upload wires حوالة SMS → addTransfer (source → destination) with fee, no budget', () => {
+    const stmt = read('pages/StatementUpload.tsx');
+    expect(stmt).toContain('shouldImportSmsAccountAsTransfer');
+    expect(stmt).toContain('parseSmsAccountTransferToFromNote');
+    expect(stmt).toContain('smsAccountTransferPrincipalAmount');
+    expect(stmt).toContain('parseSmsTransferFeeFromNote');
+    expect(stmt).toContain('smsNoteWithAccountTransferMeta');
+    expect(stmt).toContain('Transfer to…');
+    expect(stmt).toContain('Local transfer (حوالة)');
+    const acct = read('services/smsAccountTransfer.ts');
+    expect(acct).toContain('applySmsAccountTransfers');
+    expect(acct).toContain("SMS_ACCOUNT_TRANSFER_KIND = 'account_transfer'");
+    expect(acct).toContain('sms:transfer_to');
+    expect(acct).toContain('resolveAccountTransferDestination');
+    const patterns = read('services/smsBankTransferPatterns.ts');
+    expect(patterns).toContain('SMS_ACCOUNT_TRANSFER_OUT_RE');
+    expect(patterns).toContain('حوالة\\s*(?:محلية|داخلية|فورية)?\\s*صادرة');
+    expect(patterns).toContain('extractSmsTransferDestinationLast4');
+    const parser = read('services/statementParser.ts');
+    expect(parser).toContain('applySmsAccountTransfers');
+    expect(parser).toContain('smsNoteWithAccountTransferMeta');
+    expect(parser).toContain('sms:kind=(?:atm|cc_payment|account_transfer)');
+    const prepare = read('services/statementImportPrepare.ts');
+    expect(prepare).toContain('isSmsAccountTransferTx');
+    expect(prepare).toContain('shouldImportSmsAccountAsTransfer');
+    const guards = read('services/smsImportTransferGuards.ts');
+    expect(guards).toContain('isSmsAccountTransferTx');
+    expect(read('tests/smsAccountTransfer.vitest.test.ts')).toContain('حوالة محلية صادرة');
+  });
+
   it('Statement Upload wires سداد CC payment SMS → addTransfer (funding → card) with no budget', () => {
     const stmt = read('pages/StatementUpload.tsx');
     expect(stmt).toContain('shouldImportSmsCcPaymentAsTransfer');
@@ -106,7 +136,7 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('pruneSmsSatelliteTransactions');
     expect(parser).toContain('applySmsAccountRouting');
     expect(parser).toContain('mergeSmsTransferMetaFromGroup');
-    expect(parser).toContain('sms:kind=(?:atm|cc_payment)');
+    expect(parser).toContain('sms:kind=(?:atm|cc_payment|account_transfer)');
     expect(parser).not.toMatch(/const key = `\$\{date\}\|\$\{mag\}`;/);
   });
 

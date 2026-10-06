@@ -7,6 +7,7 @@ vi.mock('../services/geminiService', () => ({
 import {
   smsTextLooksLikeAtmWithdrawal,
   smsTextLooksLikeCardSettlement,
+  smsTextLooksLikeAccountTransferOut,
 } from '../services/smsBankTransferPatterns';
 import { parseSMSTransactions } from '../services/statementParser';
 import { invokeAI } from '../services/geminiService';
@@ -47,6 +48,13 @@ describe('smsBankTransferPatterns (multi-bank)', () => {
     expect(smsTextLooksLikeAtmWithdrawal('Withdrawn from ATM SAR 100')).toBe(true);
     expect(smsTextLooksLikeAtmWithdrawal('شراء عبر نقاط البيع لدى CAFE')).toBe(false);
     expect(smsTextLooksLikeAtmWithdrawal('Purchase SAR 150.50')).toBe(false);
+  });
+
+  it('detects outgoing حوالة / local transfers without matching POS', () => {
+    expect(smsTextLooksLikeAccountTransferOut('حوالة محلية صادرة بـSR 2500')).toBe(true);
+    expect(smsTextLooksLikeAccountTransferOut('حوالة داخلية صادرة بـSR 5500')).toBe(true);
+    expect(smsTextLooksLikeAccountTransferOut('Local transfer out SAR 100')).toBe(true);
+    expect(smsTextLooksLikeAccountTransferOut('شراء عبر نقاط البيع لدى CAFE')).toBe(false);
   });
 
   it('detects card settlements across banks without matching POS payments', () => {

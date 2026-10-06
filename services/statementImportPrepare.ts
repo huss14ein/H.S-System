@@ -24,6 +24,11 @@ import {
   parseSmsCcFundedFromNote,
   shouldImportSmsCcPaymentAsTransfer,
 } from './smsCcPaymentTransfer';
+import {
+  isSmsAccountTransferTx,
+  parseSmsAccountTransferToFromNote,
+  shouldImportSmsAccountAsTransfer,
+} from './smsAccountTransfer';
 
 export type StatementImportContext = {
   accounts: Account[];
@@ -171,6 +176,20 @@ function validatePreparedBankRow(tx: Transaction, accounts?: Account[]): string[
     }
   }
 
+  // Outgoing حوالة with a chosen destination must import via addTransfer (source → to).
+  // Unresolved destination (external payee) may still import as a single Transfer-category row.
+  if (isSmsAccountTransferTx(tx) && shouldImportSmsAccountAsTransfer(tx)) {
+    const transferTo = parseSmsAccountTransferToFromNote(tx.note);
+    const sourceId = String(tx.accountId || '').trim();
+    if (!transferTo) {
+      reasons.push('Account transfer needs a Transfer-to destination account');
+    } else if (transferTo === sourceId) {
+      reasons.push('Account transfer destination must differ from the source account');
+    } else if (!isKnownAccount(transferTo)) {
+      reasons.push('Account transfer destination account not found');
+    }
+  }
+
   /** Budget mapping is optional for normal expenses — category alone is enough; user can tag later. */
   return reasons;
 }
@@ -284,9 +303,9 @@ export function planStatementImport(args: {
       validationMessages.push(`Bank row #${idx + 1}: ${reasons.join(', ')}`);
       return;
     }
-    // Never persist a budget link on SMS ledger transfers (ATM / سداد).
+    // Never persist a budget link on SMS ledger transfers (ATM / سداد / حوالة).
     const cleanedTx =
-      isSmsAtmWithdrawalTx(tx) || isSmsCcPaymentTx(tx)
+      isSmsAtmWithdrawalTx(tx) || isSmsCcPaymentTx(tx) || isSmsAccountTransferTx(tx)
         ? ({ ...tx, category: 'Transfer', budgetCategory: undefined } as Transaction)
         : tx;
     importableBankRows.push({ tx: cleanedTx, idx, displayIdx: idx + 1 });
