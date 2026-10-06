@@ -324,6 +324,9 @@ export interface CandlePoint {
   price: number;
 }
 
+/** Daily close with calendar timestamp (UTC ms at day resolution from the feed). */
+export type DatedClose = { dayMs: number; price: number };
+
 /**
  * Stooq symbol for historical CSV: Saudi tickers use `2222.sr` (also works for .SA / .SE aliases).
  * US: `aapl.us`; class shares: `brk-a.us`.
@@ -337,8 +340,8 @@ export function toStooqSymbol(symbol: string): string {
   return hadDot ? lower : `${lower}.us`;
 }
 
-/** Fetch ~1 month of daily close prices from Stooq (no API key). Used when Finnhub has no data (e.g. Tadawul). */
-async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
+/** Fetch ~1 month of dated daily closes from Stooq (no API key). */
+async function getStooqDailyClosesDated(symbol: string, lookbackDays = 45): Promise<DatedClose[]> {
   const stooqSym = toStooqSymbol(symbol);
   try {
     const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSym)}&i=d`;
@@ -348,7 +351,7 @@ async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
     const lines = csv.trim().split('\n');
     if (lines.length < 2) return [];
     const rows = lines.slice(1).map((line) => line.split(','));
-    const withDate: { date: number; close: number }[] = [];
+    const withDate: DatedClose[] = [];
     for (const row of rows) {
       if (row.length < 5) continue;
       const dateStr = row[0];
@@ -356,43 +359,54 @@ async function getStooqCandles1M(symbol: string): Promise<CandlePoint[]> {
       if (!Number.isFinite(close) || close <= 0) continue;
       const date = dateStr ? new Date(dateStr).getTime() : NaN;
       if (!Number.isFinite(date)) continue;
-      withDate.push({ date, close });
+      withDate.push({ dayMs: date, price: close });
     }
     if (withDate.length === 0) return [];
-    withDate.sort((a, b) => a.date - b.date);
-    const last31 = withDate.slice(-31);
-    return last31.map((p, i) => ({ day: i, price: p.close }));
+    withDate.sort((a, b) => a.dayMs - b.dayMs);
+    return withDate.slice(-Math.max(31, lookbackDays));
   } catch {
     return [];
   }
 }
 
-/** Fetch last ~30 calendar days of daily candles for a symbol. Uses Finnhub when `VITE_FINNHUB_API_KEY` is set; otherwise Stooq only. Falls back to Stooq when Finnhub has no rows (common for Tadawul). */
-export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> {
+/**
+ * Dated daily closes for period-start marks (week/month P/L).
+ * Prefers Finnhub candles when keyed; falls back to Stooq (needed for many Tadawul listings).
+ */
+export async function getStockDailyClosesDated(symbol: string, lookbackDays = 45): Promise<DatedClose[]> {
   const hasFinnhub = Boolean(import.meta.env.VITE_FINNHUB_API_KEY?.trim());
   if (!hasFinnhub) {
-    return getStooqCandles1M(symbol);
+    return getStooqDailyClosesDated(symbol, lookbackDays);
   }
   try {
     const finnhubSymbol = toFinnhubSymbol(symbol);
     const to = Math.floor(Date.now() / 1000);
-    const from = to - 31 * 24 * 60 * 60;
+    const from = to - lookbackDays * 24 * 60 * 60;
     const token = getToken();
     const url = `${BASE}/stock/candle?symbol=${encodeURIComponent(finnhubSymbol)}&resolution=D&from=${from}&to=${to}&token=${encodeURIComponent(token)}`;
     const res = await finnhubFetch(url);
-    if (!res.ok) return getStooqCandles1M(symbol);
+    if (!res.ok) return getStooqDailyClosesDated(symbol, lookbackDays);
     const data = await res.json();
     const t = data?.t as number[] | undefined;
     const c = data?.c as number[] | undefined;
-    if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) return getStooqCandles1M(symbol);
-    const pairs = t.map((ts, i) => ({ ts, price: Number(c[i]) })).filter((p) => Number.isFinite(p.price) && p.price > 0);
-    pairs.sort((a, b) => a.ts - b.ts);
-    const points = pairs.map((p, i) => ({ day: i, price: p.price }));
-    if (points.length === 0) return getStooqCandles1M(symbol);
-    return points;
+    if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || t.length !== c.length) {
+      return getStooqDailyClosesDated(symbol, lookbackDays);
+    }
+    const pairs = t
+      .map((ts, i) => ({ dayMs: Number(ts) * 1000, price: Number(c[i]) }))
+      .filter((p) => Number.isFinite(p.dayMs) && Number.isFinite(p.price) && p.price > 0);
+    pairs.sort((a, b) => a.dayMs - b.dayMs);
+    if (pairs.length === 0) return getStooqDailyClosesDated(symbol, lookbackDays);
+    return pairs;
   } catch {
-    return getStooqCandles1M(symbol);
+    return getStooqDailyClosesDated(symbol, lookbackDays);
   }
+}
+
+/** Fetch last ~30 calendar days of daily candles for a symbol. Uses Finnhub when `VITE_FINNHUB_API_KEY` is set; otherwise Stooq only. Falls back to Stooq when Finnhub has no rows (common for Tadawul). */
+export async function getStockCandles1M(symbol: string): Promise<CandlePoint[]> {
+  const dated = await getStockDailyClosesDated(symbol, 31);
+  return dated.map((p, i) => ({ day: i, price: p.price }));
 }
 
 // --- Market status (exchange open/closed) ---

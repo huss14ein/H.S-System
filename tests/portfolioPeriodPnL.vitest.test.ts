@@ -219,7 +219,7 @@ describe('portfolioPeriodPnL', () => {
     expect(fifoLedger).toBeCloseTo(250, 0);
   });
 
-  it('mark-to-market period P/L reflects live vs cost at period start when ledger explains holdings', () => {
+  it('mark-to-market period P/L uses period-open marks (not cost) when provided', () => {
     const accounts: Account[] = [{ id: 'acc-1', name: 'Broker', type: 'Investment', balance: 0 }];
     const portfolios: InvestmentPortfolio[] = [
       {
@@ -270,6 +270,25 @@ describe('portfolioPeriodPnL', () => {
     const weekEnd = new Date(now);
     weekEnd.setHours(23, 59, 59, 999);
 
+    const live = { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } };
+    // Without historical open marks, start falls back to live → flat week ≈ 0 (not lifetime vs cost).
+    const flat = computePortfolioMarkToMarketPeriodPnLSar({
+      portfolio: portfolios[0],
+      transactions: txs,
+      startMs: weekStart.getTime(),
+      endMs: weekEnd.getTime(),
+      endValueSar: 1200,
+      includeCash: true,
+      singlePortfolioOnAccount: true,
+      accounts,
+      portfolios,
+      data,
+      sarPerUsd: 3.75,
+      simulatedPrices: live,
+    });
+    expect(flat.totalSar).toBeCloseTo(0, 0);
+
+    // With week-open mark at 10 and live end at 12 → true +200 period move.
     const period = computePortfolioMarkToMarketPeriodPnLSar({
       portfolio: portfolios[0],
       transactions: txs,
@@ -282,7 +301,8 @@ describe('portfolioPeriodPnL', () => {
       portfolios,
       data,
       sarPerUsd: 3.75,
-      simulatedPrices: { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } },
+      simulatedPrices: live,
+      periodStartPrices: { '2222.SR': { price: 10 } },
     });
 
     expect(period.totalSar).toBeCloseTo(200, 0);
@@ -339,9 +359,10 @@ describe('portfolioPeriodPnL', () => {
       data,
       sarPerUsd: 3.75,
       simulatedPrices: { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } },
+      periodStartPrices: { '2222.SR': { price: 10 } },
     });
 
-    // Same live mark at period end vs cost at start (no flows) → period P/L reflects mark vs cost.
+    // Open mark 10 → end 12 on 100 shares; not 7× daily change.
     expect(period.totalSar).toBeCloseTo(200, 0);
     expect(period.ledgerSar).toBeCloseTo(0, 0);
     expect(period.marketEstimateSar).toBeCloseTo(200, 0);
@@ -385,6 +406,8 @@ describe('portfolioPeriodPnL', () => {
       simulatedPrices: {
         '2222.SR': { price: 12, change: 0.5, changePercent: 1 },
       },
+      weekPeriodStartPrices: { '2222.SR': { price: 10 } },
+      monthPeriodStartPrices: { '2222.SR': { price: 10 } },
       monthStartDay: 1,
       now: new Date(2026, 4, 25),
     });
@@ -430,6 +453,8 @@ describe('portfolioPeriodPnL', () => {
       accounts,
       sarPerUsd: 3.75,
       simulatedPrices: { '2222.SR': { price: 12, change: 0.5, changePercent: 1 } },
+      weekPeriodStartPrices: { '2222.SR': { price: 10 } },
+      monthPeriodStartPrices: { '2222.SR': { price: 10 } },
       monthStartDay: 1,
       now,
     };
@@ -437,6 +462,7 @@ describe('portfolioPeriodPnL', () => {
     const series = computePortfolioPnLDailySeries(args);
     expect(series.weekly.length).toBeGreaterThan(0);
     expect(series.monthly.length).toBeGreaterThan(0);
+    expect(summary.weeklyTotalSar).toBeCloseTo(200, 0);
     expect(series.weekly[series.weekly.length - 1]?.cumulativeSar).toBeCloseTo(summary.weeklyTotalSar, 0);
     expect(series.monthly[series.monthly.length - 1]?.cumulativeSar).toBeCloseTo(summary.monthlyTotalSar, 0);
     expect(series.weeklyByPortfolioId.get('p1')?.length).toBe(series.weekly.length);
@@ -702,11 +728,15 @@ describe('portfolioPeriodPnL', () => {
       accounts,
       sarPerUsd: 3.75,
       simulatedPrices: { '2222.SR': { price: 12, change: 0, changePercent: 0 } },
+      // Buy is inside the week — open marks unused for pre-buy empty book; keep explicit for clarity.
+      weekPeriodStartPrices: { '2222.SR': { price: 12 } },
+      monthPeriodStartPrices: { '2222.SR': { price: 12 } },
       monthStartDay: 1,
       now,
     });
 
     const row = summary.rows[0]!;
+    // In-period buy @ 10 marked to 12 → +200 (same for week & month when buy is in both windows).
     expect(row.weekly.totalSar).toBeCloseTo(200, 0);
     expect(row.monthly.totalSar).toBeCloseTo(200, 0);
 
@@ -716,6 +746,8 @@ describe('portfolioPeriodPnL', () => {
       accounts,
       sarPerUsd: 3.75,
       simulatedPrices: { '2222.SR': { price: 12, change: 0, changePercent: 0 } },
+      weekPeriodStartPrices: { '2222.SR': { price: 12 } },
+      monthPeriodStartPrices: { '2222.SR': { price: 12 } },
       monthStartDay: 1,
       now,
       summary,
@@ -811,10 +843,11 @@ describe('portfolioPeriodPnL', () => {
       },
     });
 
-    // Must NOT be ~buyCostSar (~5k) as fake gain; only UNH mark-vs-cost + SNAP mark-vs-buy.
-    // UNH: 4500-4000=500 USD; SNAP: 1400-1336.2=63.8 USD → ~563.8 USD ≈ 2114 SAR
+    // Must NOT be ~buyCostSar (~5k) as fake gain.
+    // UNH held through the week at flat live 450 → 0 period move.
+    // SNAP bought in-window: end 1400 − buy 1336.2 ≈ 63.8 USD unrealized ≈ 239 SAR.
     expect(period.totalSar).toBeLessThan(buyCostSar);
-    expect(period.totalSar).toBeCloseTo((500 + 63.8) * sarPerUsd, 0);
+    expect(period.totalSar).toBeCloseTo(63.8 * sarPerUsd, 0);
 
     const summary = computePortfolioPeriodPnLSummary({
       data,
@@ -830,7 +863,7 @@ describe('portfolioPeriodPnL', () => {
       now,
     });
     expect(Math.abs(summary.rows[0]!.weekly.totalSar)).toBeLessThan(buyCostSar);
-    expect(summary.rows[0]!.weekly.totalSar).toBeCloseTo((500 + 63.8) * sarPerUsd, 0);
+    expect(summary.rows[0]!.weekly.totalSar).toBeCloseTo(63.8 * sarPerUsd, 0);
 
     const series = computePortfolioPnLDailySeries({
       data,
