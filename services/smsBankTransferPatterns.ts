@@ -20,14 +20,18 @@ export const SMS_CARD_CREDIT_SOFT_RE =
 
 /**
  * Outgoing local / internal bank transfer (حوالة) — Al Rajhi, Alinma, SNB-style Arabic + English.
- * Matches "حوالة محلية صادرة" / "حوالة داخلية صادرة" and common EN templates.
+ * Matches "حوالة محلية صادرة", "حوالة صادرة داخلية" (either word order), and common EN templates.
  */
 export const SMS_ACCOUNT_TRANSFER_OUT_RE =
-  /(?:حوالة\s*(?:محلية|داخلية|فورية)?\s*صادرة|تحويل\s*(?:محلي|داخلي)?\s*صادر|outgoing\s*(?:local\s*)?transfer|local\s*transfer\s*(?:out|outgoing)?|internal\s*transfer\s*(?:out|outgoing)?|transfer\s*out(?:going)?)/i;
+  /(?:حوالة\s*(?:محلية|داخلية|فورية)?\s*صادرة|حوالة\s*صادرة\s*(?:محلية|داخلية|فورية)?|تحويل\s*(?:محلي|داخلي)?\s*صادر|outgoing\s*(?:local\s*)?transfer|local\s*transfer\s*(?:out|outgoing)?|internal\s*transfer\s*(?:out|outgoing)?|transfer\s*out(?:going)?)/i;
 
-/** Destination account last-4 on حوالة lines: لـ0001;Name or to *0001 */
+/** Incoming local / internal bank transfer (حوالة واردة). */
+export const SMS_ACCOUNT_TRANSFER_IN_RE =
+  /(?:حوالة\s*(?:محلية|داخلية|فورية)?\s*واردة|حوالة\s*واردة\s*(?:محلية|داخلية|فورية)?|تحويل\s*(?:محلي|داخلي)?\s*وارد|incoming\s*(?:local\s*)?transfer|local\s*transfer\s*(?:in|incoming)|transfer\s*(?:in|received)|received\s*(?:a\s*)?(?:local\s*)?transfer)/i;
+
+/** Destination account last-4 on حوالة lines: لـ0001;Name, لحساب *7000, or to *0001 */
 export const SMS_TRANSFER_DEST_LAST4_RE =
-  /(?:لـ\s*|ل\s*|to\s*(?:account\s*)?(?:ending\s*)?|to\s*\*)(\d{4})(?!\d)/i;
+  /(?:لحساب\s*\*{0,2}|لـ\s*|to\s*(?:account\s*)?(?:ending\s*)?|to\s*\*)(\d{4})(?!\d)/i;
 
 export function smsTextLooksLikeAtmWithdrawal(text: string): boolean {
   return SMS_ATM_WITHDRAWAL_RE.test(String(text || ''));
@@ -39,6 +43,10 @@ export function smsTextLooksLikeCardSettlement(text: string): boolean {
 
 export function smsTextLooksLikeAccountTransferOut(text: string): boolean {
   return SMS_ACCOUNT_TRANSFER_OUT_RE.test(String(text || ''));
+}
+
+export function smsTextLooksLikeAccountTransferIn(text: string): boolean {
+  return SMS_ACCOUNT_TRANSFER_IN_RE.test(String(text || ''));
 }
 
 /** Last-4 of the destination account on an outgoing حوالة SMS (`لـ0001;…`). */

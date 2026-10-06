@@ -133,6 +133,9 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('inferImportTransactionCategory');
     expect(parser).toContain('classifySmsIsDebit');
     expect(parser).toContain('إجمالي');
+    expect(parser).toContain('المبلغ\\s*المستحق');
+    expect(parser).toContain('isSmsTrailingMetaLine');
+    expect(parser).toContain('cleanSmsMerchantLabel');
     expect(parser).toContain('pruneSmsSatelliteTransactions');
     expect(parser).toContain('applySmsAccountRouting');
     expect(parser).toContain('mergeSmsTransferMetaFromGroup');
@@ -157,6 +160,8 @@ describe('statementUploadImportCompletion', () => {
     const routing = read('services/smsImportRouting.ts');
     expect(routing).toContain('extractSmsCardLast4');
     expect(routing).toContain('applySmsAccountRouting');
+    expect(routing).toContain('لحساب');
+    expect(routing).toContain('مدى\\s*(\\d{4})');
     const prepare = read('services/statementImportPrepare.ts');
     expect(prepare).toContain('missing account (set Card last-4 or assign in review)');
     const ctx = read('context/DataContext.tsx');

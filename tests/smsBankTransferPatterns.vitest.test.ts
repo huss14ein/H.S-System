@@ -53,6 +53,7 @@ describe('smsBankTransferPatterns (multi-bank)', () => {
   it('detects outgoing حوالة / local transfers without matching POS', () => {
     expect(smsTextLooksLikeAccountTransferOut('حوالة محلية صادرة بـSR 2500')).toBe(true);
     expect(smsTextLooksLikeAccountTransferOut('حوالة داخلية صادرة بـSR 5500')).toBe(true);
+    expect(smsTextLooksLikeAccountTransferOut('حوالة صادرة داخلية')).toBe(true);
     expect(smsTextLooksLikeAccountTransferOut('Local transfer out SAR 100')).toBe(true);
     expect(smsTextLooksLikeAccountTransferOut('شراء عبر نقاط البيع لدى CAFE')).toBe(false);
   });

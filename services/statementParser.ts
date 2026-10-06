@@ -17,6 +17,7 @@ import {
   SMS_CARD_SETTLEMENT_RE,
   extractSmsTransferDestinationLast4,
   extractSmsTransferFeeAmount,
+  smsTextLooksLikeAccountTransferIn,
   smsTextLooksLikeAccountTransferOut,
   smsTextLooksLikeAtmWithdrawal,
   smsTextLooksLikeCardSettlement,
@@ -516,13 +517,25 @@ const SMS_SECONDARY_AMOUNT_RE =
   /رسوم|ضريبة|سعر\s*الصرف|exchange\s*rate|\bfee\b|\bvat\b|\btax\b|fx\s*rate/i;
 
 /**
- * Bank SMS "total amount due" label — accept both إجمالـي (with hamza) and اجمالـي (plain alef).
- * Many Al Rajhi / Visa templates omit the hamza; without this, مبلغ (pre-fee) is booked instead.
+ * Bank SMS "total amount due" label — إجمالـي/اجمالـي optional (Alinma often sends bare المبلغ المستحق).
+ * Without this, مبلغ / title principal (pre-fee) is booked instead of the cash out.
  */
-const SMS_TOTAL_DUE_LABEL = String.raw`(?:إ|ا)جمالي\s*المبلغ\s*المستحق`;
+const SMS_TOTAL_DUE_LABEL = String.raw`(?:(?:إ|ا)جمالي\s*)?المبلغ\s*المستحق`;
 const SMS_TOTAL_DUE_LABEL_RE = new RegExp(SMS_TOTAL_DUE_LABEL, 'i');
 /** Any إجمالي / اجمالي word (exclude matching مبلغ lines that are actually totals). */
 const SMS_IJMALI_WORD_RE = /(?:إ|ا)جمالي/i;
+
+/** Trailing lines that belong to the same SMS after the timestamp (fees / FX / due / balance). */
+function isSmsTrailingMetaLine(line: string): boolean {
+  const t = String(line || '').trim();
+  if (!t) return false;
+  if (isSmsSecondaryAmountLine(t)) return true;
+  if (SMS_TOTAL_DUE_LABEL_RE.test(t)) return true;
+  if (/^(?:رصيد|balance)\b/i.test(t)) return true;
+  if (/^سعر\s*صرف/i.test(t)) return true;
+  if (/^دولة\b/i.test(t)) return true;
+  return false;
+}
 
 /** Credit keywords win (e.g. استرداد / بطاقة فيزا:سداد) so refunds & card payments never book as expenses. */
 function classifySmsIsDebit(text: string): boolean {
@@ -590,11 +603,11 @@ function buildSmsTransactionFromBlock(
   let category = inferCategoryForSignedAmount(categorySeed, signed);
   if (SMS_CARD_SETTLEMENT_RE.test(block)) {
     category = 'Transfer';
-  } else if (/(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block)) {
+  } else if (smsTextLooksLikeAccountTransferIn(block) || smsTextLooksLikeAccountTransferOut(block) || /(حوالة|تحويل\s*صادر|transfer\s*out|transfer\s*in)/i.test(block)) {
     category = 'Transfer';
   } else if (/(استرداد|عكس\s*عملية|refund|reversal)/i.test(block) && signed > 0) {
     category = 'Income';
-  } else if (/(نقاط البيع|شراء\s*PoS|\bPoS\b|شراء إنترنت|شراء انترنت|pos purchase|purchase at|payment at)/i.test(block)) {
+  } else if (/(نقاط البيع|شراء\s*PoS|\bPoS\b|شراء إنترنت|شراء انترنت|شراء\s*دولي|pos purchase|purchase at|payment at|ApplePay)/i.test(block)) {
     category = 'Shopping';
   } else if (smsTextLooksLikeCardSettlement(block) || /سداد\s*بطاقة|سداد/i.test(block)) {
     category = 'Transfer';
@@ -606,11 +619,12 @@ function buildSmsTransactionFromBlock(
   const clock = extractSmsClockTime(block);
   const isAtm = smsTextLooksLikeAtmWithdrawal(block);
   const isCcSettlement = smsTextLooksLikeCardSettlement(block);
+  const isTransferIn = signed > 0 && !isCcSettlement && smsTextLooksLikeAccountTransferIn(block);
   const isAccountTransfer =
     signed < 0 &&
     !isAtm &&
     !isCcSettlement &&
-    (smsTextLooksLikeAccountTransferOut(block) || /(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block));
+    (smsTextLooksLikeAccountTransferOut(block) || /(حوالة\s*صادرة|تحويل\s*صادر|transfer\s*out)/i.test(block));
 
   let note: string | undefined;
   if (isAtm) {
@@ -622,12 +636,16 @@ function buildSmsTransactionFromBlock(
     const fee = extractSmsTransferFeeAmount(block);
     const destLast4 = extractSmsTransferDestinationLast4(block);
     note = smsNoteWithAccountTransferMeta(undefined, {
+      // Source last-4 only (dest is sms:to_card). Alinma outgoing often has only لحساب *####.
       last4,
       time: clock,
       destLast4,
       feeAmount: fee,
       transferToAccountId: null,
     });
+    category = 'Transfer';
+  } else if (isTransferIn) {
+    note = smsNoteWithMeta(undefined, { last4, time: clock });
     category = 'Transfer';
   } else {
     note = smsNoteWithMeta(undefined, { last4, time: clock });
@@ -643,7 +661,7 @@ function buildSmsTransactionFromBlock(
     type: signed < 0 ? 'expense' : 'income',
     status: 'Approved',
     note,
-    ...(isAtm || isCcSettlement || isAccountTransfer ? { budgetCategory: undefined } : {}),
+    ...(isAtm || isCcSettlement || isAccountTransfer || isTransferIn ? { budgetCategory: undefined } : {}),
   };
 }
 
@@ -768,21 +786,23 @@ function splitSmsIntoBlocks(smsText: string): string[] {
   const startReAr = /^(?:شراء|سحب|خصم|نقاط البيع|تحويل|حوالة|استرداد|سداد|عكس|إيداع|ايداع|استلام)/;
   const dateRe = /\d{4}-\d{2}-\d{2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{1,4}/;
   /**
-   * Title-like بطاقة lines (سداد / استرداد) — not mid-block card masks (`بطاقة:7365`, `*3282`).
+   * Title-like بطاقة lines (سداد / استرداد) — not mid-block card masks
+   * (`بطاقة:7365`, `بطاقة ائتمانية **3282`, `*3282`).
    * Amounts on the title (`بـSR 1000`) must NOT disqualify settlement starters.
    */
   const isCardTitleStarter = (line: string) => {
     if (!/^بطاقة/.test(line)) return false;
     // Settlement / refund titles may include the amount on the same line.
     if (/(?:استرداد|سداد)/.test(line)) return true;
-    // Other card banners without an embedded last-4 / *mask.
-    if (/(?:ائتمانية|فيزا|مدى)/.test(line) && !/بطاقة\s*[:\-]?\s*\d{4}/.test(line) && !/\*\s*\d{4}/.test(line)) {
-      return true;
-    }
+    // Embedded last-4 / *mask → mid-block card detail, not a new SMS.
+    if (/بطاقة\s*[:\-]?\s*\d{4}/.test(line)) return false;
+    if (/\*{1,2}\s*\d{4}/.test(line)) return false;
+    if (/(?:ائتمانية|فيزا|مدى)/.test(line)) return true;
     return false;
   };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const lineStartsTx =
       current.length > 0 &&
       (startReEn.test(line) ||
@@ -796,6 +816,11 @@ function splitSmsIntoBlocks(smsText: string): string[] {
     }
     current.push(line);
     if (dateRe.test(line) && current.length >= 3) {
+      // Alinma FX / fee SMS puts رسوم + المبلغ المستحق + رصيد AFTER the timestamp.
+      while (i + 1 < lines.length && isSmsTrailingMetaLine(lines[i + 1])) {
+        i += 1;
+        current.push(lines[i]);
+      }
       blocks.push(current.join('\n').trim());
       current = [];
     }
@@ -1129,6 +1154,17 @@ function extractTransactionsFromSmsCurrencyAnchors(smsText: string, accountId: s
   return results;
 }
 
+function cleanSmsMerchantLabel(raw: string): string {
+  return String(raw || '')
+    // Country / scheme prefixes only: "SA /Tamara", "SA/bolt.eu", "NL- NETFLIX.COM"
+    // Do NOT strip name hyphens like "Al-Imtiaz".
+    .replace(/^[A-Z]{2}\s*\/\s*/i, '')
+    .replace(/^[A-Z]{2}-\s+/i, '')
+    .replace(/^\/\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extractSmsDescription(segment: string, idx: number): string {
   const atmBranch = segment.match(/من\s*([A-Za-z][A-Za-z0-9 .:\-]{3,60})/)?.[1]?.trim();
   if (atmBranch && smsTextLooksLikeAtmWithdrawal(segment)) {
@@ -1136,16 +1172,55 @@ function extractSmsDescription(segment: string, idx: number): string {
     return atmBranch.replace(/\s+\d{1,2}$/, '').trim().slice(0, 120);
   }
 
+  // Incoming حوالة — prefer sender name after من
+  if (smsTextLooksLikeAccountTransferIn(segment)) {
+    const sender =
+      segment.match(/من\s+([A-Za-z\u0600-\u06FF][A-Za-z\u0600-\u06FF .]{2,80})/)?.[1]?.trim() ?? '';
+    const cleanedSender = cleanSmsMerchantLabel(sender).replace(/\s+حساب\b.*$/i, '').trim();
+    if (cleanedSender && !/^\d+$/.test(cleanedSender)) {
+      return cleanedSender.slice(0, 120);
+    }
+  }
+
+  // Outgoing حوالة — beneficiary after لـ (name, not digits-only account mask)
+  if (smsTextLooksLikeAccountTransferOut(segment)) {
+    const beneficiary =
+      segment.match(/لـ\s*([A-Za-z\u0600-\u06FF][A-Za-z\u0600-\u06FF .]{2,80})/)?.[1]?.trim() ?? '';
+    const cleanedBene = beneficiary.replace(/\s+لحساب\b.*$/i, '').trim();
+    if (cleanedBene && !/^\d{3,}$/.test(cleanedBene)) {
+      return cleanedBene.slice(0, 120);
+    }
+  }
+
+  // International / POS merchant: لدى SA /Tamara  OR  من NL- NETFLIX.COM
+  const merchantLada =
+    segment.match(/لدى\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; \/\*]{2,80})/i)?.[1]?.trim() ?? '';
+  if (merchantLada) {
+    const cleaned = cleanSmsMerchantLabel(merchantLada.split('\n')[0] || merchantLada);
+    if (cleaned && !/^لـ?\s*sr\b/i.test(cleaned) && !/^\d{3,}$/.test(cleaned)) {
+      return cleaned.slice(0, 120);
+    }
+  }
+  if (/(?:شراء|purchase|pos)/i.test(segment)) {
+    const fromMerchant =
+      segment.match(/من\s+([A-Z]{2}\s*[\/\-–]\s*[A-Za-z0-9 .*\-]{2,60}|[A-Za-z][A-Za-z0-9 .*\-]{2,60})/)?.[1]
+        ?.trim() ?? '';
+    const cleanedFrom = cleanSmsMerchantLabel(fromMerchant);
+    if (cleanedFrom && !/^\d+$/.test(cleanedFrom) && !smsTextLooksLikeAtmWithdrawal(segment)) {
+      return cleanedFrom.slice(0, 120);
+    }
+  }
+
   // Word-bound English "at"/"from" so STATION is not false-split as merchant "ION".
   const merchantFirst =
-    segment.match(/(?:merchant|\bat\b|\bfrom\b|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
+    segment.match(/(?:merchant|\bat\b|\bfrom\b|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
       ?.trim() ?? '';
   if (merchantFirst && !/^لـ?\s*sr\b/i.test(merchantFirst) && !/^\d{3,}$/.test(merchantFirst)) {
     const afterSemi = merchantFirst.split(';').slice(1).join(';').trim();
     if (afterSemi && /[A-Za-z\u0600-\u06FF]{3,}/.test(afterSemi)) {
-      return afterSemi.slice(0, 120);
+      return cleanSmsMerchantLabel(afterSemi).slice(0, 120);
     }
-    return merchantFirst.slice(0, 120);
+    return cleanSmsMerchantLabel(merchantFirst).slice(0, 120);
   }
 
   const lineBased = segment
@@ -1155,10 +1230,10 @@ function extractSmsDescription(segment: string, idx: number): string {
       (line) =>
         /[A-Za-z\u0600-\u06FF]{3,}/.test(line) &&
         !/^\s*رصيد\s*:/i.test(line) &&
-        !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|(?:إ|ا)جمالي|دولة|بطاقة|^\d{1,2}:\d{2}/i.test(line) &&
-        !/^\s*(?:شراء|سحب|حوالة|استرداد|سداد|عكس|عبر)\b/u.test(line),
+        !/balance|رصيد|مبلغ|amount|رسوم|ضريبة|سعر|(?:إ|ا)جمالي|المبلغ\s*المستحق|دولة|بطاقة|حساب|^\d{1,2}:\d{2}/i.test(line) &&
+        !/^\s*(?:شراء|سحب|حوالة|استرداد|سداد|عكس|عبر|لحساب)\b/u.test(line),
     );
-  if (lineBased) return lineBased.slice(0, 120);
+  if (lineBased) return cleanSmsMerchantLabel(lineBased).slice(0, 120);
 
   const transferTitle = segment.match(/حوالة[^\n]{0,48}/)?.[0]?.trim();
   if (transferTitle) return transferTitle.replace(/\s*بـ?\s*SR.*$/i, '').trim().slice(0, 120);
@@ -1172,8 +1247,8 @@ function extractSmsDescription(segment: string, idx: number): string {
   const reversalTitle = segment.match(/عكس\s*عملية[^\n]{0,48}/)?.[0]?.trim();
   if (reversalTitle) {
     const merchant =
-      segment.match(/(?:لدى|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]?.trim();
-    if (merchant) return merchant.slice(0, 120);
+      segment.match(/(?:لدى|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; \/\*]{2,80})/i)?.[1]?.trim();
+    if (merchant) return cleanSmsMerchantLabel(merchant).slice(0, 120);
     return reversalTitle.slice(0, 120);
   }
 
@@ -1193,7 +1268,7 @@ function extractSmsDescription(segment: string, idx: number): string {
   }
 
   const merchantMatch =
-    segment.match(/(?:merchant|\bat\b|\bfrom\b|لدى|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
+    segment.match(/(?:merchant|\bat\b|\bfrom\b|لـ|التاجر)\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-.; ]{2,80})/i)?.[1]
       ?.trim() ??
     segment
       .match(/(?:purchase|payment|transaction)\s*(?:\bat\b|لدى)?\s*[:\-]?\s*([A-Za-z0-9\u0600-\u06FF&\-. ]{2,80})/i)?.[1]
