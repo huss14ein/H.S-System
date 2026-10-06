@@ -80,6 +80,8 @@ describe('statementUploadImportCompletion', () => {
     const guards = read('services/smsImportTransferGuards.ts');
     expect(guards).toContain('isSmsAccountTransferTx');
     expect(read('tests/smsAccountTransfer.vitest.test.ts')).toContain('حوالة محلية صادرة');
+    expect(read('tests/smsAlinmaFullPaste.vitest.test.ts')).toContain('parses all 28 rows');
+    expect(read('tests/smsAlinmaPaste.vitest.test.ts')).toContain('لحساب *7000');
   });
 
   it('Statement Upload wires سداد CC payment SMS → addTransfer (funding → card) with no budget', () => {
