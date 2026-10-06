@@ -125,4 +125,20 @@ describe('accountPostingPolicy wiring (DataContext)', () => {
     expect(policyInUpdate).toBeGreaterThan(updateIdx);
     expect(dbUpdate).toBeGreaterThan(policyInUpdate);
   });
+
+  it('skips balance posting policy for system SMS/statement imports (addTransaction + addTransfer)', () => {
+    const ctx = read('context/DataContext.tsx');
+    const addIdx = ctx.indexOf('const addTransaction = async');
+    const addSlice = ctx.slice(addIdx, addIdx + 2500);
+    expect(addSlice).toContain("Statement/SMS system imports reflect bank history");
+    expect(addSlice).toMatch(/if\s*\(!\(opts as \{ system\?: boolean \}[\s\S]*?\)\?\.system\)\s*\{[\s\S]*?canPostTransactionToAccount/);
+
+    const xferIdx = ctx.indexOf('const addTransfer = async');
+    const xferSlice = ctx.slice(xferIdx, xferIdx + 2200);
+    expect(xferSlice).toContain('SMS/statement system imports may replay history');
+    expect(xferSlice).toMatch(/if\s*\(!\(opts as \{ system\?: boolean \}[\s\S]*?\)\?\.system\)\s*\{[\s\S]*?canPostTransactionToAccount/);
+
+    const stmt = read('pages/StatementUpload.tsx');
+    expect(stmt).toContain('{ system: true }');
+  });
 });
