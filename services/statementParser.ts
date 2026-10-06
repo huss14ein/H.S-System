@@ -10,7 +10,10 @@ import {
 import { applySmsAtmCashTransfers, smsNoteWithAtmMeta } from './smsAtmCashTransfer';
 import { applySmsCcPaymentTransfers, smsNoteWithCcPaymentMeta } from './smsCcPaymentTransfer';
 import {
+  applySmsAccountTransferIns,
   applySmsAccountTransfers,
+  pairSmsAccountTransferLegs,
+  smsNoteWithAccountTransferInMeta,
   smsNoteWithAccountTransferMeta,
 } from './smsAccountTransfer';
 import {
@@ -181,15 +184,17 @@ export async function parseSMSTransactions(
     const atmCash = applySmsAtmCashTransfers(routed.transactions, accounts);
     const ccPay = applySmsCcPaymentTransfers(atmCash.transactions, accounts);
     const acctXfer = applySmsAccountTransfers(ccPay.transactions, accounts);
+    const acctXferIn = applySmsAccountTransferIns(acctXfer.transactions, accounts);
+    const paired = pairSmsAccountTransferLegs(acctXferIn.transactions, accounts);
     
     // Validate extracted transactions
-    const validation = validateTransactions(acctXfer.transactions);
+    const validation = validateTransactions(paired.transactions);
     const routingWarnings = routed.warnings;
     
     return {
-      transactions: validation.isValid ? acctXfer.transactions : acctXfer.transactions.filter((_, i) => {
-        const txDate = new Date(acctXfer.transactions[i].date);
-        return !isNaN(txDate.getTime()) && acctXfer.transactions[i].description && acctXfer.transactions[i].amount !== undefined;
+      transactions: validation.isValid ? paired.transactions : paired.transactions.filter((_, i) => {
+        const txDate = new Date(paired.transactions[i].date);
+        return !isNaN(txDate.getTime()) && paired.transactions[i].description && paired.transactions[i].amount !== undefined;
       }),
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
@@ -200,6 +205,10 @@ export async function parseSMSTransactions(
         ...atmCash.warnings,
         ...ccPay.warnings,
         ...acctXfer.warnings,
+        ...acctXferIn.warnings,
+        ...(paired.pairedCount > 0
+          ? [`Paired ${paired.pairedCount} outgoing/incoming حوالة SMS into one transfer each.`]
+          : []),
       ],
       validation
     };
@@ -645,7 +654,11 @@ function buildSmsTransactionFromBlock(
     });
     category = 'Transfer';
   } else if (isTransferIn) {
-    note = smsNoteWithMeta(undefined, { last4, time: clock });
+    note = smsNoteWithAccountTransferInMeta(undefined, {
+      last4,
+      time: clock,
+      transferFromAccountId: null,
+    });
     category = 'Transfer';
   } else {
     note = smsNoteWithMeta(undefined, { last4, time: clock });
@@ -2497,11 +2510,12 @@ function smsTransactionPreferenceScore(tx: Transaction): number {
   if (/^sms-heur|^sms-anchor|^sms-ccy|^sms-/.test(id)) s += 4;
   const note = String(tx.note ?? '');
   // Keep ATM / سداد / حوالة transfer meta from being discarded when AI emits a parallel row.
-  if (/sms:kind=(?:atm|cc_payment|account_transfer)\b/i.test(note)) s += 10;
+  if (/sms:kind=(?:atm|cc_payment|account_transfer(?:_in)?)\b/i.test(note)) s += 10;
   if (
     /sms:cash_to=[A-Za-z0-9_-]+\b/i.test(note) ||
     /sms:funded_from=[A-Za-z0-9_-]+\b/i.test(note) ||
-    /sms:transfer_to=[A-Za-z0-9_-]+\b/i.test(note)
+    /sms:transfer_to=[A-Za-z0-9_-]+\b/i.test(note) ||
+    /sms:transfer_from=[A-Za-z0-9_-]+\b/i.test(note)
   ) {
     s += 4;
   }
@@ -2523,16 +2537,22 @@ function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]):
   const cashTo = pick(/sms:cash_to=([A-Za-z0-9_-]+)\b/i);
   const fundedFrom = pick(/sms:funded_from=([A-Za-z0-9_-]+)\b/i);
   const transferTo = pick(/sms:transfer_to=([A-Za-z0-9_-]+)\b/i);
+  const transferFrom = pick(/sms:transfer_from=([A-Za-z0-9_-]+)\b/i);
   const toCard = pick(/sms:to_card=(\d{4})\b/i);
   const feeRaw = pick(/sms:fee=(\d+(?:\.\d+)?)\b/i);
   const last4 = pick(/sms:card=(\d{4})\b/i);
   const time = pick(/sms:time=(\d{1,2}:\d{2})\b/i);
-  if (!kind && !cashTo && !fundedFrom && !transferTo && !toCard && !last4 && !time) return best;
+  const paired = notes.some((n) => /sms:paired=1\b/i.test(n));
+  if (!kind && !cashTo && !fundedFrom && !transferTo && !transferFrom && !toCard && !last4 && !time) return best;
 
   const blob = `${best.description || ''}\n${notes.join('\n')}`;
   const isAtm = kind === 'atm' || Boolean(cashTo) || smsTextLooksLikeAtmWithdrawal(blob);
   const isCcPay =
     kind === 'cc_payment' || Boolean(fundedFrom) || smsTextLooksLikeCardSettlement(blob);
+  const isAcctXferIn =
+    kind === 'account_transfer_in' ||
+    Boolean(transferFrom) ||
+    smsTextLooksLikeAccountTransferIn(blob);
   const isAcctXfer =
     kind === 'account_transfer' ||
     Boolean(transferTo) ||
@@ -2552,6 +2572,13 @@ function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]):
       last4,
       time,
       fundedFromAccountId: fundedFrom,
+    });
+  } else if (isAcctXferIn && Number(best.amount) > 0) {
+    note = smsNoteWithAccountTransferInMeta(note, {
+      last4,
+      time,
+      transferFromAccountId: transferFrom,
+      paired,
     });
   } else if (isAcctXfer) {
     note = smsNoteWithAccountTransferMeta(note, {

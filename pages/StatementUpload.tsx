@@ -36,12 +36,18 @@ import {
   isEligibleCcFundingAccount,
 } from '../services/smsCcPaymentTransfer';
 import {
+  isSmsAccountTransferInTx,
   isSmsAccountTransferTx,
+  isSmsAccountTransferInPaired,
+  parseSmsAccountTransferFromFromNote,
   parseSmsAccountTransferToFromNote,
   parseSmsTransferDestLast4FromNote,
   parseSmsTransferFeeFromNote,
   shouldImportSmsAccountAsTransfer,
+  shouldImportSmsAccountTransferInAsTransfer,
+  shouldSkipPairedSmsAccountTransferIn,
   smsAccountTransferPrincipalAmount,
+  smsNoteWithAccountTransferInMeta,
   smsNoteWithAccountTransferMeta,
   stripSmsAccountTransferMeta,
   isEligibleAccountTransferDestination,
@@ -541,6 +547,33 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return;
       }
 
+      const selectedInboundMissingFrom = [...selectedTransactions].filter((idx) => {
+        if (idx >= extractedTransactions.length) return false;
+        const tx = extractedTransactions[idx];
+        if (!isSmsAccountTransferInTx(tx)) return false;
+        // Paired with a selected outgoing leg — outbound writes the transfer.
+        if (
+          shouldSkipPairedSmsAccountTransferIn(
+            tx,
+            extractedTransactions,
+            selectedTransactions,
+            idx,
+          )
+        ) {
+          return false;
+        }
+        const transferFrom = parseSmsAccountTransferFromFromNote(tx.note);
+        if (!transferFrom) return true;
+        if (transferFrom === String(tx.accountId || '').trim()) return true;
+        return !accountTransferDestinationChoices.some((a) => a.id === transferFrom);
+      });
+      if (selectedInboundMissingFrom.length > 0) {
+        alert(
+          `${selectedInboundMissingFrom.length} incoming transfer(s) (حوالة واردة) need a Received-from account (different from the receiving account). Pick Received from on each row, or also paste the outgoing SMS from the sending account.`,
+        );
+        return;
+      }
+
       const plan = planStatementImport({
         bankTransactions: extractedTransactions,
         investmentTransactions: extractedInvestmentTransactions,
@@ -598,6 +631,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                 const cashTo = parseSmsAtmCashToFromNote(tx.note);
                 const fundedFrom = parseSmsCcFundedFromNote(tx.note);
                 const transferTo = parseSmsAccountTransferToFromNote(tx.note);
+                const transferFrom = parseSmsAccountTransferFromFromNote(tx.note);
                 if (shouldImportSmsAtmAsTransfer(tx) && cashTo) {
                   const fromAccountId = String(tx.accountId || '').trim();
                   const absAmt = Math.abs(Number(tx.amount) || 0);
@@ -654,11 +688,36 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     fee,
                     { system: true },
                   );
-                } else if (isSmsAtmWithdrawalTx(tx) || isSmsCcPaymentTx(tx)) {
+                } else if (shouldImportSmsAccountTransferInAsTransfer(tx) && transferFrom) {
+                  const toAccountId = String(tx.accountId || '').trim();
+                  const absAmt = Math.abs(Number(tx.amount) || 0);
+                  const transferNote =
+                    stripSmsAccountTransferMeta(tx.note) ||
+                    String(tx.description || '')
+                      .replace(/^Transfer\s*←[^·]*·?\s*/i, '')
+                      .replace(/^Transfer\s*·\s*/i, '')
+                      .trim() ||
+                    'Local transfer in (حوالة واردة)';
+                  await addTransfer(
+                    transferFrom,
+                    toAccountId,
+                    absAmt,
+                    tx.date,
+                    transferNote,
+                    0,
+                    { system: true },
+                  );
+                } else if (
+                  isSmsAtmWithdrawalTx(tx) ||
+                  isSmsCcPaymentTx(tx) ||
+                  isSmsAccountTransferInTx(tx)
+                ) {
                   throw new Error(
                     isSmsAtmWithdrawalTx(tx)
                       ? 'ATM withdrawal must import as a transfer to Cash (pick Cash destination).'
-                      : 'Card payment (سداد) must import as a transfer from a funding account (pick Paid from).',
+                      : isSmsCcPaymentTx(tx)
+                        ? 'Card payment (سداد) must import as a transfer from a funding account (pick Paid from).'
+                        : 'Incoming transfer (حوالة واردة) must import as a transfer from a source account (pick Received from).',
                   );
                 } else {
                   await addTransaction({
@@ -1512,11 +1571,14 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const isAtmRow = isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0;
                         const isCcPayRow = isSmsCcPaymentTx(tx);
                         const isAcctXferRow = isSmsAccountTransferTx(tx);
-                        const isTransferRow = isAtmRow || isCcPayRow || isAcctXferRow;
+                        const isAcctXferInRow = isSmsAccountTransferInTx(tx);
+                        const isTransferRow = isAtmRow || isCcPayRow || isAcctXferRow || isAcctXferInRow;
                         const atmCashTo = parseSmsAtmCashToFromNote(tx.note);
                         const ccFundedFrom = parseSmsCcFundedFromNote(tx.note);
                         const acctXferTo = parseSmsAccountTransferToFromNote(tx.note);
+                        const acctXferFrom = parseSmsAccountTransferFromFromNote(tx.note);
                         const acctXferDestLast4 = parseSmsTransferDestLast4FromNote(tx.note);
+                        const acctXferInPaired = isSmsAccountTransferInPaired(tx.note);
                         const cashChoicesForRow = physicalCashAccountChoices.filter(
                           (a) => a.id !== String(tx.accountId || '').trim(),
                         );
@@ -1573,6 +1635,15 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                       : 'حوالة — pick Transfer to for between-account import, or leave blank for external'}
                                 </div>
                               )}
+                              {isAcctXferInRow && (
+                                <div className="text-xs text-sky-700 mt-0.5">
+                                  {acctXferInPaired && acctXferFrom
+                                    ? 'حوالة واردة — paired with outgoing SMS (one transfer)'
+                                    : acctXferFrom
+                                      ? 'Incoming transfer (حوالة واردة) — no budget'
+                                      : 'حوالة واردة — pick Received from (or paste the sending-account SMS)'}
+                                </div>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600 min-w-[160px]">
                               <select
@@ -1620,6 +1691,21 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                       accountId: nextSource,
                                       note: smsNoteWithAccountTransferMeta(tx.note, {
                                         transferToAccountId: transferTo,
+                                      }),
+                                      category: 'Transfer',
+                                      budgetCategory: undefined,
+                                    });
+                                    return;
+                                  }
+                                  if (isAcctXferInRow) {
+                                    const prevFrom = parseSmsAccountTransferFromFromNote(tx.note);
+                                    const transferFrom =
+                                      prevFrom && prevFrom !== nextSource ? prevFrom : null;
+                                    handleExtractedTransactionEdit(index, {
+                                      accountId: nextSource,
+                                      note: smsNoteWithAccountTransferInMeta(tx.note, {
+                                        transferFromAccountId: transferFrom,
+                                        paired: false,
                                       }),
                                       category: 'Transfer',
                                       budgetCategory: undefined,
@@ -1729,6 +1815,41 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                   {acctXferChoicesForRow.map((acc) => (
                                     <option key={acc.id} value={acc.id}>
                                       → {acc.name}
+                                      {acc.lastFourDigits || acc.platformDetails?.cardLast4
+                                        ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
+                                        : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              {isAcctXferInRow && (
+                                <select
+                                  value={acctXferFrom || ''}
+                                  onChange={(e) =>
+                                    handleExtractedTransactionEdit(index, {
+                                      note: smsNoteWithAccountTransferInMeta(tx.note, {
+                                        transferFromAccountId: e.target.value || null,
+                                        paired: false,
+                                      }),
+                                      category: 'Transfer',
+                                      budgetCategory: undefined,
+                                    })
+                                  }
+                                  className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
+                                    acctXferFrom && acctXferFrom !== tx.accountId
+                                      ? 'border-slate-300'
+                                      : 'border-amber-400 bg-amber-50'
+                                  }`}
+                                  aria-label={`Received-from account for ${tx.description}`}
+                                >
+                                  <option value="">
+                                    {acctXferInPaired
+                                      ? 'Received from… (paired)'
+                                      : 'Received from…'}
+                                  </option>
+                                  {acctXferChoicesForRow.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>
+                                      ← {acc.name}
                                       {acc.lastFourDigits || acc.platformDetails?.cardLast4
                                         ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
                                         : ''}

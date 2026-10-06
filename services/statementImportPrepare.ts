@@ -25,9 +25,13 @@ import {
   shouldImportSmsCcPaymentAsTransfer,
 } from './smsCcPaymentTransfer';
 import {
+  isSmsAccountTransferInTx,
   isSmsAccountTransferTx,
+  parseSmsAccountTransferFromFromNote,
   parseSmsAccountTransferToFromNote,
   shouldImportSmsAccountAsTransfer,
+  shouldImportSmsAccountTransferInAsTransfer,
+  shouldSkipPairedSmsAccountTransferIn,
 } from './smsAccountTransfer';
 
 export type StatementImportContext = {
@@ -190,6 +194,21 @@ function validatePreparedBankRow(tx: Transaction, accounts?: Account[]): string[
     }
   }
 
+  // Incoming حوالة واردة must import as a transfer (Received-from → this account) — never plain income.
+  if (isSmsAccountTransferInTx(tx)) {
+    const transferFrom = parseSmsAccountTransferFromFromNote(tx.note);
+    const destId = String(tx.accountId || '').trim();
+    if (!transferFrom) {
+      reasons.push('Incoming transfer (حوالة واردة) needs a Received-from source account');
+    } else if (transferFrom === destId) {
+      reasons.push('Incoming transfer source must differ from the receiving account');
+    } else if (!isKnownAccount(transferFrom)) {
+      reasons.push('Incoming transfer source account not found');
+    } else if (!shouldImportSmsAccountTransferInAsTransfer(tx)) {
+      reasons.push('Incoming transfer is not ready to import as a transfer');
+    }
+  }
+
   /** Budget mapping is optional for normal expenses — category alone is enough; user can tag later. */
   return reasons;
 }
@@ -297,6 +316,20 @@ export function planStatementImport(args: {
       amount: Number(raw.amount) || 0,
       type: raw.type === 'income' ? 'income' : 'expense',
     } as Transaction;
+
+    // Paired inbound حوالة: outbound writes addTransfer — skip duplicate credit.
+    if (
+      shouldSkipPairedSmsAccountTransferIn(
+        tx,
+        args.bankTransactions,
+        args.selectedIndices,
+        idx,
+      )
+    ) {
+      skippedDuplicates += 1;
+      return;
+    }
+
     const reasons = validatePreparedBankRow(tx, args.ctx.accounts);
     if (reasons.length > 0) {
       skippedValidation += 1;
@@ -305,7 +338,10 @@ export function planStatementImport(args: {
     }
     // Never persist a budget link on SMS ledger transfers (ATM / سداد / حوالة).
     const cleanedTx =
-      isSmsAtmWithdrawalTx(tx) || isSmsCcPaymentTx(tx) || isSmsAccountTransferTx(tx)
+      isSmsAtmWithdrawalTx(tx) ||
+      isSmsCcPaymentTx(tx) ||
+      isSmsAccountTransferTx(tx) ||
+      isSmsAccountTransferInTx(tx)
         ? ({ ...tx, category: 'Transfer', budgetCategory: undefined } as Transaction)
         : tx;
     importableBankRows.push({ tx: cleanedTx, idx, displayIdx: idx + 1 });
