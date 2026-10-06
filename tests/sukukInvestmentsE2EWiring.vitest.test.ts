@@ -81,6 +81,30 @@ describe('sukuk investments E2E wiring', () => {
     expect(src).not.toContain('asset_id');
   });
 
+  it('Sukuk payout schedule modal uses plain-language UX (not jargon-only selects)', () => {
+    const src = read('components/investments/SukukInvestmentsSection.tsx');
+    const labels = read('services/sukuk/sukukPayoutLabels.ts');
+    const lang = read('context/LanguageContext.tsx');
+    expect(src).toContain("t('sukukPayoutHowPaid')");
+    expect(src).toContain("from '../../services/sukuk/sukukPayoutLabels'");
+    expect(src).toContain('SUKUK_PAYOUT_CADENCE_OPTIONS');
+    expect(src).toContain('role="radiogroup"');
+    expect(src).toContain("t('sukukPayoutSetHowPaid')");
+    expect(src).toContain('useLanguage');
+    expect(labels).toContain("en: 'All at maturity'");
+    expect(labels).toContain("en: 'Every month'");
+    expect(labels).toContain("en: 'Every 3 months'");
+    expect(labels).toContain("ar: 'كامل المبلغ عند الاستحقاق'");
+    expect(labels).toContain("ar: 'كل شهر'");
+    expect(labels).toContain("ar: 'كل 3 أشهر'");
+    expect(lang).toContain('sukukPayoutProfitEach');
+    expect(lang).toContain('sukukPayoutCapitalEach');
+    expect(lang).toContain('sukukPayoutCapitalMaturity');
+    expect(src).not.toContain('Bullet — pay at maturity');
+    expect(src).not.toContain('placeholder="Coupon per period"');
+    expect(src).not.toContain('Monthly coupons (+ optional principal installments)');
+  });
+
   it('weekly digest edge function fetches sukuk_positions and portfolio P/L', () => {
     const src = read('supabase/functions/send-weekly-digest/index.ts');
     expect(src).toContain("from('sukuk_positions')");

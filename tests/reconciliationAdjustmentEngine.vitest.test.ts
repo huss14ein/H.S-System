@@ -531,7 +531,7 @@ describe('Sukuk principal restatement protocol', () => {
     expect(p.delta).toBe(-10000);
     expect(p.blockedReason).toBeUndefined();
     expect(p.impacts.some((i) => /no cash transaction/i.test(i))).toBe(true);
-    expect(p.impacts.some((i) => /posted coupon\/principal payouts are preserved/i.test(i))).toBe(true);
+    expect(p.impacts.some((i) => /posted profit and capital payouts are preserved/i.test(i))).toBe(true);
   });
 
   it('blocks principal above face value and negative principal', () => {
@@ -573,9 +573,9 @@ describe('Sukuk principal restatement protocol', () => {
     expect(ctx).toContain('saveSukukPayoutSchedule');
   });
 
-  it('Sukuk UI restates through the engine instead of overwriting principal', () => {
+  it('Sukuk UI corrects outstanding through the engine instead of overwriting principal', () => {
     const src = read('components/investments/SukukInvestmentsSection.tsx');
-    expect(src).toContain('Restate principal');
+    expect(src).toContain("t('sukukPayoutCorrectOutstanding')");
     expect(src).toContain('applyReconciliationAdjustment');
     expect(src).toContain("entityType=\"sukuk_position\"");
   });
@@ -855,7 +855,7 @@ describe('audit surfaces + role gates + entry points', () => {
   it('Sukuk and commodities lock book amounts after create', () => {
     expect(read('components/investments/SukukInvestmentsSection.tsx')).toContain('disabled={!!positionToEdit}');
     expect(read('pages/Commodities.tsx')).toContain('disabled={!!holdingToEdit}');
-    expect(read('context/DataContext.tsx')).toContain('via Restate principal');
+    expect(read('context/DataContext.tsx')).toContain('via Correct outstanding');
   });
 
   it('investment ledger edits write adjustment rows so audit Undo works', () => {

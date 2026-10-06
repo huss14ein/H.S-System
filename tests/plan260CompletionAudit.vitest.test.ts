@@ -11,6 +11,7 @@ const exists = (rel: string) => existsSync(join(process.cwd(), rel));
 
 const REQUIRED_TESTS = [
   'tests/sukukInvestmentsE2EWiring.vitest.test.ts',
+  'tests/sukukPayoutUxCompletion.vitest.test.ts',
   'tests/sukukPayoutLifecycle.vitest.test.ts',
   'tests/corporateActionsReplay.vitest.test.ts',
   'tests/corporateActionIdempotency.vitest.test.ts',
