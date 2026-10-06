@@ -37,12 +37,13 @@ import {
 } from '../services/smsCcPaymentTransfer';
 import {
   isSmsAccountTransferInTx,
-  isSmsAccountTransferTx,
   isSmsAccountTransferInPaired,
+  isSmsAccountTransferTx,
   parseSmsAccountTransferFromFromNote,
   parseSmsAccountTransferToFromNote,
   parseSmsTransferDestLast4FromNote,
   parseSmsTransferFeeFromNote,
+  resolveSmsAccountTransferScope,
   shouldImportSmsAccountAsTransfer,
   shouldImportSmsAccountTransferInAsTransfer,
   shouldSkipPairedSmsAccountTransferIn,
@@ -51,6 +52,7 @@ import {
   smsNoteWithAccountTransferMeta,
   stripSmsAccountTransferMeta,
   isEligibleAccountTransferDestination,
+  type SmsAccountTransferScope,
 } from '../services/smsAccountTransfer';
 import { isSmsLedgerTransferTx } from '../services/smsImportTransferGuards';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
@@ -551,6 +553,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         if (idx >= extractedTransactions.length) return false;
         const tx = extractedTransactions[idx];
         if (!isSmsAccountTransferInTx(tx)) return false;
+        if (resolveSmsAccountTransferScope(tx) !== 'internal') return false;
         // Paired with a selected outgoing leg — outbound writes the transfer.
         if (
           shouldSkipPairedSmsAccountTransferIn(
@@ -569,7 +572,24 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       });
       if (selectedInboundMissingFrom.length > 0) {
         alert(
-          `${selectedInboundMissingFrom.length} incoming transfer(s) (حوالة واردة) need a Received-from account (different from the receiving account). Pick Received from on each row, or also paste the outgoing SMS from the sending account.`,
+          `${selectedInboundMissingFrom.length} between-accounts incoming transfer(s) (حوالة واردة) need a Received-from account. Switch to “External (income)” if the sender is not your account, or pick Received from / paste the sending-account SMS.`,
+        );
+        return;
+      }
+
+      const selectedOutboundMissingTo = [...selectedTransactions].filter((idx) => {
+        if (idx >= extractedTransactions.length) return false;
+        const tx = extractedTransactions[idx];
+        if (!isSmsAccountTransferTx(tx)) return false;
+        if (resolveSmsAccountTransferScope(tx) !== 'internal') return false;
+        const transferTo = parseSmsAccountTransferToFromNote(tx.note);
+        if (!transferTo) return true;
+        if (transferTo === String(tx.accountId || '').trim()) return true;
+        return !accountTransferDestinationChoices.some((a) => a.id === transferTo);
+      });
+      if (selectedOutboundMissingTo.length > 0) {
+        alert(
+          `${selectedOutboundMissingTo.length} between-accounts حوالة row(s) need a Transfer-to account. Switch to “External (expense)” if the payee is not your account, or pick Transfer to.`,
         );
         return;
       }
@@ -1572,7 +1592,13 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const isCcPayRow = isSmsCcPaymentTx(tx);
                         const isAcctXferRow = isSmsAccountTransferTx(tx);
                         const isAcctXferInRow = isSmsAccountTransferInTx(tx);
-                        const isTransferRow = isAtmRow || isCcPayRow || isAcctXferRow || isAcctXferInRow;
+                        const acctXferScope = (isAcctXferRow || isAcctXferInRow)
+                          ? resolveSmsAccountTransferScope(tx)
+                          : null;
+                        const isAcctXferInternal = Boolean(
+                          (isAcctXferRow || isAcctXferInRow) && acctXferScope === 'internal',
+                        );
+                        const isTransferRow = isAtmRow || isCcPayRow || isAcctXferInternal;
                         const atmCashTo = parseSmsAtmCashToFromNote(tx.note);
                         const ccFundedFrom = parseSmsCcFundedFromNote(tx.note);
                         const acctXferTo = parseSmsAccountTransferToFromNote(tx.note);
@@ -1588,6 +1614,32 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const acctXferChoicesForRow = accountTransferDestinationChoices.filter(
                           (a) => a.id !== String(tx.accountId || '').trim(),
                         );
+                        const setAcctXferScope = (scope: SmsAccountTransferScope) => {
+                          if (isAcctXferRow) {
+                            handleExtractedTransactionEdit(index, {
+                              note: smsNoteWithAccountTransferMeta(tx.note, {
+                                transferToAccountId: scope === 'internal' ? acctXferTo : null,
+                                scope,
+                              }),
+                              category: scope === 'internal' ? 'Transfer' : (tx.category === 'Transfer' ? 'Other' : tx.category),
+                              budgetCategory: scope === 'internal' ? undefined : tx.budgetCategory,
+                              type: 'expense',
+                            });
+                            return;
+                          }
+                          if (isAcctXferInRow) {
+                            handleExtractedTransactionEdit(index, {
+                              note: smsNoteWithAccountTransferInMeta(tx.note, {
+                                transferFromAccountId: scope === 'internal' ? acctXferFrom : null,
+                                paired: scope === 'internal' ? acctXferInPaired : false,
+                                scope,
+                              }),
+                              category: scope === 'internal' ? 'Transfer' : 'Income',
+                              budgetCategory: scope === 'internal' ? undefined : tx.budgetCategory,
+                              type: 'income',
+                            });
+                          }
+                        };
                         return (
                           <tr
                             key={index}
@@ -1628,20 +1680,24 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                               )}
                               {isAcctXferRow && (
                                 <div className="text-xs text-sky-700 mt-0.5">
-                                  {acctXferTo
-                                    ? 'Account transfer (حوالة) — no budget'
-                                    : acctXferDestLast4
-                                      ? `حوالة to ••••${acctXferDestLast4} — pick Transfer to if that is your account`
-                                      : 'حوالة — pick Transfer to for between-account import, or leave blank for external'}
+                                  {acctXferScope === 'internal'
+                                    ? acctXferTo
+                                      ? 'Between my accounts (حوالة) — no budget'
+                                      : acctXferDestLast4
+                                        ? `Between accounts — pick Transfer to (SMS ••••${acctXferDestLast4})`
+                                        : 'Between accounts — pick Transfer to'
+                                    : 'External payee (حوالة) — expense, set category/budget'}
                                 </div>
                               )}
                               {isAcctXferInRow && (
                                 <div className="text-xs text-sky-700 mt-0.5">
-                                  {acctXferInPaired && acctXferFrom
-                                    ? 'حوالة واردة — paired with outgoing SMS (one transfer)'
-                                    : acctXferFrom
-                                      ? 'Incoming transfer (حوالة واردة) — no budget'
-                                      : 'حوالة واردة — pick Received from (or paste the sending-account SMS)'}
+                                  {acctXferScope === 'internal'
+                                    ? acctXferInPaired && acctXferFrom
+                                      ? 'Between accounts — paired with outgoing SMS'
+                                      : acctXferFrom
+                                        ? 'Between my accounts (حوالة واردة) — no budget'
+                                        : 'Between accounts — pick Received from'
+                                    : 'External sender (حوالة واردة) — income'}
                                 </div>
                               )}
                             </td>
@@ -1691,9 +1747,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                       accountId: nextSource,
                                       note: smsNoteWithAccountTransferMeta(tx.note, {
                                         transferToAccountId: transferTo,
+                                        scope: acctXferScope ?? 'external',
                                       }),
-                                      category: 'Transfer',
-                                      budgetCategory: undefined,
+                                      category: acctXferScope === 'internal' ? 'Transfer' : tx.category,
+                                      budgetCategory: acctXferScope === 'internal' ? undefined : tx.budgetCategory,
                                     });
                                     return;
                                   }
@@ -1706,9 +1763,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                       note: smsNoteWithAccountTransferInMeta(tx.note, {
                                         transferFromAccountId: transferFrom,
                                         paired: false,
+                                        scope: acctXferScope ?? 'external',
                                       }),
-                                      category: 'Transfer',
-                                      budgetCategory: undefined,
+                                      category: acctXferScope === 'internal' ? 'Transfer' : tx.category,
+                                      budgetCategory: acctXferScope === 'internal' ? undefined : tx.budgetCategory,
                                     });
                                     return;
                                   }
@@ -1789,73 +1847,109 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                 </select>
                               )}
                               {isAcctXferRow && (
-                                <select
-                                  value={acctXferTo || ''}
-                                  onChange={(e) =>
-                                    handleExtractedTransactionEdit(index, {
-                                      note: smsNoteWithAccountTransferMeta(tx.note, {
-                                        transferToAccountId: e.target.value || null,
-                                      }),
-                                      category: 'Transfer',
-                                      budgetCategory: undefined,
-                                    })
-                                  }
-                                  className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
-                                    acctXferTo && acctXferTo !== tx.accountId
-                                      ? 'border-slate-300'
-                                      : 'border-slate-300'
-                                  }`}
-                                  aria-label={`Transfer destination for ${tx.description}`}
-                                >
-                                  <option value="">
-                                    {acctXferDestLast4
-                                      ? `Transfer to… (SMS ••••${acctXferDestLast4})`
-                                      : 'Transfer to… (optional)'}
-                                  </option>
-                                  {acctXferChoicesForRow.map((acc) => (
-                                    <option key={acc.id} value={acc.id}>
-                                      → {acc.name}
-                                      {acc.lastFourDigits || acc.platformDetails?.cardLast4
-                                        ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
-                                        : ''}
-                                    </option>
-                                  ))}
-                                </select>
+                                <>
+                                  <select
+                                    value={acctXferScope || 'external'}
+                                    onChange={(e) =>
+                                      setAcctXferScope(
+                                        e.target.value === 'internal' ? 'internal' : 'external',
+                                      )
+                                    }
+                                    className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                    aria-label={`حوالة type for ${tx.description}`}
+                                  >
+                                    <option value="internal">Between my accounts</option>
+                                    <option value="external">External (expense)</option>
+                                  </select>
+                                  {acctXferScope === 'internal' && (
+                                    <select
+                                      value={acctXferTo || ''}
+                                      onChange={(e) =>
+                                        handleExtractedTransactionEdit(index, {
+                                          note: smsNoteWithAccountTransferMeta(tx.note, {
+                                            transferToAccountId: e.target.value || null,
+                                            scope: 'internal',
+                                          }),
+                                          category: 'Transfer',
+                                          budgetCategory: undefined,
+                                        })
+                                      }
+                                      className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
+                                        acctXferTo && acctXferTo !== tx.accountId
+                                          ? 'border-slate-300'
+                                          : 'border-amber-400 bg-amber-50'
+                                      }`}
+                                      aria-label={`Transfer destination for ${tx.description}`}
+                                    >
+                                      <option value="">
+                                        {acctXferDestLast4
+                                          ? `Transfer to… (SMS ••••${acctXferDestLast4})`
+                                          : 'Transfer to…'}
+                                      </option>
+                                      {acctXferChoicesForRow.map((acc) => (
+                                        <option key={acc.id} value={acc.id}>
+                                          → {acc.name}
+                                          {acc.lastFourDigits || acc.platformDetails?.cardLast4
+                                            ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
+                                            : ''}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </>
                               )}
                               {isAcctXferInRow && (
-                                <select
-                                  value={acctXferFrom || ''}
-                                  onChange={(e) =>
-                                    handleExtractedTransactionEdit(index, {
-                                      note: smsNoteWithAccountTransferInMeta(tx.note, {
-                                        transferFromAccountId: e.target.value || null,
-                                        paired: false,
-                                      }),
-                                      category: 'Transfer',
-                                      budgetCategory: undefined,
-                                    })
-                                  }
-                                  className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
-                                    acctXferFrom && acctXferFrom !== tx.accountId
-                                      ? 'border-slate-300'
-                                      : 'border-amber-400 bg-amber-50'
-                                  }`}
-                                  aria-label={`Received-from account for ${tx.description}`}
-                                >
-                                  <option value="">
-                                    {acctXferInPaired
-                                      ? 'Received from… (paired)'
-                                      : 'Received from…'}
-                                  </option>
-                                  {acctXferChoicesForRow.map((acc) => (
-                                    <option key={acc.id} value={acc.id}>
-                                      ← {acc.name}
-                                      {acc.lastFourDigits || acc.platformDetails?.cardLast4
-                                        ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
-                                        : ''}
-                                    </option>
-                                  ))}
-                                </select>
+                                <>
+                                  <select
+                                    value={acctXferScope || 'external'}
+                                    onChange={(e) =>
+                                      setAcctXferScope(
+                                        e.target.value === 'internal' ? 'internal' : 'external',
+                                      )
+                                    }
+                                    className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                    aria-label={`حوالة واردة type for ${tx.description}`}
+                                  >
+                                    <option value="internal">From my account</option>
+                                    <option value="external">External (income)</option>
+                                  </select>
+                                  {acctXferScope === 'internal' && (
+                                    <select
+                                      value={acctXferFrom || ''}
+                                      onChange={(e) =>
+                                        handleExtractedTransactionEdit(index, {
+                                          note: smsNoteWithAccountTransferInMeta(tx.note, {
+                                            transferFromAccountId: e.target.value || null,
+                                            paired: false,
+                                            scope: 'internal',
+                                          }),
+                                          category: 'Transfer',
+                                          budgetCategory: undefined,
+                                        })
+                                      }
+                                      className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
+                                        acctXferFrom && acctXferFrom !== tx.accountId
+                                          ? 'border-slate-300'
+                                          : 'border-amber-400 bg-amber-50'
+                                      }`}
+                                      aria-label={`Received-from account for ${tx.description}`}
+                                    >
+                                      <option value="">
+                                        {acctXferInPaired
+                                          ? 'Received from… (paired)'
+                                          : 'Received from…'}
+                                      </option>
+                                      {acctXferChoicesForRow.map((acc) => (
+                                        <option key={acc.id} value={acc.id}>
+                                          ← {acc.name}
+                                          {acc.lastFourDigits || acc.platformDetails?.cardLast4
+                                            ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
+                                            : ''}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </>
                               )}
                             </td>
                             <td className={`px-4 py-3 text-sm text-right font-medium ${tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>

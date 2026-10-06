@@ -95,7 +95,7 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
     expect(parseSmsAccountTransferToFromNote(ready.note)).toBe('chk-7000');
   });
 
-  it('parses incoming حوالة واردة as linked transfer needing Received-from', async () => {
+  it('parses unpaired حوالة واردة as external income (switch to From my account for transfer)', async () => {
     const sms = `حوالة واردة محلية
 مبلغ 2,500 SAR
 من HUSSAIN MURTADHA ALI ALSAGGAF
@@ -106,16 +106,17 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
     const tx = res.transactions[0];
     expect(tx.amount).toBeCloseTo(2500, 2);
     expect(tx.type).toBe('income');
-    expect(tx.category).toBe('Transfer');
+    expect(tx.category).toBe('Income');
     expect(tx.accountId).toBe('chk-0001');
     expect(tx.description.toUpperCase()).toContain('HUSSAIN');
     expect(tx.note).toContain('sms:kind=account_transfer_in');
+    expect(tx.note).toContain('sms:xfer_scope=external');
     expect(parseSmsAccountTransferFromFromNote(tx.note)).toBeNull();
     expect(shouldImportSmsAccountTransferInAsTransfer(tx)).toBe(false);
 
     expect(shouldImportSmsAccountTransferInAsTransfer({
       ...tx,
-      note: `sms:card=0001 sms:kind=account_transfer_in sms:transfer_from=chk-3138`,
+      note: `sms:card=0001 sms:kind=account_transfer_in sms:transfer_from=chk-3138 sms:xfer_scope=internal`,
     })).toBe(true);
 
     const plan = planStatementImport({
@@ -131,8 +132,8 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
         sarPerUsd: 3.75,
       },
     });
-    expect(plan.skippedValidation).toBe(1);
-    expect(plan.validationMessages[0]).toMatch(/Received-from/i);
+    expect(plan.skippedValidation).toBe(0);
+    expect(plan.importableCount).toBe(1);
   });
 
   it('pairs outgoing + incoming حوالة from the same paste into one transfer', async () => {

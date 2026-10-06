@@ -26,6 +26,9 @@ import {
 export const SMS_ACCOUNT_TRANSFER_KIND = 'account_transfer';
 export const SMS_ACCOUNT_TRANSFER_IN_KIND = 'account_transfer_in';
 
+/** Between own accounts (addTransfer) vs external payee/sender (expense / income). */
+export type SmsAccountTransferScope = 'internal' | 'external';
+
 export function isSmsAccountTransferTx(
   tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount'>,
 ): boolean {
@@ -58,6 +61,55 @@ export function parseSmsAccountTransferFromFromNote(note: string | undefined): s
   return m?.[1] ? String(m[1]).trim() : null;
 }
 
+export function parseSmsAccountTransferScopeFromNote(
+  note: string | undefined,
+): SmsAccountTransferScope | null {
+  const m = String(note || '').match(/sms:xfer_scope=(internal|external)\b/i);
+  if (!m?.[1]) return null;
+  return m[1].toLowerCase() === 'external' ? 'external' : 'internal';
+}
+
+/**
+ * Resolve whether a حوالة row is between own accounts or external.
+ * Explicit `sms:xfer_scope` wins; otherwise counterparty meta ⇒ internal, else external.
+ */
+export function resolveSmsAccountTransferScope(
+  tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount'>,
+): SmsAccountTransferScope {
+  const explicit = parseSmsAccountTransferScopeFromNote(tx.note);
+  if (explicit) return explicit;
+  if (isSmsAccountTransferInTx(tx)) {
+    if (
+      parseSmsAccountTransferFromFromNote(tx.note) ||
+      isSmsAccountTransferInPaired(tx.note)
+    ) {
+      return 'internal';
+    }
+    return 'external';
+  }
+  if (isSmsAccountTransferTx(tx)) {
+    if (parseSmsAccountTransferToFromNote(tx.note)) return 'internal';
+    return 'external';
+  }
+  return 'external';
+}
+
+/** True when حوالة should import via addTransfer (not budgeted expense/income). */
+export function isSmsAccountTransferInternal(
+  tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount'>,
+): boolean {
+  if (!isSmsAccountTransferTx(tx) && !isSmsAccountTransferInTx(tx)) return false;
+  return resolveSmsAccountTransferScope(tx) === 'internal';
+}
+
+/** External payee (expense) or external sender (income) — normal ledger row with budget. */
+export function isSmsAccountTransferExternal(
+  tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount'>,
+): boolean {
+  if (!isSmsAccountTransferTx(tx) && !isSmsAccountTransferInTx(tx)) return false;
+  return resolveSmsAccountTransferScope(tx) === 'external';
+}
+
 /** True when this inbound leg was paired with an outgoing حوالة in the same paste. */
 export function isSmsAccountTransferInPaired(note: string | undefined): boolean {
   return /sms:paired=1\b/i.test(String(note || ''));
@@ -88,6 +140,7 @@ export function stripSmsAccountTransferMeta(note: string | undefined): string {
     .replace(/\s*sms:transfer_to=[A-Za-z0-9_-]+\b/gi, '')
     .replace(/\s*sms:transfer_from=[A-Za-z0-9_-]+\b/gi, '')
     .replace(/\s*sms:paired=1\b/gi, '')
+    .replace(/\s*sms:xfer_scope=(?:internal|external)\b/gi, '')
     .replace(/\s*sms:to_card=\d{4}\b/gi, '')
     .replace(/\s*sms:fee=\d+(?:\.\d+)?\b/gi, '')
     .replace(/\s+/g, ' ')
@@ -102,12 +155,14 @@ export function smsNoteWithAccountTransferMeta(
     destLast4?: string | null;
     transferToAccountId?: string | null;
     feeAmount?: number | null;
+    scope?: SmsAccountTransferScope | null;
   },
 ): string | undefined {
   const without = String(existingNote || '')
     .replace(/\s*sms:transfer_to=[A-Za-z0-9_-]+\b/gi, '')
     .replace(/\s*sms:to_card=\d{4}\b/gi, '')
     .replace(/\s*sms:fee=\d+(?:\.\d+)?\b/gi, '')
+    .replace(/\s*sms:xfer_scope=(?:internal|external)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
   const base = smsNoteWithAtmMeta(without || undefined, {
@@ -128,11 +183,18 @@ export function smsNoteWithAccountTransferMeta(
     opts.feeAmount != null && Number.isFinite(Number(opts.feeAmount))
       ? Math.max(0, Number(opts.feeAmount))
       : parseSmsTransferFeeFromNote(existingNote);
+  const scope: SmsAccountTransferScope =
+    opts.scope === 'internal' || opts.scope === 'external'
+      ? opts.scope
+      : transferTo
+        ? 'internal'
+        : (parseSmsAccountTransferScopeFromNote(existingNote) ?? 'external');
   const parts: string[] = [];
   if (base) parts.push(base);
   if (destLast4) parts.push(`sms:to_card=${destLast4}`);
-  if (transferTo) parts.push(`sms:transfer_to=${transferTo}`);
+  if (transferTo && scope === 'internal') parts.push(`sms:transfer_to=${transferTo}`);
   if (fee > 0) parts.push(`sms:fee=${fee}`);
+  parts.push(`sms:xfer_scope=${scope}`);
   return parts.length ? parts.join(' ') : undefined;
 }
 
@@ -143,11 +205,13 @@ export function smsNoteWithAccountTransferInMeta(
     time?: string | null;
     transferFromAccountId?: string | null;
     paired?: boolean | null;
+    scope?: SmsAccountTransferScope | null;
   },
 ): string | undefined {
   const without = String(existingNote || '')
     .replace(/\s*sms:transfer_from=[A-Za-z0-9_-]+\b/gi, '')
     .replace(/\s*sms:paired=1\b/gi, '')
+    .replace(/\s*sms:xfer_scope=(?:internal|external)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
   const base = smsNoteWithAtmMeta(without || undefined, {
@@ -162,10 +226,17 @@ export function smsNoteWithAccountTransferInMeta(
       : parseSmsAccountTransferFromFromNote(existingNote);
   const paired =
     opts.paired != null ? Boolean(opts.paired) : isSmsAccountTransferInPaired(existingNote);
+  const scope: SmsAccountTransferScope =
+    opts.scope === 'internal' || opts.scope === 'external'
+      ? opts.scope
+      : transferFrom || paired
+        ? 'internal'
+        : (parseSmsAccountTransferScopeFromNote(existingNote) ?? 'external');
   const parts: string[] = [];
   if (base) parts.push(base);
-  if (transferFrom) parts.push(`sms:transfer_from=${transferFrom}`);
-  if (paired) parts.push('sms:paired=1');
+  if (transferFrom && scope === 'internal') parts.push(`sms:transfer_from=${transferFrom}`);
+  if (paired && scope === 'internal') parts.push('sms:paired=1');
+  parts.push(`sms:xfer_scope=${scope}`);
   return parts.length ? parts.join(' ') : undefined;
 }
 
@@ -247,23 +318,23 @@ export function applySmsAccountTransfers(
       if (resolved.reason === 'ambiguous' && !warnedAmbiguous) {
         warnedAmbiguous = true;
         warnings.push(
-          `Destination ••••${destLast4} matches multiple accounts (${resolved.candidates.map((a) => a.name).join(', ')}). Pick “Transfer to” on each حوالة row.`,
+          `Destination ••••${destLast4} matches multiple accounts (${resolved.candidates.map((a) => a.name).join(', ')}). Pick “Between my accounts” + Transfer to, or leave as External expense.`,
         );
       }
-      // External / unmatched destination: still Transfer (no budget); import as single row unless user picks a to-account.
+      // Unmatched destination defaults to external expense (budgetable), not a forced Transfer.
+      const cleanDesc = beneficiary.replace(/^Transfer\s*(→[^·]*·?\s*|·\s*)?/i, '').trim() || beneficiary;
       return {
         ...tx,
-        category: 'Transfer',
-        budgetCategory: undefined,
-        description: beneficiary.startsWith('Transfer')
-          ? beneficiary
-          : `Transfer · ${beneficiary}`,
+        category: 'Other',
+        type: 'expense' as const,
+        description: cleanDesc,
         note: smsNoteWithAccountTransferMeta(tx.note, {
           last4,
           time,
           destLast4,
           transferToAccountId: null,
           feeAmount: fee,
+          scope: 'external',
         }),
       };
     }
@@ -281,6 +352,7 @@ export function applySmsAccountTransfers(
         destLast4,
         transferToAccountId: resolved.account.id,
         feeAmount: fee,
+        scope: 'internal',
       }),
     };
   });
@@ -290,7 +362,7 @@ export function applySmsAccountTransfers(
 
 /**
  * After last-4 routing: mark incoming حوالة واردة rows as account_transfer_in.
- * Source (Received-from) is left for review / same-paste pairing.
+ * Unpaired defaults to external income; pairing / Received-from sets internal.
  */
 export function applySmsAccountTransferIns(
   transactions: Transaction[],
@@ -313,25 +385,45 @@ export function applySmsAccountTransferIns(
     const transferFrom = parseSmsAccountTransferFromFromNote(tx.note);
     const paired = isSmsAccountTransferInPaired(tx.note);
     const sender = String(tx.description || '').trim() || 'Transfer';
+    const cleanSender = sender.replace(/^Transfer\s*(←[^·]*·?\s*|·\s*)?/i, '').trim() || sender;
+    const scope: SmsAccountTransferScope =
+      transferFrom || paired
+        ? 'internal'
+        : (parseSmsAccountTransferScopeFromNote(tx.note) ?? 'external');
 
-    if (!transferFrom && !paired) unresolvedCount += 1;
-    else expandedCount += 1;
+    if (scope === 'internal' && !transferFrom && !paired) unresolvedCount += 1;
+    else if (scope === 'internal') expandedCount += 1;
+
+    if (scope === 'external') {
+      return {
+        ...tx,
+        category: 'Income',
+        type: 'income' as const,
+        description: cleanSender,
+        note: smsNoteWithAccountTransferInMeta(tx.note, {
+          last4,
+          time,
+          transferFromAccountId: null,
+          paired: false,
+          scope: 'external',
+        }),
+      };
+    }
 
     return {
       ...tx,
       category: 'Transfer',
       budgetCategory: undefined,
       type: 'income' as const,
-      description: sender.startsWith('Transfer')
-        ? sender
-        : transferFrom
-          ? `Transfer ← ${sender}`
-          : `Transfer · ${sender}`,
+      description: transferFrom
+        ? `Transfer ← ${cleanSender}`
+        : `Transfer · ${cleanSender}`,
       note: smsNoteWithAccountTransferInMeta(tx.note, {
         last4,
         time,
         transferFromAccountId: transferFrom,
         paired,
+        scope: 'internal',
       }),
     };
   });
@@ -421,6 +513,7 @@ export function pairSmsAccountTransferLegs(
       budgetCategory: undefined,
       note: smsNoteWithAccountTransferMeta(outTx.note, {
         transferToAccountId: resolvedTo,
+        scope: 'internal',
       }),
       description:
         resolvedTo && byId.get(resolvedTo)
@@ -439,6 +532,7 @@ export function pairSmsAccountTransferLegs(
       note: smsNoteWithAccountTransferInMeta(inTx.note, {
         transferFromAccountId: resolvedFrom,
         paired: Boolean(resolvedFrom && resolvedTo),
+        scope: 'internal',
       }),
       description:
         resolvedFrom && byId.get(resolvedFrom)
@@ -496,6 +590,7 @@ export function shouldImportSmsAccountAsTransfer(
 ): boolean {
   if (!isSmsAccountTransferTx(tx)) return false;
   if (!(Number(tx.amount) < 0)) return false;
+  if (resolveSmsAccountTransferScope(tx) !== 'internal') return false;
   const toId = parseSmsAccountTransferToFromNote(tx.note);
   const fromId = String(tx.accountId || '').trim();
   return Boolean(toId && fromId && toId !== fromId);
@@ -507,6 +602,7 @@ export function shouldImportSmsAccountTransferInAsTransfer(
 ): boolean {
   if (!isSmsAccountTransferInTx(tx)) return false;
   if (!(Number(tx.amount) > 0)) return false;
+  if (resolveSmsAccountTransferScope(tx) !== 'internal') return false;
   const fromId = parseSmsAccountTransferFromFromNote(tx.note);
   const toId = String(tx.accountId || '').trim();
   return Boolean(fromId && toId && fromId !== toId);

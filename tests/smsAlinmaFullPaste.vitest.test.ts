@@ -217,10 +217,11 @@ describe('Alinma full user paste regression', () => {
     expect(in2500).toHaveLength(2);
     for (const tx of in2500) {
       expect(tx.type).toBe('income');
-      expect(tx.category).toBe('Transfer');
+      expect(tx.category).toBe('Income');
       expect(tx.accountId).toBe('chk-0001');
       expect(tx.description.toUpperCase()).toContain('HUSSAIN');
       expect(tx.note).toContain('sms:kind=account_transfer_in');
+      expect(tx.note).toContain('sms:xfer_scope=external');
     }
 
     const netflix = res.transactions.filter((t) => Math.abs(t.amount + 50.13) < 0.01);
@@ -237,7 +238,7 @@ describe('Alinma full user paste regression', () => {
     expect(luxury.description).toMatch(/Luxury Car/i);
     expect(luxury.accountId).toBe('cc-3282');
 
-    // Assign source on outgoing حوالة + Received-from on واردة so import plan is ready.
+    // Assign source on outgoing حوالة; unpaired واردة defaults to external income.
     const prepared = res.transactions.map((t) => {
       if (
         /sms:kind=account_transfer\b/i.test(String(t.note || '')) &&
@@ -245,15 +246,6 @@ describe('Alinma full user paste regression', () => {
         !t.accountId
       ) {
         return { ...t, accountId: 'chk-0001' };
-      }
-      if (
-        /sms:kind=account_transfer_in\b/i.test(String(t.note || '')) &&
-        !/sms:transfer_from=/i.test(String(t.note || ''))
-      ) {
-        return {
-          ...t,
-          note: `${t.note} sms:transfer_from=chk-7000`.trim(),
-        };
       }
       return t;
     });

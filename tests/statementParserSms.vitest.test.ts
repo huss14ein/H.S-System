@@ -228,7 +228,7 @@ SAR مبلغ:50.00
     expect(res.transactions[0].date).toBe('2026-08-10');
   });
 
-  it('parses outgoing local transfer (حوالة صادرة) as Transfer including fee, not income', async () => {
+  it('parses outgoing local transfer (حوالة صادرة) as external expense when dest is not your account', async () => {
     const sms = `حوالة محلية صادرة بـSR 300
 من3138
 لـ0102;abdullah alsaggaf
@@ -241,8 +241,9 @@ SAR مبلغ:50.00
     expect(tx.amount).toBeCloseTo(-300.58, 2);
     expect(tx.date).toBe('2026-09-09');
     expect(tx.description.toLowerCase()).toContain('abdullah');
-    expect(tx.category).toBe('Transfer');
+    expect(tx.category).toBe('Other');
     expect(tx.note).toContain('sms:kind=account_transfer');
+    expect(tx.note).toContain('sms:xfer_scope=external');
     expect(tx.note).toContain('sms:to_card=0102');
     expect(tx.note).toContain('sms:fee=0.58');
   });

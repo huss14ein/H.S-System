@@ -112,7 +112,7 @@ describe('parseSMSTransactions — حوالة as account transfer', () => {
     expect(mapped.budgetCategory).toBeUndefined();
   });
 
-  it('keeps حوالة to unknown last-4 as Transfer without forcing destination', async () => {
+  it('keeps حوالة to unknown last-4 as external expense (budgetable)', async () => {
     const sms = `حوالة محلية صادرة بـSR 300
 من3138
 لـ0102;abdullah alsaggaf
@@ -121,12 +121,15 @@ describe('parseSMSTransactions — حوالة as account transfer', () => {
     const res = await parseSMSTransactions(sms, '', { accounts });
     const tx = res.transactions[0];
     expect(tx).toBeDefined();
-    expect(tx.category).toBe('Transfer');
     expect(tx.note).toContain('sms:kind=account_transfer');
+    expect(tx.note).toContain('sms:xfer_scope=external');
     expect(tx.note).toContain('sms:to_card=0102');
     expect(parseSmsAccountTransferToFromNote(tx.note)).toBeNull();
     expect(shouldImportSmsAccountAsTransfer(tx)).toBe(false);
-    expect(isSmsLedgerTransferTx(tx)).toBe(true);
+    expect(isSmsLedgerTransferTx(tx)).toBe(false);
+    expect(shouldSkipBudgetForImportedTx(tx)).toBe(false);
+    expect(tx.type).toBe('expense');
+    expect(tx.category).not.toBe('Transfer');
   });
 
   it('resolves حوالة داخلية when destination last-4 is configured', async () => {
@@ -167,7 +170,7 @@ describe('applySmsAccountTransfers', () => {
 });
 
 describe('حوالة واردة inbound transfer', () => {
-  it('marks incoming SMS as account_transfer_in requiring Received-from', async () => {
+  it('marks unpaired incoming SMS as external income by default', async () => {
     const sms = `حوالة واردة محلية
 مبلغ 1,000 SAR
 من AHMED ALI
@@ -179,9 +182,11 @@ describe('حوالة واردة inbound transfer', () => {
     expect(isSmsAccountTransferInTx(tx)).toBe(true);
     expect(isSmsAccountTransferTx(tx)).toBe(false);
     expect(tx.note).toContain('sms:kind=account_transfer_in');
+    expect(tx.note).toContain('sms:xfer_scope=external');
     expect(shouldImportSmsAccountTransferInAsTransfer(tx)).toBe(false);
-    expect(isSmsLedgerTransferTx(tx)).toBe(true);
-    expect(shouldSkipBudgetForImportedTx(tx)).toBe(true);
+    expect(isSmsLedgerTransferTx(tx)).toBe(false);
+    expect(shouldSkipBudgetForImportedTx(tx)).toBe(false);
+    expect(tx.category).toBe('Income');
   });
 
   it('pairs same-paste outgoing + incoming into one addTransfer-ready leg', () => {

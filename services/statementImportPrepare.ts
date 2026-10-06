@@ -26,9 +26,11 @@ import {
 } from './smsCcPaymentTransfer';
 import {
   isSmsAccountTransferInTx,
+  isSmsAccountTransferInternal,
   isSmsAccountTransferTx,
   parseSmsAccountTransferFromFromNote,
   parseSmsAccountTransferToFromNote,
+  resolveSmsAccountTransferScope,
   shouldImportSmsAccountAsTransfer,
   shouldImportSmsAccountTransferInAsTransfer,
   shouldSkipPairedSmsAccountTransferIn,
@@ -180,22 +182,23 @@ function validatePreparedBankRow(tx: Transaction, accounts?: Account[]): string[
     }
   }
 
-  // Outgoing حوالة with a chosen destination must import via addTransfer (source → to).
-  // Unresolved destination (external payee) may still import as a single Transfer-category row.
-  if (isSmsAccountTransferTx(tx) && shouldImportSmsAccountAsTransfer(tx)) {
+  // Outgoing حوالة: internal requires Transfer-to; external imports as a normal expense.
+  if (isSmsAccountTransferTx(tx) && resolveSmsAccountTransferScope(tx) === 'internal') {
     const transferTo = parseSmsAccountTransferToFromNote(tx.note);
     const sourceId = String(tx.accountId || '').trim();
     if (!transferTo) {
-      reasons.push('Account transfer needs a Transfer-to destination account');
+      reasons.push('Between-accounts حوالة needs a Transfer-to destination account');
     } else if (transferTo === sourceId) {
       reasons.push('Account transfer destination must differ from the source account');
     } else if (!isKnownAccount(transferTo)) {
       reasons.push('Account transfer destination account not found');
+    } else if (!shouldImportSmsAccountAsTransfer(tx)) {
+      reasons.push('Account transfer is not ready to import as a transfer');
     }
   }
 
-  // Incoming حوالة واردة must import as a transfer (Received-from → this account) — never plain income.
-  if (isSmsAccountTransferInTx(tx)) {
+  // Incoming حوالة واردة: internal requires Received-from; external imports as income.
+  if (isSmsAccountTransferInTx(tx) && resolveSmsAccountTransferScope(tx) === 'internal') {
     const transferFrom = parseSmsAccountTransferFromFromNote(tx.note);
     const destId = String(tx.accountId || '').trim();
     if (!transferFrom) {
@@ -336,12 +339,11 @@ export function planStatementImport(args: {
       validationMessages.push(`Bank row #${idx + 1}: ${reasons.join(', ')}`);
       return;
     }
-    // Never persist a budget link on SMS ledger transfers (ATM / سداد / حوالة).
+    // Never persist a budget link on SMS ledger transfers (ATM / سداد / internal حوالة).
     const cleanedTx =
       isSmsAtmWithdrawalTx(tx) ||
       isSmsCcPaymentTx(tx) ||
-      isSmsAccountTransferTx(tx) ||
-      isSmsAccountTransferInTx(tx)
+      isSmsAccountTransferInternal(tx)
         ? ({ ...tx, category: 'Transfer', budgetCategory: undefined } as Transaction)
         : tx;
     importableBankRows.push({ tx: cleanedTx, idx, displayIdx: idx + 1 });
