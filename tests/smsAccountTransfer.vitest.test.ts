@@ -192,6 +192,33 @@ describe('applySmsAccountTransfers', () => {
     expect(result.transactions[0].description).not.toMatch(/Transfer →/);
     expect(result.warnings.some((w) => /matches/i.test(w))).toBe(true);
   });
+
+  it('does not auto-internal when accountId is only the upload fallback (no sms:card=)', () => {
+    const result = applySmsAccountTransfers(
+      [
+        {
+          id: 't-fallback',
+          date: '2026-08-29',
+          description: 'فاطمه فهمي محمد السقاف',
+          amount: -500,
+          category: 'Transfer',
+          accountId: 'chk-3138',
+          type: 'expense',
+          status: 'Approved',
+          note: 'sms:time=21:31 sms:kind=account_transfer sms:to_card=0001',
+        },
+      ],
+      accounts,
+    );
+    expect(result.expandedCount).toBe(0);
+    expect(result.transactions[0].accountId).toBe('chk-3138');
+    expect(parseSmsAccountTransferToFromNote(result.transactions[0].note)).toBeNull();
+    expect(result.transactions[0].note).toContain('sms:xfer_scope=external');
+    expect(result.transactions[0].note).not.toMatch(/sms:card=/);
+    expect(result.transactions[0].description).not.toMatch(/Transfer →/);
+    expect(shouldImportSmsAccountAsTransfer(result.transactions[0])).toBe(false);
+    expect(result.warnings.some((w) => /no source account/i.test(w))).toBe(true);
+  });
 });
 
 describe('حوالة واردة inbound transfer', () => {

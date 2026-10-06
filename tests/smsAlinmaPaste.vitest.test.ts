@@ -94,6 +94,27 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
     expect(shouldImportSmsAccountAsTransfer(withSource)).toBe(false);
   });
 
+  it('stays an external expense when optional fallback fills the source account', async () => {
+    const sms = `حوالة صادرة داخلية
+مبلغ 500.00 ريال
+لـ فاطمه فهمي محمد السقاف
+لحساب *7000
+في 26-08-29 21:31`;
+    const res = await parseSMSTransactions(sms, 'chk-0001', { accounts });
+    expect(res.transactions).toHaveLength(1);
+    const tx = res.transactions[0];
+    expect(tx.accountId).toBe('chk-0001');
+    expect(tx.type).toBe('expense');
+    expect(tx.category).toBe('Other');
+    expect(tx.note).toContain('sms:to_card=7000');
+    expect(tx.note).toContain('sms:xfer_scope=external');
+    expect(tx.note).not.toMatch(/sms:transfer_to=/);
+    expect(tx.note).not.toMatch(/sms:card=/);
+    expect(tx.description).toMatch(/فاطمه/);
+    expect(tx.description).not.toMatch(/Savings 7000|Transfer →/i);
+    expect(shouldImportSmsAccountAsTransfer(tx)).toBe(false);
+  });
+
   it('parses unpaired حوالة واردة as external income (switch to From my account for transfer)', async () => {
     const sms = `حوالة واردة محلية
 مبلغ 2,500 SAR

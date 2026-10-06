@@ -281,10 +281,11 @@ export type SmsAccountTransferResult = {
 /**
  * After last-4 routing: mark outgoing حوالة rows.
  *
- * Auto-internal (addTransfer) ONLY when the SMS source account is known AND the
- * destination last-4 uniquely matches a different owned account. Dest-only matches
- * (common Alinma `لحساب *####` to an external payee) must stay external expenses —
- * never credit the user's account that happens to share the same last-4.
+ * Auto-internal (addTransfer) ONLY when the SMS itself names a source last-4
+ * (`sms:card=` / من####) AND the destination last-4 uniquely matches a different
+ * owned account. A review fallback `accountId` is not a named source. Dest-only
+ * matches (common Alinma `لحساب *####` to an external payee) must stay external
+ * expenses — never credit the user's account that happens to share the same last-4.
  */
 export function applySmsAccountTransfers(
   transactions: Transaction[],
@@ -320,8 +321,11 @@ export function applySmsAccountTransfers(
     const cleanDesc =
       beneficiary.replace(/^Transfer\s*(→[^·]*·?\s*|·\s*)?/i, '').trim() || beneficiary;
 
-    // Strong signal only: known source + unique dest among own accounts.
-    const canAutoInternal = Boolean(sourceId && resolved.account && resolved.account.id !== sourceId);
+    // Strong signal only: SMS named a source last-4. Fallback accountId is not enough.
+    const smsNamedSource = Boolean(last4);
+    const canAutoInternal = Boolean(
+      smsNamedSource && sourceId && resolved.account && resolved.account.id !== sourceId,
+    );
 
     if (!canAutoInternal) {
       unresolvedCount += 1;
@@ -330,7 +334,7 @@ export function applySmsAccountTransfers(
         warnings.push(
           `Destination ••••${destLast4} matches multiple accounts (${resolved.candidates.map((a) => a.name).join(', ')}). Pick “Between my accounts” + Transfer to only if that is your account.`,
         );
-      } else if (resolved.account && !sourceId && !warnedDestOnlyMatch) {
+      } else if (resolved.account && !smsNamedSource && !warnedDestOnlyMatch) {
         warnedDestOnlyMatch = true;
         warnings.push(
           `Destination ••••${destLast4} also matches “${resolved.account.name}”, but the SMS has no source account. Left as External expense — switch to “Between my accounts” only if you sent this to yourself.`,
