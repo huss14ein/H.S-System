@@ -35,6 +35,17 @@ import {
   stripSmsCcPaymentMeta,
   isEligibleCcFundingAccount,
 } from '../services/smsCcPaymentTransfer';
+import {
+  isSmsAccountTransferTx,
+  parseSmsAccountTransferToFromNote,
+  parseSmsTransferDestLast4FromNote,
+  parseSmsTransferFeeFromNote,
+  shouldImportSmsAccountAsTransfer,
+  smsAccountTransferPrincipalAmount,
+  smsNoteWithAccountTransferMeta,
+  stripSmsAccountTransferMeta,
+  isEligibleAccountTransferDestination,
+} from '../services/smsAccountTransfer';
 import { isSmsLedgerTransferTx } from '../services/smsImportTransferGuards';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { useConfirmAction } from '../hooks/useConfirmAction';
@@ -101,6 +112,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   /** Checking/Savings that can fund a card payment (excludes physical cash wallets). */
   const ccFundingAccountChoices = useMemo(
     () => bankAccounts.filter((a) => isEligibleCcFundingAccount(a)),
+    [bankAccounts],
+  );
+  /** Destinations for outgoing حوالة (Checking / Savings / Credit). */
+  const accountTransferDestinationChoices = useMemo(
+    () => bankAccounts.filter((a) => isEligibleAccountTransferDestination(a)),
     [bankAccounts],
   );
   const selectedAccountObj = useMemo(
@@ -581,6 +597,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
               try {
                 const cashTo = parseSmsAtmCashToFromNote(tx.note);
                 const fundedFrom = parseSmsCcFundedFromNote(tx.note);
+                const transferTo = parseSmsAccountTransferToFromNote(tx.note);
                 if (shouldImportSmsAtmAsTransfer(tx) && cashTo) {
                   const fromAccountId = String(tx.accountId || '').trim();
                   const absAmt = Math.abs(Number(tx.amount) || 0);
@@ -615,6 +632,26 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     tx.date,
                     transferNote,
                     0,
+                    { system: true },
+                  );
+                } else if (shouldImportSmsAccountAsTransfer(tx) && transferTo) {
+                  const fromAccountId = String(tx.accountId || '').trim();
+                  const principal = smsAccountTransferPrincipalAmount(tx);
+                  const fee = parseSmsTransferFeeFromNote(tx.note);
+                  const transferNote =
+                    stripSmsAccountTransferMeta(tx.note) ||
+                    String(tx.description || '')
+                      .replace(/^Transfer\s*→[^·]*·?\s*/i, '')
+                      .replace(/^Transfer\s*·\s*/i, '')
+                      .trim() ||
+                    'Local transfer (حوالة)';
+                  await addTransfer(
+                    fromAccountId,
+                    transferTo,
+                    principal,
+                    tx.date,
+                    transferNote,
+                    fee,
                     { system: true },
                   );
                 } else if (isSmsAtmWithdrawalTx(tx) || isSmsCcPaymentTx(tx)) {
@@ -1474,13 +1511,19 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         const budgetSelectOptions = budgetCategoriesForTransactionDate(tx.date);
                         const isAtmRow = isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0;
                         const isCcPayRow = isSmsCcPaymentTx(tx);
-                        const isTransferRow = isAtmRow || isCcPayRow;
+                        const isAcctXferRow = isSmsAccountTransferTx(tx);
+                        const isTransferRow = isAtmRow || isCcPayRow || isAcctXferRow;
                         const atmCashTo = parseSmsAtmCashToFromNote(tx.note);
                         const ccFundedFrom = parseSmsCcFundedFromNote(tx.note);
+                        const acctXferTo = parseSmsAccountTransferToFromNote(tx.note);
+                        const acctXferDestLast4 = parseSmsTransferDestLast4FromNote(tx.note);
                         const cashChoicesForRow = physicalCashAccountChoices.filter(
                           (a) => a.id !== String(tx.accountId || '').trim(),
                         );
                         const fundingChoicesForRow = ccFundingAccountChoices.filter(
+                          (a) => a.id !== String(tx.accountId || '').trim(),
+                        );
+                        const acctXferChoicesForRow = accountTransferDestinationChoices.filter(
                           (a) => a.id !== String(tx.accountId || '').trim(),
                         );
                         return (
@@ -1521,6 +1564,15 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                               {isCcPayRow && (
                                 <div className="text-xs text-sky-700 mt-0.5">Card payment → transfer (no budget)</div>
                               )}
+                              {isAcctXferRow && (
+                                <div className="text-xs text-sky-700 mt-0.5">
+                                  {acctXferTo
+                                    ? 'Account transfer (حوالة) — no budget'
+                                    : acctXferDestLast4
+                                      ? `حوالة to ••••${acctXferDestLast4} — pick Transfer to if that is your account`
+                                      : 'حوالة — pick Transfer to for between-account import, or leave blank for external'}
+                                </div>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-600 min-w-[160px]">
                               <select
@@ -1554,6 +1606,20 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                       accountId: nextSource,
                                       note: smsNoteWithCcPaymentMeta(tx.note, {
                                         fundedFromAccountId: fundedFrom,
+                                      }),
+                                      category: 'Transfer',
+                                      budgetCategory: undefined,
+                                    });
+                                    return;
+                                  }
+                                  if (isAcctXferRow) {
+                                    const prevTo = parseSmsAccountTransferToFromNote(tx.note);
+                                    const transferTo =
+                                      prevTo && prevTo !== nextSource ? prevTo : null;
+                                    handleExtractedTransactionEdit(index, {
+                                      accountId: nextSource,
+                                      note: smsNoteWithAccountTransferMeta(tx.note, {
+                                        transferToAccountId: transferTo,
                                       }),
                                       category: 'Transfer',
                                       budgetCategory: undefined,
@@ -1631,6 +1697,40 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                       ← {acc.name}
                                       {acc.accountRole === 'debt_servicing' || acc.accountRole === 'bills_payment'
                                         ? ' (bills)'
+                                        : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              {isAcctXferRow && (
+                                <select
+                                  value={acctXferTo || ''}
+                                  onChange={(e) =>
+                                    handleExtractedTransactionEdit(index, {
+                                      note: smsNoteWithAccountTransferMeta(tx.note, {
+                                        transferToAccountId: e.target.value || null,
+                                      }),
+                                      category: 'Transfer',
+                                      budgetCategory: undefined,
+                                    })
+                                  }
+                                  className={`mt-1 w-full rounded-md border px-2 py-1 text-sm ${
+                                    acctXferTo && acctXferTo !== tx.accountId
+                                      ? 'border-slate-300'
+                                      : 'border-slate-300'
+                                  }`}
+                                  aria-label={`Transfer destination for ${tx.description}`}
+                                >
+                                  <option value="">
+                                    {acctXferDestLast4
+                                      ? `Transfer to… (SMS ••••${acctXferDestLast4})`
+                                      : 'Transfer to… (optional)'}
+                                  </option>
+                                  {acctXferChoicesForRow.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>
+                                      → {acc.name}
+                                      {acc.lastFourDigits || acc.platformDetails?.cardLast4
+                                        ? ` (••••${acc.lastFourDigits || acc.platformDetails?.cardLast4})`
                                         : ''}
                                     </option>
                                   ))}

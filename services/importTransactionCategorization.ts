@@ -5,6 +5,7 @@ import { classifyTransaction } from './hybridBudgetCategorization';
 import { resolveBudgetCategoryForImportedExpense } from './budgetCategoryResolve';
 import { shouldSkipBudgetForImportedTx, isSmsLedgerTransferTx } from './smsImportTransferGuards';
 import {
+  smsTextLooksLikeAccountTransferOut,
   smsTextLooksLikeAtmWithdrawal,
   smsTextLooksLikeCardSettlement,
 } from './smsBankTransferPatterns';
@@ -41,7 +42,10 @@ export function inferImportTransactionCategory(
   if (smsTextLooksLikeCardSettlement(descRaw)) {
     return 'Transfer';
   }
-  if (/(حوالة|تحويل\s*صادر|transfer\s*out|local\s*transfer)/i.test(descRaw)) {
+  if (
+    smsTextLooksLikeAccountTransferOut(descRaw) ||
+    /(حوالة|تحويل\s*صادر|transfer\s*out|local\s*transfer)/i.test(descRaw)
+  ) {
     return 'Transfer';
   }
   if (/(استرداد|refund)/i.test(descRaw)) {

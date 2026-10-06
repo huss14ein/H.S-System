@@ -10,7 +10,14 @@ import {
 import { applySmsAtmCashTransfers, smsNoteWithAtmMeta } from './smsAtmCashTransfer';
 import { applySmsCcPaymentTransfers, smsNoteWithCcPaymentMeta } from './smsCcPaymentTransfer';
 import {
+  applySmsAccountTransfers,
+  smsNoteWithAccountTransferMeta,
+} from './smsAccountTransfer';
+import {
   SMS_CARD_SETTLEMENT_RE,
+  extractSmsTransferDestinationLast4,
+  extractSmsTransferFeeAmount,
+  smsTextLooksLikeAccountTransferOut,
   smsTextLooksLikeAtmWithdrawal,
   smsTextLooksLikeCardSettlement,
 } from './smsBankTransferPatterns';
@@ -172,15 +179,16 @@ export async function parseSMSTransactions(
     const routed = applySmsAccountRouting(uniqueTransactions, accounts, accountId);
     const atmCash = applySmsAtmCashTransfers(routed.transactions, accounts);
     const ccPay = applySmsCcPaymentTransfers(atmCash.transactions, accounts);
+    const acctXfer = applySmsAccountTransfers(ccPay.transactions, accounts);
     
     // Validate extracted transactions
-    const validation = validateTransactions(ccPay.transactions);
+    const validation = validateTransactions(acctXfer.transactions);
     const routingWarnings = routed.warnings;
     
     return {
-      transactions: validation.isValid ? ccPay.transactions : ccPay.transactions.filter((_, i) => {
-        const txDate = new Date(ccPay.transactions[i].date);
-        return !isNaN(txDate.getTime()) && ccPay.transactions[i].description && ccPay.transactions[i].amount !== undefined;
+      transactions: validation.isValid ? acctXfer.transactions : acctXfer.transactions.filter((_, i) => {
+        const txDate = new Date(acctXfer.transactions[i].date);
+        return !isNaN(txDate.getTime()) && acctXfer.transactions[i].description && acctXfer.transactions[i].amount !== undefined;
       }),
       confidence: validation.isValid ? 0.90 : Math.max(0, 0.90 - (validation.errors.length * 0.1)),
       errors: validation.errors,
@@ -190,6 +198,7 @@ export async function parseSMSTransactions(
         ...routingWarnings,
         ...atmCash.warnings,
         ...ccPay.warnings,
+        ...acctXfer.warnings,
       ],
       validation
     };
@@ -597,12 +606,28 @@ function buildSmsTransactionFromBlock(
   const clock = extractSmsClockTime(block);
   const isAtm = smsTextLooksLikeAtmWithdrawal(block);
   const isCcSettlement = smsTextLooksLikeCardSettlement(block);
+  const isAccountTransfer =
+    signed < 0 &&
+    !isAtm &&
+    !isCcSettlement &&
+    (smsTextLooksLikeAccountTransferOut(block) || /(حوالة|تحويل\s*صادر|transfer\s*out)/i.test(block));
 
   let note: string | undefined;
   if (isAtm) {
     note = smsNoteWithAtmMeta(undefined, { last4, time: clock, kind: 'atm' });
   } else if (isCcSettlement) {
     note = smsNoteWithCcPaymentMeta(undefined, { last4, time: clock, fundedFromAccountId: null });
+    category = 'Transfer';
+  } else if (isAccountTransfer) {
+    const fee = extractSmsTransferFeeAmount(block);
+    const destLast4 = extractSmsTransferDestinationLast4(block);
+    note = smsNoteWithAccountTransferMeta(undefined, {
+      last4,
+      time: clock,
+      destLast4,
+      feeAmount: fee,
+      transferToAccountId: null,
+    });
     category = 'Transfer';
   } else {
     note = smsNoteWithMeta(undefined, { last4, time: clock });
@@ -618,7 +643,7 @@ function buildSmsTransactionFromBlock(
     type: signed < 0 ? 'expense' : 'income',
     status: 'Approved',
     note,
-    ...(isAtm || isCcSettlement ? { budgetCategory: undefined } : {}),
+    ...(isAtm || isCcSettlement || isAccountTransfer ? { budgetCategory: undefined } : {}),
   };
 }
 
@@ -2396,13 +2421,19 @@ function smsTransactionPreferenceScore(tx: Transaction): number {
   if (cat.toLowerCase() === 'transfer') s += 3;
   if (/^sms-heur|^sms-anchor|^sms-ccy|^sms-/.test(id)) s += 4;
   const note = String(tx.note ?? '');
-  // Keep ATM / سداد transfer meta from being discarded when AI emits a parallel row.
-  if (/sms:kind=(?:atm|cc_payment)\b/i.test(note)) s += 10;
-  if (/sms:cash_to=[A-Za-z0-9_-]+\b/i.test(note) || /sms:funded_from=[A-Za-z0-9_-]+\b/i.test(note)) s += 4;
+  // Keep ATM / سداد / حوالة transfer meta from being discarded when AI emits a parallel row.
+  if (/sms:kind=(?:atm|cc_payment|account_transfer)\b/i.test(note)) s += 10;
+  if (
+    /sms:cash_to=[A-Za-z0-9_-]+\b/i.test(note) ||
+    /sms:funded_from=[A-Za-z0-9_-]+\b/i.test(note) ||
+    /sms:transfer_to=[A-Za-z0-9_-]+\b/i.test(note)
+  ) {
+    s += 4;
+  }
   return s;
 }
 
-/** Merge SMS transfer meta (kind / cash_to / funded_from / card / time) from siblings onto the winner. */
+/** Merge SMS transfer meta (kind / cash_to / funded_from / transfer_to / card / time) from siblings onto the winner. */
 function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]): Transaction {
   const notes = group.map((t) => String(t.note || '')).filter(Boolean);
   if (notes.length === 0) return best;
@@ -2416,14 +2447,22 @@ function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]):
   const kind = (pick(/sms:kind=([a-z0-9_-]+)\b/i) || '').toLowerCase();
   const cashTo = pick(/sms:cash_to=([A-Za-z0-9_-]+)\b/i);
   const fundedFrom = pick(/sms:funded_from=([A-Za-z0-9_-]+)\b/i);
+  const transferTo = pick(/sms:transfer_to=([A-Za-z0-9_-]+)\b/i);
+  const toCard = pick(/sms:to_card=(\d{4})\b/i);
+  const feeRaw = pick(/sms:fee=(\d+(?:\.\d+)?)\b/i);
   const last4 = pick(/sms:card=(\d{4})\b/i);
   const time = pick(/sms:time=(\d{1,2}:\d{2})\b/i);
-  if (!kind && !cashTo && !fundedFrom && !last4 && !time) return best;
+  if (!kind && !cashTo && !fundedFrom && !transferTo && !toCard && !last4 && !time) return best;
 
   const blob = `${best.description || ''}\n${notes.join('\n')}`;
   const isAtm = kind === 'atm' || Boolean(cashTo) || smsTextLooksLikeAtmWithdrawal(blob);
   const isCcPay =
     kind === 'cc_payment' || Boolean(fundedFrom) || smsTextLooksLikeCardSettlement(blob);
+  const isAcctXfer =
+    kind === 'account_transfer' ||
+    Boolean(transferTo) ||
+    Boolean(toCard) ||
+    smsTextLooksLikeAccountTransferOut(blob);
 
   let note = best.note;
   if (isAtm) {
@@ -2439,11 +2478,20 @@ function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]):
       time,
       fundedFromAccountId: fundedFrom,
     });
+  } else if (isAcctXfer) {
+    note = smsNoteWithAccountTransferMeta(note, {
+      last4,
+      time,
+      destLast4: toCard,
+      transferToAccountId: transferTo,
+      feeAmount: feeRaw ? Number(feeRaw) : null,
+    });
   } else if (last4 || time) {
     note = smsNoteWithMeta(note, { last4, time });
   }
 
-  const preferTransfer = isAtm || isCcPay || String(best.category || '').toLowerCase() === 'transfer';
+  const preferTransfer =
+    isAtm || isCcPay || isAcctXfer || String(best.category || '').toLowerCase() === 'transfer';
   return {
     ...best,
     note,

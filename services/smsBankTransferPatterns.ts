@@ -18,12 +18,48 @@ export const SMS_CARD_SETTLEMENT_RE =
 export const SMS_CARD_CREDIT_SOFT_RE =
   /(?:payment\s*received|card\s*credited|has\s+been\s+credited|credited\s+with|تم\s*السداد|تم\s*سداد|سداد)/i;
 
+/**
+ * Outgoing local / internal bank transfer (حوالة) — Al Rajhi, Alinma, SNB-style Arabic + English.
+ * Matches "حوالة محلية صادرة" / "حوالة داخلية صادرة" and common EN templates.
+ */
+export const SMS_ACCOUNT_TRANSFER_OUT_RE =
+  /(?:حوالة\s*(?:محلية|داخلية|فورية)?\s*صادرة|تحويل\s*(?:محلي|داخلي)?\s*صادر|outgoing\s*(?:local\s*)?transfer|local\s*transfer\s*(?:out|outgoing)?|internal\s*transfer\s*(?:out|outgoing)?|transfer\s*out(?:going)?)/i;
+
+/** Destination account last-4 on حوالة lines: لـ0001;Name or to *0001 */
+export const SMS_TRANSFER_DEST_LAST4_RE =
+  /(?:لـ\s*|ل\s*|to\s*(?:account\s*)?(?:ending\s*)?|to\s*\*)(\d{4})(?!\d)/i;
+
 export function smsTextLooksLikeAtmWithdrawal(text: string): boolean {
   return SMS_ATM_WITHDRAWAL_RE.test(String(text || ''));
 }
 
 export function smsTextLooksLikeCardSettlement(text: string): boolean {
   return SMS_CARD_SETTLEMENT_RE.test(String(text || ''));
+}
+
+export function smsTextLooksLikeAccountTransferOut(text: string): boolean {
+  return SMS_ACCOUNT_TRANSFER_OUT_RE.test(String(text || ''));
+}
+
+/** Last-4 of the destination account on an outgoing حوالة SMS (`لـ0001;…`). */
+export function extractSmsTransferDestinationLast4(text: string): string | null {
+  const m = String(text || '').match(SMS_TRANSFER_DEST_LAST4_RE);
+  if (!m?.[1]) return null;
+  return m[1];
+}
+
+/** Bank fee on the same SMS block (`رسوم:SR 0.58`). */
+export function extractSmsTransferFeeAmount(text: string): number {
+  const amountToken = String.raw`(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)`;
+  const m = String(text || '').match(
+    new RegExp(
+      String.raw`(?:رسوم(?:\s*و?\s*ضريبة)?|fee(?:\s*&?\s*tax)?)\s*[:\-]?\s*(?:SAR|SR|ر\.?س)?\s*${amountToken}`,
+      'i',
+    ),
+  );
+  if (!m?.[1]) return 0;
+  const n = Number(String(m[1]).replace(/,/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /**
