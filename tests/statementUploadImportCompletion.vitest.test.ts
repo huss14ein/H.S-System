@@ -61,27 +61,46 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('smsNoteWithAccountTransferMeta');
     expect(stmt).toContain('Transfer to…');
     expect(stmt).toContain('Local transfer (حوالة)');
+    expect(stmt).toContain('shouldImportSmsAccountTransferInAsTransfer');
+    expect(stmt).toContain('parseSmsAccountTransferFromFromNote');
+    expect(stmt).toContain('smsNoteWithAccountTransferInMeta');
+    expect(stmt).toContain('Received from…');
+    expect(stmt).toContain('selectedInboundMissingFrom');
+    expect(stmt).toContain('Local transfer in (حوالة واردة)');
     const acct = read('services/smsAccountTransfer.ts');
     expect(acct).toContain('applySmsAccountTransfers');
+    expect(acct).toContain('applySmsAccountTransferIns');
+    expect(acct).toContain('pairSmsAccountTransferLegs');
     expect(acct).toContain("SMS_ACCOUNT_TRANSFER_KIND = 'account_transfer'");
+    expect(acct).toContain("SMS_ACCOUNT_TRANSFER_IN_KIND = 'account_transfer_in'");
     expect(acct).toContain('sms:transfer_to');
+    expect(acct).toContain('sms:transfer_from');
     expect(acct).toContain('resolveAccountTransferDestination');
     const patterns = read('services/smsBankTransferPatterns.ts');
     expect(patterns).toContain('SMS_ACCOUNT_TRANSFER_OUT_RE');
+    expect(patterns).toContain('SMS_ACCOUNT_TRANSFER_IN_RE');
     expect(patterns).toContain('حوالة\\s*(?:محلية|داخلية|فورية)?\\s*صادرة');
     expect(patterns).toContain('extractSmsTransferDestinationLast4');
     const parser = read('services/statementParser.ts');
     expect(parser).toContain('applySmsAccountTransfers');
+    expect(parser).toContain('applySmsAccountTransferIns');
+    expect(parser).toContain('pairSmsAccountTransferLegs');
     expect(parser).toContain('smsNoteWithAccountTransferMeta');
-    expect(parser).toContain('sms:kind=(?:atm|cc_payment|account_transfer)');
+    expect(parser).toContain('smsNoteWithAccountTransferInMeta');
+    expect(parser).toContain('sms:kind=(?:atm|cc_payment|account_transfer(?:_in)?)');
     const prepare = read('services/statementImportPrepare.ts');
     expect(prepare).toContain('isSmsAccountTransferTx');
+    expect(prepare).toContain('isSmsAccountTransferInTx');
     expect(prepare).toContain('shouldImportSmsAccountAsTransfer');
+    expect(prepare).toContain('Received-from source account');
+    expect(prepare).toContain('shouldSkipPairedSmsAccountTransferIn');
     const guards = read('services/smsImportTransferGuards.ts');
     expect(guards).toContain('isSmsAccountTransferTx');
+    expect(guards).toContain('isSmsAccountTransferInTx');
     expect(read('tests/smsAccountTransfer.vitest.test.ts')).toContain('حوالة محلية صادرة');
     expect(read('tests/smsAlinmaFullPaste.vitest.test.ts')).toContain('parses all 28 rows');
     expect(read('tests/smsAlinmaPaste.vitest.test.ts')).toContain('لحساب *7000');
+    expect(read('tests/smsAlinmaPaste.vitest.test.ts')).toContain('pairs outgoing + incoming');
   });
 
   it('Statement Upload wires سداد CC payment SMS → addTransfer (funding → card) with no budget', () => {
@@ -141,7 +160,7 @@ describe('statementUploadImportCompletion', () => {
     expect(parser).toContain('pruneSmsSatelliteTransactions');
     expect(parser).toContain('applySmsAccountRouting');
     expect(parser).toContain('mergeSmsTransferMetaFromGroup');
-    expect(parser).toContain('sms:kind=(?:atm|cc_payment|account_transfer)');
+    expect(parser).toContain('sms:kind=(?:atm|cc_payment|account_transfer(?:_in)?)');
     expect(parser).not.toMatch(/const key = `\$\{date\}\|\$\{mag\}`;/);
   });
 

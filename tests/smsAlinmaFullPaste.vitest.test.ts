@@ -220,6 +220,7 @@ describe('Alinma full user paste regression', () => {
       expect(tx.category).toBe('Transfer');
       expect(tx.accountId).toBe('chk-0001');
       expect(tx.description.toUpperCase()).toContain('HUSSAIN');
+      expect(tx.note).toContain('sms:kind=account_transfer_in');
     }
 
     const netflix = res.transactions.filter((t) => Math.abs(t.amount + 50.13) < 0.01);
@@ -236,12 +237,26 @@ describe('Alinma full user paste regression', () => {
     expect(luxury.description).toMatch(/Luxury Car/i);
     expect(luxury.accountId).toBe('cc-3282');
 
-    // After assigning source on outgoing حوالة rows, import plan accepts all 28.
-    const prepared = res.transactions.map((t) =>
-      String(t.note || '').includes('sms:kind=account_transfer') && !t.accountId
-        ? { ...t, accountId: 'chk-0001' }
-        : t,
-    );
+    // Assign source on outgoing حوالة + Received-from on واردة so import plan is ready.
+    const prepared = res.transactions.map((t) => {
+      if (
+        /sms:kind=account_transfer\b/i.test(String(t.note || '')) &&
+        !/sms:kind=account_transfer_in\b/i.test(String(t.note || '')) &&
+        !t.accountId
+      ) {
+        return { ...t, accountId: 'chk-0001' };
+      }
+      if (
+        /sms:kind=account_transfer_in\b/i.test(String(t.note || '')) &&
+        !/sms:transfer_from=/i.test(String(t.note || ''))
+      ) {
+        return {
+          ...t,
+          note: `${t.note} sms:transfer_from=chk-7000`.trim(),
+        };
+      }
+      return t;
+    });
     const plan = planStatementImport({
       bankTransactions: prepared,
       investmentTransactions: [],
@@ -255,6 +270,7 @@ describe('Alinma full user paste regression', () => {
         sarPerUsd: 3.75,
       },
     });
+    expect(plan.validationMessages).toEqual([]);
     expect(plan.skippedValidation).toBe(0);
     expect(plan.importableCount).toBe(28);
   });

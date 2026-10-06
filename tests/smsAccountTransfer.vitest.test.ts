@@ -12,12 +12,17 @@ import {
   extractSmsTransferFeeAmount,
 } from '../services/smsBankTransferPatterns';
 import {
+  isSmsAccountTransferInTx,
   isSmsAccountTransferTx,
   shouldImportSmsAccountAsTransfer,
+  shouldImportSmsAccountTransferInAsTransfer,
   parseSmsAccountTransferToFromNote,
+  parseSmsAccountTransferFromFromNote,
   parseSmsTransferFeeFromNote,
   smsAccountTransferPrincipalAmount,
   applySmsAccountTransfers,
+  applySmsAccountTransferIns,
+  pairSmsAccountTransferLegs,
 } from '../services/smsAccountTransfer';
 import { isSmsLedgerTransferTx, shouldSkipBudgetForImportedTx } from '../services/smsImportTransferGuards';
 import { categorizeImportedTransaction } from '../services/importTransactionCategorization';
@@ -158,5 +163,65 @@ describe('applySmsAccountTransfers', () => {
     expect(result.expandedCount).toBe(1);
     expect(parseSmsAccountTransferToFromNote(result.transactions[0].note)).toBe('sav-0001');
     expect(result.transactions[0].description).toMatch(/Transfer → Savings 0001/);
+  });
+});
+
+describe('حوالة واردة inbound transfer', () => {
+  it('marks incoming SMS as account_transfer_in requiring Received-from', async () => {
+    const sms = `حوالة واردة محلية
+مبلغ 1,000 SAR
+من AHMED ALI
+حساب *0001
+في 10:00 26-09-15`;
+    const res = await parseSMSTransactions(sms, '', { accounts });
+    expect(res.transactions).toHaveLength(1);
+    const tx = res.transactions[0];
+    expect(isSmsAccountTransferInTx(tx)).toBe(true);
+    expect(isSmsAccountTransferTx(tx)).toBe(false);
+    expect(tx.note).toContain('sms:kind=account_transfer_in');
+    expect(shouldImportSmsAccountTransferInAsTransfer(tx)).toBe(false);
+    expect(isSmsLedgerTransferTx(tx)).toBe(true);
+    expect(shouldSkipBudgetForImportedTx(tx)).toBe(true);
+  });
+
+  it('pairs same-paste outgoing + incoming into one addTransfer-ready leg', () => {
+    const marked = applySmsAccountTransferIns(
+      applySmsAccountTransfers(
+        [
+          {
+            id: 'out',
+            date: '2026-09-15',
+            description: 'Transfer · Fatima',
+            amount: -1000,
+            category: 'Transfer',
+            accountId: 'chk-3138',
+            type: 'expense',
+            status: 'Approved',
+            note: 'sms:kind=account_transfer sms:to_card=0001',
+          },
+          {
+            id: 'inn',
+            date: '2026-09-15',
+            description: 'AHMED ALI',
+            amount: 1000,
+            category: 'Transfer',
+            accountId: 'sav-0001',
+            type: 'income',
+            status: 'Approved',
+            note: 'sms:kind=account_transfer_in sms:card=0001',
+          },
+        ],
+        accounts,
+      ).transactions,
+      accounts,
+    );
+    const paired = pairSmsAccountTransferLegs(marked.transactions, accounts);
+    expect(paired.pairedCount).toBe(1);
+    const inn = paired.transactions.find((t) => t.id === 'inn')!;
+    const out = paired.transactions.find((t) => t.id === 'out')!;
+    expect(parseSmsAccountTransferFromFromNote(inn.note)).toBe('chk-3138');
+    expect(inn.note).toContain('sms:paired=1');
+    expect(parseSmsAccountTransferToFromNote(out.note)).toBe('sav-0001');
+    expect(shouldImportSmsAccountAsTransfer(out)).toBe(true);
   });
 });

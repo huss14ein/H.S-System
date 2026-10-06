@@ -8,18 +8,21 @@ import {
   shouldImportSmsCcPaymentAsTransfer,
 } from './smsCcPaymentTransfer';
 import {
+  isSmsAccountTransferInTx,
   isSmsAccountTransferTx,
   shouldImportSmsAccountAsTransfer,
+  shouldImportSmsAccountTransferInAsTransfer,
 } from './smsAccountTransfer';
 import { isInternalTransferTransaction } from './transactionFilters';
 
-/** ATM / سداد / حوالة ledger transfers — never spending, never budget. */
+/** ATM / سداد / حوالة (صادرة/واردة) ledger transfers — never spending, never budget. */
 export function isSmsLedgerTransferTx(
   tx: Pick<Transaction, 'note' | 'description' | 'category' | 'amount'>,
 ): boolean {
   if (isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0) return true;
   if (isSmsCcPaymentTx(tx)) return true;
   if (isSmsAccountTransferTx(tx)) return true;
+  if (isSmsAccountTransferInTx(tx)) return true;
   return false;
 }
 
@@ -39,6 +42,7 @@ export function shouldImportSmsRowAsTransfer(
   return (
     shouldImportSmsAtmAsTransfer(tx) ||
     shouldImportSmsCcPaymentAsTransfer(tx) ||
-    shouldImportSmsAccountAsTransfer(tx)
+    shouldImportSmsAccountAsTransfer(tx) ||
+    shouldImportSmsAccountTransferInAsTransfer(tx)
   );
 }

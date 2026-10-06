@@ -13,9 +13,12 @@ import {
   smsTextLooksLikeAccountTransferOut,
 } from '../services/smsBankTransferPatterns';
 import {
+  parseSmsAccountTransferFromFromNote,
   parseSmsAccountTransferToFromNote,
   shouldImportSmsAccountAsTransfer,
+  shouldImportSmsAccountTransferInAsTransfer,
 } from '../services/smsAccountTransfer';
+import { planStatementImport } from '../services/statementImportPrepare';
 import type { Account } from '../types';
 
 beforeEach(() => {
@@ -92,7 +95,7 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
     expect(parseSmsAccountTransferToFromNote(ready.note)).toBe('chk-7000');
   });
 
-  it('parses incoming حوالة واردة as Transfer income with sender + account', async () => {
+  it('parses incoming حوالة واردة as linked transfer needing Received-from', async () => {
     const sms = `حوالة واردة محلية
 مبلغ 2,500 SAR
 من HUSSAIN MURTADHA ALI ALSAGGAF
@@ -106,8 +109,81 @@ describe('Alinma-style SMS (description, account, amounts)', () => {
     expect(tx.category).toBe('Transfer');
     expect(tx.accountId).toBe('chk-0001');
     expect(tx.description.toUpperCase()).toContain('HUSSAIN');
+    expect(tx.note).toContain('sms:kind=account_transfer_in');
+    expect(parseSmsAccountTransferFromFromNote(tx.note)).toBeNull();
+    expect(shouldImportSmsAccountTransferInAsTransfer(tx)).toBe(false);
+
+    expect(shouldImportSmsAccountTransferInAsTransfer({
+      ...tx,
+      note: `sms:card=0001 sms:kind=account_transfer_in sms:transfer_from=chk-3138`,
+    })).toBe(true);
+
+    const plan = planStatementImport({
+      bankTransactions: [tx],
+      investmentTransactions: [],
+      selectedIndices: new Set([0]),
+      duplicateIndices: new Set(),
+      ctx: {
+        accounts,
+        portfolios: [],
+        existingBankTransactions: [],
+        existingInvestmentTransactions: [],
+        sarPerUsd: 3.75,
+      },
+    });
+    expect(plan.skippedValidation).toBe(1);
+    expect(plan.validationMessages[0]).toMatch(/Received-from/i);
   });
 
+  it('pairs outgoing + incoming حوالة from the same paste into one transfer', async () => {
+    const sms = `حوالة محلية صادرة بـSR 2500
+من3138
+لـ0001;حسين السقاف
+رسوم:SR 0.58
+26/8/30 21:30
+حوالة واردة محلية
+مبلغ 2,500 SAR
+من HUSSAIN MURTADHA ALI ALSAGGAF
+حساب *0001
+في 21:30 26-08-30`;
+    const res = await parseSMSTransactions(sms, '', { accounts });
+    expect(res.transactions.length).toBeGreaterThanOrEqual(2);
+    const out = res.transactions.find((t) => Number(t.amount) < 0)!;
+    const inn = res.transactions.find((t) => Number(t.amount) > 0)!;
+    expect(out.note).toContain('sms:kind=account_transfer');
+    expect(parseSmsAccountTransferToFromNote(out.note)).toBe('chk-0001');
+    expect(inn.note).toContain('sms:kind=account_transfer_in');
+    expect(parseSmsAccountTransferFromFromNote(inn.note)).toBe('chk-3138');
+    expect(inn.note).toContain('sms:paired=1');
+    expect(shouldImportSmsAccountAsTransfer(out)).toBe(true);
+
+    const plan = planStatementImport({
+      bankTransactions: res.transactions,
+      investmentTransactions: [],
+      selectedIndices: new Set(res.transactions.map((_, i) => i)),
+      duplicateIndices: new Set(),
+      ctx: {
+        accounts,
+        portfolios: [],
+        existingBankTransactions: [],
+        existingInvestmentTransactions: [],
+        sarPerUsd: 3.75,
+      },
+    });
+    // Outbound imports; paired inbound is skipped (not double-counted).
+    expect(plan.skippedValidation).toBe(0);
+    expect(plan.importableBankRows.some((r) => r.tx.amount < 0)).toBe(true);
+    expect(plan.importableBankRows.every((r) => !(Number(r.tx.amount) > 0 && isInbound(r.tx)))).toBe(
+      true,
+    );
+  });
+});
+
+function isInbound(tx: { note?: string; amount: number }): boolean {
+  return Number(tx.amount) > 0 && /sms:kind=account_transfer_in\b/i.test(String(tx.note || ''));
+}
+
+describe('Alinma-style SMS (purchases)', () => {
   it('keeps Netflix FX fee+due on the card (المبلغ المستحق) with merchant name', async () => {
     const sms = `شراء دولي إنترنت SAR 49 
 بطاقة ائتمانية **3282
