@@ -255,7 +255,7 @@ interface DataContextType {
   updateBudget: (budget: Budget) => Promise<boolean>;
   deleteBudget: (category: string, month: number, year: number) => Promise<void>;
   copyBudgetsFromPreviousMonth: (targetYear: number, targetMonth: number) => Promise<void>;
-  addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<void>;
+  addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<boolean>;
   updateTransaction: (transaction: Transaction, opts?: RecordWriteOptions) => Promise<void>;
   deleteTransaction: (transactionId: string) => Promise<void>;
   /** Create a transfer between two accounts (two transactions: out from fromAccountId, in to toAccountId). */
@@ -3186,13 +3186,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return false;
     };
 
-    const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => {
+    const addTransaction = async (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions): Promise<boolean> => {
         if(!supabase || !auth?.user) {
             toast("You must be logged in to add a transaction.", 'error');
-            return;
+            return false;
         }
         if (!(opts as { system?: boolean } | undefined)?.system && !assertPeriodUnlocked(transaction.date, 'add transactions')) {
-            return;
+            return false;
         }
         if (
           isReconciliationLedgerCategory(transaction.category) &&
@@ -3202,7 +3202,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             'Reconciliation Adjustment / Opening Balance can only be posted via Reconcile Balance — not as a manual transaction.',
             'error',
           );
-          return;
+          return false;
         }
         const core = validateTransactionCore({
             date: transaction.date,
@@ -3212,23 +3212,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         if (!core.valid) {
             toast(core.errors.join('\n'), 'error');
-            return;
+            return false;
         }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
         const postingPolicy = canPostTransactionToAccount(postingAccount, {
-            transactionType: transaction.type,
+            transactionType: transaction.type === 'income' ? 'income' : 'expense',
             category: transaction.category,
         });
         if (!postingPolicy.allowed) {
             toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
-            return;
+            return false;
         }
         const txConfirm = summarizeTransactionForConfirm(
             { ...transaction, id: 'new' } as Transaction,
             postingAccount?.name,
         );
         const txOk = await guardRecordWrite(opts, txConfirm);
-        if (!txOk) return;
+        if (!txOk) return false;
         const db = supabase;
         let newTx: any = null;
         let error: any = null;
@@ -3312,7 +3312,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             } catch (e) {
                 console.warn('Failed to mark installment as paid:', e);
             }
+            return true;
         }
+        return false;
     };
     const addTransfer = async (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number, opts?: RecordWriteOptions) => {
         if (!supabase || !auth?.user) return;
@@ -3595,6 +3597,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const transferEditBlock = assertTransferEditAllowed(existingForTransferCheck, transaction);
         if (transferEditBlock) { toast(transferEditBlock, 'error'); return; }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
+        const postingPolicy = canPostTransactionToAccount(postingAccount, {
+            transactionType: transaction.type === 'income' ? 'income' : 'expense',
+            category: transaction.category,
+        });
+        if (!postingPolicy.allowed) {
+            toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
+            return;
+        }
         const updateOk = await guardRecordWrite(opts, summarizeUpdateTransactionForConfirm(transaction, postingAccount?.name));
         if (!updateOk) return;
         const db = supabase;
@@ -3624,15 +3634,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         else {
             const prev = data?.transactions?.find((t) => t.id === transaction.id);
             const normalized = normalizeTransaction(transaction as any);
-            const postingAccount = (data?.accounts ?? []).find((a) => a.id === normalized.accountId);
-            const postingPolicy = canPostTransactionToAccount(postingAccount, {
-                transactionType: normalized.type,
-                category: normalized.category,
-            });
-            if (!postingPolicy.allowed) {
-                toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
-                return;
-            }
             if (prev) {
                 if (prev.accountId === normalized.accountId) {
                     await applyLedgerAccountDeltaForTransaction(
@@ -3876,7 +3877,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         cashBalanceAccumulatorRef.current = {};
         const amount = rule.type === 'income' ? rule.amount : -rule.amount;
         try {
-            await addTransaction({
+            const ok = await addTransaction({
                 date,
                 description: rule.description,
                 amount,
@@ -3887,6 +3888,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 recurringId: rule.id,
             }, { system: true });
             cashBalanceAccumulatorRef.current = {};
+            if (!ok) return { applied: false, skipped: true };
             return { applied: true, skipped: false };
         } catch (_) {
             cashBalanceAccumulatorRef.current = {};
@@ -3947,7 +3949,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (already) continue;
             const amount = rule.type === 'income' ? rule.amount : -rule.amount;
             try {
-                await addTransaction({
+                const ok = await addTransaction({
                     date: effectiveDateStr,
                     description: rule.description,
                     amount,
@@ -3957,6 +3959,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     type: rule.type,
                     recurringId: rule.id,
                 }, { system: true });
+                if (!ok) continue;
                 appliedThisRun.add(key);
                 applied++;
             } catch (err) {
