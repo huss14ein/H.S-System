@@ -41,6 +41,7 @@ import { formatSymbolWithCompany } from '../components/SymbolWithCompanyName';
 import { receivableContributionForGoal } from '../services/goalReceivableContribution';
 import {
     averageRollingMonthlyNetSurplus,
+    computeGoalPlatformCashByGoalSar,
     computeGoalResolvedAmountsSar,
     GOAL_NET_CASHFLOW_LOOKBACK_MONTHS,
 } from '../services/goalResolvedTotals';
@@ -509,8 +510,17 @@ const GoalCard: React.FC<{
                     });
                 });
 
+            const cashSlices = computeGoalPlatformCashByGoalSar(data ?? null, sarPerUsd).get(goal.id) ?? [];
+            cashSlices.forEach((s) => {
+                if (!(s.amountSar > 0)) return;
+                linkedItems.push({
+                    name: `Platform cash: ${s.accountName}`,
+                    value: s.amountSar,
+                });
+            });
+
             return { linkedAssets: linkedItems };
-        }, [data?.assets, data?.investments, data?.sukukPositions, goal.id, sarPerUsd, goalHoldingNames, personalLiabilities]);
+        }, [data, data?.assets, data?.investments, data?.sukukPositions, goal.id, sarPerUsd, goalHoldingNames, personalLiabilities]);
 
     const fundingEnvelope = useMemo(
         () => computeGoalMonthlyFundingEnvelopeSar({ goal, data: data ?? null, sarPerUsd }),
