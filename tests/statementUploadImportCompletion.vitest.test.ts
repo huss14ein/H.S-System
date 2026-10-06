@@ -65,7 +65,12 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('parseSmsAccountTransferFromFromNote');
     expect(stmt).toContain('smsNoteWithAccountTransferInMeta');
     expect(stmt).toContain('Received from…');
+    expect(stmt).toContain('Between my accounts');
+    expect(stmt).toContain('External (expense)');
+    expect(stmt).toContain('From my account');
+    expect(stmt).toContain('External (income)');
     expect(stmt).toContain('selectedInboundMissingFrom');
+    expect(stmt).toContain('selectedOutboundMissingTo');
     expect(stmt).toContain('Local transfer in (حوالة واردة)');
     const acct = read('services/smsAccountTransfer.ts');
     expect(acct).toContain('applySmsAccountTransfers');
@@ -75,6 +80,8 @@ describe('statementUploadImportCompletion', () => {
     expect(acct).toContain("SMS_ACCOUNT_TRANSFER_IN_KIND = 'account_transfer_in'");
     expect(acct).toContain('sms:transfer_to');
     expect(acct).toContain('sms:transfer_from');
+    expect(acct).toContain('sms:xfer_scope');
+    expect(acct).toContain('resolveSmsAccountTransferScope');
     expect(acct).toContain('resolveAccountTransferDestination');
     const patterns = read('services/smsBankTransferPatterns.ts');
     expect(patterns).toContain('SMS_ACCOUNT_TRANSFER_OUT_RE');
@@ -92,11 +99,11 @@ describe('statementUploadImportCompletion', () => {
     expect(prepare).toContain('isSmsAccountTransferTx');
     expect(prepare).toContain('isSmsAccountTransferInTx');
     expect(prepare).toContain('shouldImportSmsAccountAsTransfer');
+    expect(prepare).toContain('resolveSmsAccountTransferScope');
     expect(prepare).toContain('Received-from source account');
     expect(prepare).toContain('shouldSkipPairedSmsAccountTransferIn');
     const guards = read('services/smsImportTransferGuards.ts');
-    expect(guards).toContain('isSmsAccountTransferTx');
-    expect(guards).toContain('isSmsAccountTransferInTx');
+    expect(guards).toContain('isSmsAccountTransferInternal');
     expect(read('tests/smsAccountTransfer.vitest.test.ts')).toContain('حوالة محلية صادرة');
     expect(read('tests/smsAlinmaFullPaste.vitest.test.ts')).toContain('parses all 28 rows');
     expect(read('tests/smsAlinmaPaste.vitest.test.ts')).toContain('لحساب *7000');

@@ -39,6 +39,7 @@ export function stripSmsAtmMeta(note: string | undefined): string {
     .replace(/\s*sms:transfer_to=[A-Za-z0-9_-]+\b/gi, '')
     .replace(/\s*sms:transfer_from=[A-Za-z0-9_-]+\b/gi, '')
     .replace(/\s*sms:paired=1\b/gi, '')
+    .replace(/\s*sms:xfer_scope=(?:internal|external)\b/gi, '')
     .replace(/\s*sms:to_card=\d{4}\b/gi, '')
     .replace(/\s*sms:fee=\d+(?:\.\d+)?\b/gi, '')
     .replace(/\s+/g, ' ')

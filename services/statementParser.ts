@@ -2542,8 +2542,10 @@ function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]):
   const feeRaw = pick(/sms:fee=(\d+(?:\.\d+)?)\b/i);
   const last4 = pick(/sms:card=(\d{4})\b/i);
   const time = pick(/sms:time=(\d{1,2}:\d{2})\b/i);
+  const scopeRaw = (pick(/sms:xfer_scope=(internal|external)\b/i) || '').toLowerCase();
+  const scope = scopeRaw === 'internal' || scopeRaw === 'external' ? scopeRaw : null;
   const paired = notes.some((n) => /sms:paired=1\b/i.test(n));
-  if (!kind && !cashTo && !fundedFrom && !transferTo && !transferFrom && !toCard && !last4 && !time) return best;
+  if (!kind && !cashTo && !fundedFrom && !transferTo && !transferFrom && !toCard && !last4 && !time && !scope) return best;
 
   const blob = `${best.description || ''}\n${notes.join('\n')}`;
   const isAtm = kind === 'atm' || Boolean(cashTo) || smsTextLooksLikeAtmWithdrawal(blob);
@@ -2579,6 +2581,7 @@ function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]):
       time,
       transferFromAccountId: transferFrom,
       paired,
+      scope: scope === 'internal' || scope === 'external' ? scope : undefined,
     });
   } else if (isAcctXfer) {
     note = smsNoteWithAccountTransferMeta(note, {
@@ -2587,6 +2590,7 @@ function mergeSmsTransferMetaFromGroup(best: Transaction, group: Transaction[]):
       destLast4: toCard,
       transferToAccountId: transferTo,
       feeAmount: feeRaw ? Number(feeRaw) : null,
+      scope: scope === 'internal' || scope === 'external' ? scope : undefined,
     });
   } else if (last4 || time) {
     note = smsNoteWithMeta(note, { last4, time });
