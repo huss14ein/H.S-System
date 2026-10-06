@@ -3215,13 +3215,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return false;
         }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
-        const postingPolicy = canPostTransactionToAccount(postingAccount, {
-            transactionType: transaction.type === 'income' ? 'income' : 'expense',
-            category: transaction.category,
-        });
-        if (!postingPolicy.allowed) {
-            toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
-            return false;
+        // Statement/SMS system imports reflect bank history — do not block on stale in-app balance.
+        if (!(opts as { system?: boolean } | undefined)?.system) {
+            const postingPolicy = canPostTransactionToAccount(postingAccount, {
+                transactionType: transaction.type === 'income' ? 'income' : 'expense',
+                category: transaction.category,
+            });
+            if (!postingPolicy.allowed) {
+                toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
+                return false;
+            }
         }
         const txConfirm = summarizeTransactionForConfirm(
             { ...transaction, id: 'new' } as Transaction,
@@ -3349,13 +3352,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast('Pay cards from Checking or Savings. Withdraw investment cash first, then pay the card.', 'error');
             return;
         }
-        const fromPostingPolicy = canPostTransactionToAccount(fromAcc, {
-            transactionType: 'expense',
-            category: 'Transfer',
-        });
-        if (!fromPostingPolicy.allowed) {
-            toast(fromPostingPolicy.reason ?? 'Transfer blocked by account posting policy.', 'error');
-            return;
+        // Manual transfers still respect balance policy; SMS/statement system imports may replay history.
+        if (!(opts as { system?: boolean } | undefined)?.system) {
+            const fromPostingPolicy = canPostTransactionToAccount(fromAcc, {
+                transactionType: 'expense',
+                category: 'Transfer',
+            });
+            if (!fromPostingPolicy.allowed) {
+                toast(fromPostingPolicy.reason ?? 'Transfer blocked by account posting policy.', 'error');
+                return;
+            }
         }
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
@@ -3597,13 +3603,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const transferEditBlock = assertTransferEditAllowed(existingForTransferCheck, transaction);
         if (transferEditBlock) { toast(transferEditBlock, 'error'); return; }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
-        const postingPolicy = canPostTransactionToAccount(postingAccount, {
-            transactionType: transaction.type === 'income' ? 'income' : 'expense',
-            category: transaction.category,
-        });
-        if (!postingPolicy.allowed) {
-            toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
-            return;
+        if (!(opts as { system?: boolean } | undefined)?.system) {
+            const postingPolicy = canPostTransactionToAccount(postingAccount, {
+                transactionType: transaction.type === 'income' ? 'income' : 'expense',
+                category: transaction.category,
+            });
+            if (!postingPolicy.allowed) {
+                toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
+                return;
+            }
         }
         const updateOk = await guardRecordWrite(opts, summarizeUpdateTransactionForConfirm(transaction, postingAccount?.name));
         if (!updateOk) return;
