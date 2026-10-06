@@ -126,19 +126,37 @@ describe('accountPostingPolicy wiring (DataContext)', () => {
     expect(dbUpdate).toBeGreaterThan(policyInUpdate);
   });
 
-  it('skips balance posting policy for system SMS/statement imports (addTransaction + addTransfer)', () => {
+  it('skips balance posting policy only for SMS/statement replay, not system recurring writes', () => {
     const ctx = read('context/DataContext.tsx');
     const addIdx = ctx.indexOf('const addTransaction = async');
-    const addSlice = ctx.slice(addIdx, addIdx + 2500);
-    expect(addSlice).toContain("Statement/SMS system imports reflect bank history");
-    expect(addSlice).toMatch(/if\s*\(!\(opts as \{ system\?: boolean \}[\s\S]*?\)\?\.system\)\s*\{[\s\S]*?canPostTransactionToAccount/);
+    const addSlice = ctx.slice(addIdx, addIdx + 2800);
+    expect(addSlice).toContain('SMS/statement replay reflects bank history');
+    const addPolicy = addSlice.slice(addSlice.indexOf('SMS/statement replay reflects bank history'));
+    expect(addPolicy).toMatch(/if\s*\(!opts\?\.statementReplay\)\s*\{[\s\S]*?canPostTransactionToAccount/);
+    expect(addPolicy).not.toMatch(/\)\?\.system\)/);
 
     const xferIdx = ctx.indexOf('const addTransfer = async');
-    const xferSlice = ctx.slice(xferIdx, xferIdx + 2200);
-    expect(xferSlice).toContain('SMS/statement system imports may replay history');
-    expect(xferSlice).toMatch(/if\s*\(!\(opts as \{ system\?: boolean \}[\s\S]*?\)\?\.system\)\s*\{[\s\S]*?canPostTransactionToAccount/);
+    const updateIdx = ctx.indexOf('const updateTransaction = async');
+    const xferSlice = ctx.slice(xferIdx, updateIdx);
+    expect(xferSlice).toContain('SMS/statement replay may post history');
+    expect(xferSlice).toMatch(/if\s*\(!opts\?\.statementReplay\)\s*\{[\s\S]*?canPostTransactionToAccount/);
+    expect(xferSlice).toContain('linkedLedgerOpts');
+    expect(xferSlice).not.toMatch(/\)\?\.system\)/);
+
+    const recurringIdx = ctx.indexOf('const applyRecurringRuleForMonth');
+    const recurringEnd = ctx.indexOf('const applyRecurringForMonth', recurringIdx);
+    const recurringSlice = ctx.slice(recurringIdx, recurringEnd);
+    expect(recurringSlice).toContain('{ system: true }');
+    expect(recurringSlice).not.toContain('statementReplay');
+
+    const dueIdx = ctx.indexOf('const applyRecurringDueToday');
+    const dueEnd = ctx.indexOf('// Auto-apply recurring transactions due today', dueIdx);
+    const dueSlice = ctx.slice(dueIdx, dueEnd);
+    expect(dueSlice).toContain('{ system: true }');
+    expect(dueSlice).not.toContain('statementReplay');
 
     const stmt = read('pages/StatementUpload.tsx');
-    expect(stmt).toContain('{ system: true }');
+    expect(stmt).toContain('statementReplay: true');
+    expect(stmt).toContain('statementReplayOpts');
   });
 });

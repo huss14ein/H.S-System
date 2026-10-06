@@ -642,6 +642,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       const validatedInvestmentRows = plan.importableInvestmentRows;
       const validatedBankRows = plan.importableBankRows;
       const total = validatedBankRows.length + validatedInvestmentRows.length;
+      const statementReplayOpts = { system: true, statementReplay: true };
 
       const bankTasks: Array<() => Promise<void>> = [
         ...validatedBankRows.map(({ tx, idx, displayIdx }) => async () => {
@@ -668,7 +669,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     tx.date,
                     transferNote,
                     0,
-                    { system: true },
+                    statementReplayOpts,
                   );
                 } else if (shouldImportSmsCcPaymentAsTransfer(tx) && fundedFrom) {
                   const cardAccountId = String(tx.accountId || '').trim();
@@ -686,7 +687,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     tx.date,
                     transferNote,
                     0,
-                    { system: true },
+                    statementReplayOpts,
                   );
                 } else if (shouldImportSmsAccountAsTransfer(tx) && transferTo) {
                   const fromAccountId = String(tx.accountId || '').trim();
@@ -706,7 +707,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     tx.date,
                     transferNote,
                     fee,
-                    { system: true },
+                    statementReplayOpts,
                   );
                 } else if (shouldImportSmsAccountTransferInAsTransfer(tx) && transferFrom) {
                   const toAccountId = String(tx.accountId || '').trim();
@@ -725,7 +726,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     tx.date,
                     transferNote,
                     0,
-                    { system: true },
+                    statementReplayOpts,
                   );
                 } else if (
                   isSmsAtmWithdrawalTx(tx) ||
@@ -756,7 +757,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     note: tx.note,
                     transferGroupId: tx.transferGroupId,
                     transferRole: tx.transferRole,
-                  }, { system: true });
+                  }, statementReplayOpts);
                 }
                 succeededIndices.add(idx);
                 failedIndices.delete(idx);

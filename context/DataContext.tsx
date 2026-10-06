@@ -3215,8 +3215,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             return false;
         }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
-        // Statement/SMS system imports reflect bank history — do not block on stale in-app balance.
-        if (!(opts as { system?: boolean } | undefined)?.system) {
+        // SMS/statement replay reflects bank history. `system` (recurring, transfers) must still honor posting policy.
+        if (!opts?.statementReplay) {
             const postingPolicy = canPostTransactionToAccount(postingAccount, {
                 transactionType: transaction.type === 'income' ? 'income' : 'expense',
                 category: transaction.category,
@@ -3352,8 +3352,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             toast('Pay cards from Checking or Savings. Withdraw investment cash first, then pay the card.', 'error');
             return;
         }
-        // Manual transfers still respect balance policy; SMS/statement system imports may replay history.
-        if (!(opts as { system?: boolean } | undefined)?.system) {
+        // SMS/statement replay may post history onto a zero in-app balance. `system` does not skip this policy.
+        if (!opts?.statementReplay) {
             const fromPostingPolicy = canPostTransactionToAccount(fromAcc, {
                 transactionType: 'expense',
                 category: 'Transfer',
@@ -3363,6 +3363,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 return;
             }
         }
+        const linkedLedgerOpts: RecordWriteOptions = opts?.statementReplay
+            ? { system: true, statementReplay: true }
+            : { system: true };
         const fromName = fromAcc?.name ?? fromAccountId;
         const toName = toAcc?.name ?? toAccountId;
         const fromCur = fromAcc?.currency === 'USD' ? 'USD' : 'SAR';
@@ -3424,7 +3427,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Transfer',
                     transferGroupId,
                     transferRole: 'principal_out',
-                }, { system: true });
+                }, linkedLedgerOpts);
             }
             if (fee > 0) {
                 await addTransaction({
@@ -3436,7 +3439,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
-                }, { system: true });
+                }, linkedLedgerOpts);
             }
             return;
         }
@@ -3480,7 +3483,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Transfer',
                     transferGroupId,
                     transferRole: 'principal_in',
-                }, { system: true });
+                }, linkedLedgerOpts);
             }
             if (fee > 0) {
                 const feeAccountId = linkedCashAccountId ?? fromAccountId;
@@ -3493,7 +3496,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     category: 'Fee',
                     transferGroupId,
                     transferRole: 'fee',
-                }, { system: true });
+                }, linkedLedgerOpts);
             }
             return;
         }
@@ -3557,7 +3560,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: 'Transfer',
             transferGroupId,
             transferRole: 'principal_out',
-        }, { system: true });
+        }, linkedLedgerOpts);
         if (fee > 0) {
             await addTransaction({
                 date: dateStr,
@@ -3568,7 +3571,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 category: 'Fee',
                 transferGroupId,
                 transferRole: 'fee',
-            }, { system: true });
+            }, linkedLedgerOpts);
         }
         await addTransaction({
             date: dateStr,
@@ -3579,7 +3582,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             category: 'Transfer',
             transferGroupId,
             transferRole: 'principal_in',
-        }, { system: true });
+        }, linkedLedgerOpts);
         } finally {
             transferInFlightKeysRef.current.delete(flightKey);
         }
@@ -3603,7 +3606,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const transferEditBlock = assertTransferEditAllowed(existingForTransferCheck, transaction);
         if (transferEditBlock) { toast(transferEditBlock, 'error'); return; }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
-        if (!(opts as { system?: boolean } | undefined)?.system) {
+        if (!opts?.statementReplay) {
             const postingPolicy = canPostTransactionToAccount(postingAccount, {
                 transactionType: transaction.type === 'income' ? 'income' : 'expense',
                 category: transaction.category,

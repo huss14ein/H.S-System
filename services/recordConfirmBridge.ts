@@ -4,6 +4,11 @@ import type { ConfirmActionOptions } from '../hooks/useConfirmAction';
 export type RecordWriteOptions = {
   confirmed?: boolean;
   system?: boolean;
+  /**
+   * Bank/SMS statement replay only. Skips the zero-balance expense block.
+   * Recurring and other in-app automation must keep using `system` alone.
+   */
+  statementReplay?: boolean;
 };
 
 type ConfirmFn = (options: ConfirmActionOptions) => Promise<boolean>;
