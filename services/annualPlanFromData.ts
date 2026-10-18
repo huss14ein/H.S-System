@@ -25,6 +25,7 @@ import {
 } from '../utils/financialMonth';
 import { countsAsExpenseForCashflowKpi, countsAsIncomeForCashflowKpi, isInternalTransferTransaction } from './transactionFilters';
 import type { HouseholdMonthlyOverride } from './householdBudgetEngine';
+import { isYearlyPeriodBudget } from './budgetPeriod';
 
 export type AnnualPlanRow = {
   type: 'income' | 'expense';
@@ -259,7 +260,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     }
     const entry = byCategory.get(key)!;
     const planned = entry.planned;
-    if (String(period ?? '').toLowerCase() === 'yearly') entry.yearlyEnvelope = true;
+    if (isYearlyPeriodBudget({ period })) entry.yearlyEnvelope = true;
     const appliesAllYear =
       period === 'yearly' ||
       period === 'annual' ||

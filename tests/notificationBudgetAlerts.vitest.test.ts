@@ -119,6 +119,9 @@ describe('notificationBudgetAlerts', () => {
     const parsed = parseFilterByBudgetPageAction(hit!.pageAction!);
     expect(parsed?.period).toBe('yearly');
     expect(parsed?.category).toBe(category);
+    // Stored yearly row is month=1; drill must open the active financial month (June).
+    expect(parsed?.year).toBe(2026);
+    expect(parsed?.month).toBe(6);
   });
 
   it('alerts monthly overspend and keeps monthly drill-down period', () => {

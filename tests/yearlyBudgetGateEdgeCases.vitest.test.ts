@@ -17,12 +17,13 @@ import {
   spendFromNormalizedLookup,
 } from '../services/budgetOverspendGate';
 import { buildBudgetCardVisualMetrics } from '../services/budgetCardMetrics';
+import { generateBudgetRecommendations } from '../services/aiBudgetAutomation';
 import {
   budgetRowViewMatchScore,
   dedupeBudgetRowsForFinancialView,
 } from '../utils/financialMonth';
 import { financialPlanYearYtdWindow as ytdFromWindows } from '../services/budgetViewSpendWindows';
-import type { Budget } from '../types';
+import type { Budget, Transaction } from '../types';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
@@ -215,6 +216,35 @@ describe('yearly budget gate — edge scenarios', () => {
       ytdSpentByCat: new Map([['Vehicle Insurance', 13_000]]),
     });
     expect(excess).toBe(0);
+  });
+
+  it('AI recommendations treat annual aliases as yearly plans (lumpy month within cap stays quiet)', async () => {
+    const recs = await generateBudgetRecommendations(
+      [
+        {
+          id: 't1',
+          date: '2026-06-05',
+          type: 'expense',
+          amount: -4_000,
+          budgetCategory: 'Housing Rent',
+          category: 'Housing Rent',
+        } as Transaction,
+      ],
+      [
+        {
+          id: 'b1',
+          category: 'Housing Rent',
+          limit: 24_000,
+          period: 'annual' as Budget['period'],
+          year: 2026,
+          month: 6,
+        } as Budget,
+      ],
+      6,
+      2026,
+      1,
+    );
+    expect(recs).toEqual([]);
   });
 
   it('soft lumpy UX is text-only (no HTML injection surface)', () => {

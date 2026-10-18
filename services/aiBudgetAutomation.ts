@@ -18,6 +18,7 @@ import {
     distinctMonthCount,
 } from './budgetAdjustmentFromHistory';
 import { budgetLimitFromMonthlyEquivalent, monthlyEquivalentFromBudgetLimit } from './householdBudgetEngine';
+import { isYearlyPeriodBudget } from './budgetPeriod';
 
 export interface SpendingPattern {
   category: string;
@@ -284,7 +285,7 @@ export async function generateBudgetRecommendations(
   for (const budget of budgets) {
     // Yearly-period rows (any category) are often stored as month=1 — still include them every month.
     if (budget.year !== currentYear) continue;
-    const isYearly = String(budget.period ?? '').toLowerCase() === 'yearly';
+    const isYearly = isYearlyPeriodBudget(budget);
     if (!isYearly && budget.month !== currentMonth) continue;
 
     const monthSpent = categorySpending.get(budget.category) || 0;

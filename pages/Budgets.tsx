@@ -147,6 +147,7 @@ import {
     annualEnvelopeForBudgetRow,
     buildBudgetCardVisualMetrics,
 } from '../services/budgetCardMetrics';
+import { isYearlyPeriodBudget } from '../utils/budgetPeriod';
 import {
     buildAdvanceFromNextMonthNoteTag,
     computeNextMonthBorrowHeadroomSar,
@@ -4637,7 +4638,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             <div className="bg-white rounded-lg p-3 border border-indigo-100">
                                 <span className="text-indigo-600 text-xs uppercase tracking-wide">Remaining</span>
                                 <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(adminApprovedOverviewFiltered.reduce((sum, b) => {
-                                    const yearly = (b.period ?? 'monthly') === 'yearly';
+                                    const yearly = isYearlyPeriodBudget(b);
                                     const lim = yearly ? Number(b.limit) || 0 : b.monthlyLimit;
                                     const spent = yearly ? (b.spentYtd ?? b.spent) : b.spent;
                                     return sum + (lim - spent);
@@ -4662,7 +4663,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     </thead>
                                     <tbody>
                                         {adminApprovedOverviewFiltered.map((b) => {
-                                            const isYearly = (b.period ?? 'monthly') === 'yearly';
+                                            const isYearly = isYearlyPeriodBudget(b);
                                             const spentDisplay = isYearly ? (b.spentYtd ?? b.spent) : b.spent;
                                             const limitForRemain = isYearly ? Number(b.limit) || 0 : b.monthlyLimit;
                                             const remaining = limitForRemain - spentDisplay;

@@ -93,8 +93,12 @@ describe('alertsImportFibCompletion', () => {
     expect(read('services/notificationBudgetAlerts.ts')).toContain('buildNormalizedSpendLookup');
     expect(read('services/notificationBudgetAlerts.ts')).toContain('YTD exceeds the yearly plan');
     expect(read('services/notificationBudgetAlerts.ts')).toContain('withTransactionsDrillDown');
+    expect(read('services/notificationBudgetAlerts.ts')).toContain('drillFor(cat)');
     expect(read('supabase/functions/send-weekly-digest/index.ts')).toContain('lumpyYearlyExcess');
     expect(read('services/annualPlanFromData.ts')).toContain('yearlyEnvelope');
+    expect(read('services/annualPlanFromData.ts')).toContain('isYearlyPeriodBudget');
+    expect(read('services/aiBudgetAutomation.ts')).toContain('isYearlyPeriodBudget');
+    expect(read('pages/Budgets.tsx')).toContain('isYearlyPeriodBudget');
     expect(read('pages/Plan.tsx')).toContain('yearlyEnvelope');
     expect(read('pages/Plan.tsx')).toContain('% of yearly plan');
     expect(read('services/planExpenseOutliers.ts')).toContain('withinYearlyPlan');

@@ -181,10 +181,12 @@ export function buildBudgetRelatedNotifications(
 
   for (const { b, pct, headroom, cat } of budgetCandidates) {
     const periodTag = notificationBudgetPeriodTag(b);
-    const y = Number((b as { year?: number }).year) || now.getFullYear();
-    const m = Number((b as { month?: number }).month) || finRange.key.month;
     const envelopeLabel = headroom.hasAnnualEnvelope ? 'yearly plan' : 'limit';
-    const action = `filter-by-budget:${encodeURIComponent(cat)}:${periodTag}:${y}:${m}`;
+    // Yearly rows are often stored as month=1; drill the active financial month (same helper as drift/envelope).
+    const action =
+      periodTag === 'yearly'
+        ? drillFor(cat)
+        : `filter-by-budget:${encodeURIComponent(cat)}:${periodTag}:${Number((b as { year?: number }).year) || finRange.key.year}:${Number((b as { month?: number }).month) || finRange.key.month}`;
     const drill = withTransactionsDrillDown(safePageAction('Transactions', action));
     list.push({
       id: `budget-${b.id}`,

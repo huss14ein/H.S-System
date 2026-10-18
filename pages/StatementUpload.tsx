@@ -553,7 +553,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       });
       if (selectedAtmMissingCash.length > 0) {
         setInvalidRowIndices(new Set(selectedAtmMissingCash));
-        setSelectedTransactions(new Set(selectedAtmMissingCash));
         toast(
           `${selectedAtmMissingCash.length} ATM withdrawal(s) need a Cash account destination (different from the card/account withdrawn from). Set Cash role “Physical cash / wallet” on Accounts, or pick Cash on each ATM row.`,
           'error',
@@ -572,7 +571,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       });
       if (selectedCcMissingFunding.length > 0) {
         setInvalidRowIndices(new Set(selectedCcMissingFunding));
-        setSelectedTransactions(new Set(selectedCcMissingFunding));
         toast(
           `${selectedCcMissingFunding.length} card payment(s) (سداد) need a Paid-from Checking/Savings account (different from the card). Set Cash role “Debt servicing” / “Bills payment” on Accounts, or pick Paid from on each سداد row.`,
           'error',
@@ -603,7 +601,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       });
       if (selectedInboundMissingFrom.length > 0) {
         setInvalidRowIndices(new Set(selectedInboundMissingFrom));
-        setSelectedTransactions(new Set(selectedInboundMissingFrom));
         toast(
           `${selectedInboundMissingFrom.length} between-accounts incoming transfer(s) (حوالة واردة) need a Received-from account. Switch to “External (income)” if the sender is not your account, or pick Received from / paste the sending-account SMS.`,
           'error',
@@ -623,7 +620,6 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
       });
       if (selectedOutboundMissingTo.length > 0) {
         setInvalidRowIndices(new Set(selectedOutboundMissingTo));
-        setSelectedTransactions(new Set(selectedOutboundMissingTo));
         toast(
           `${selectedOutboundMissingTo.length} between-accounts حوالة row(s) need a Transfer-to account. Switch to “External (expense)” if the payee is not your account, or pick Transfer to.`,
           'error',

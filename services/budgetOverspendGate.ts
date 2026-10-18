@@ -262,12 +262,12 @@ export function lumpyYearlyMonthExcessWithinPlanSar(args: {
 }): number {
   const cats = new Set<string>();
   for (const c of args.monthSpentByCat.keys()) {
-    const t = String(c || '').trim();
+    const t = normalizeBudgetCategoryKey(c);
     if (t) cats.add(t);
   }
   for (const b of args.budgets ?? []) {
     if (!isYearlyPeriodBudget(b)) continue;
-    const t = String(b.category || '').trim();
+    const t = normalizeBudgetCategoryKey(b.category);
     if (t) cats.add(t);
   }
   // One O(n) normalize pass each — avoid O(categories × mapSize) rescans.
