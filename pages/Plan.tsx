@@ -811,15 +811,24 @@ const AnnualFinancialPlan: React.FC<{
         return warnings;
     }, [sarPerUsd, processedPlanData.length, year, totals, accounts, planExpenseOutliers, formatCurrencyString]);
     
-    const renderCell = (value: number, limit: number) => {
-        const percentage = limit > 0 ? (value / limit) * 100 : 0;
+    const renderCell = (
+        value: number,
+        limit: number,
+        opts?: { statusValue?: number; statusLimit?: number; statusTitle?: string },
+    ) => {
+        const statusValue = opts?.statusValue ?? value;
+        const statusLimit = opts?.statusLimit ?? limit;
+        const percentage = statusLimit > 0 ? (statusValue / statusLimit) * 100 : 0;
         let statusColor = 'bg-green-500';
         if (percentage > 100) statusColor = 'bg-red-500';
         else if (percentage > 90) statusColor = 'bg-yellow-500';
 
         return (
              <div className="flex items-center gap-2 min-h-[1.25rem]">
-                <span className={`w-2.5 h-2.5 shrink-0 rounded-full ${statusColor}`} title={`Status: ${percentage.toFixed(0)}% of plan`} />
+                <span
+                    className={`w-2.5 h-2.5 shrink-0 rounded-full ${statusColor}`}
+                    title={opts?.statusTitle ?? `Status: ${percentage.toFixed(0)}% of plan`}
+                />
                 <span className="tabular-nums">{formatCurrencyString(value, { digits: 0 })}</span>
              </div>
         );
@@ -1691,15 +1700,31 @@ const AnnualFinancialPlan: React.FC<{
                              return (
                                 <tr key={row.category}>
                                     <td className="sticky left-0 bg-white p-2 font-medium">{row.category}</td>
-                                    {row.monthly_planned.map((plan: number, monthIndex: number) => (
+                                    {row.monthly_planned.map((plan: number, monthIndex: number) => {
+                                        const monthActual = row.monthly_actual[monthIndex];
+                                        // Yearly envelopes: color from YTD vs annual pace, not the lumpy month alone.
+                                        const ytdActual = row.yearlyEnvelope
+                                            ? row.monthly_actual.slice(0, monthIndex + 1).reduce((a, b) => a + b, 0)
+                                            : monthActual;
+                                        const ytdPlan = row.yearlyEnvelope
+                                            ? row.monthly_planned.slice(0, monthIndex + 1).reduce((a, b) => a + b, 0)
+                                            : plan;
+                                        return (
                                         <td key={monthIndex} className="p-2 align-top">
-                                            <div className="text-gray-500">{renderCell(row.monthly_actual[monthIndex], plan)}</div>
+                                            <div className="text-gray-500">{renderCell(monthActual, plan, row.yearlyEnvelope ? {
+                                                statusValue: ytdActual,
+                                                statusLimit: ytdPlan,
+                                                statusTitle: `YTD ${((ytdPlan > 0 ? ytdActual / ytdPlan : 0) * 100).toFixed(0)}% of yearly plan`,
+                                            } : undefined)}</div>
                                             <div className={`font-semibold tabular-nums p-1 rounded ${isAffected ? 'bg-orange-100' : ''}`} title="Edit via Budgets or Transactions (recurring)">
                                                 {formatCurrencyString(plan, { digits: 0 })}
                                             </div>
                                         </td>
-                                    ))}
-                                     <td className="p-2 align-top font-bold"><div className="text-gray-500">{renderCell(totalActual, totalPlanned)}</div><div className="tabular-nums">{formatCurrencyString(totalPlanned, { digits: 0 })}</div></td>
+                                        );
+                                    })}
+                                     <td className="p-2 align-top font-bold"><div className="text-gray-500">{renderCell(totalActual, totalPlanned, row.yearlyEnvelope ? {
+                                         statusTitle: `YTD ${((totalPlanned > 0 ? totalActual / totalPlanned : 0) * 100).toFixed(0)}% of yearly plan`,
+                                     } : undefined)}</div><div className="tabular-nums">{formatCurrencyString(totalPlanned, { digits: 0 })}</div></td>
                                 </tr>
                              )
                         })}

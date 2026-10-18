@@ -40,6 +40,52 @@ describe('computeDashboardKpiSnapshot', () => {
     expect(snap!.budgetVariance).toBeCloseTo(800, 0);
   });
 
+  it('does not mark budget variance over for lumpy yearly rent within annual plan', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 2, 15, 12, 0, 0)); // March
+    const accounts: Account[] = [{ id: 'a1', name: 'SAR', type: 'Checking', balance: 0, currency: 'SAR' } as Account];
+    const data = {
+      settings: { monthStartDay: 1 },
+      accounts,
+      personalAccounts: accounts,
+      transactions: [
+        {
+          id: 'rent',
+          date: '2026-03-01',
+          type: 'expense',
+          amount: -60000,
+          accountId: 'a1',
+          category: 'Housing Rent',
+          budgetCategory: 'Housing Rent',
+          status: 'Approved',
+        } as Transaction,
+        {
+          id: 'food',
+          date: '2026-03-05',
+          type: 'expense',
+          amount: -500,
+          accountId: 'a1',
+          category: 'Food',
+          budgetCategory: 'Food',
+          status: 'Approved',
+        } as Transaction,
+      ],
+      budgets: [
+        { id: 'rent', category: 'Housing Rent', limit: 120000, month: 1, year: 2026, period: 'yearly' },
+        { id: 'food', category: 'Food', limit: 1000, month: 3, year: 2026, period: 'monthly' },
+      ],
+      investments: [],
+      investmentTransactions: [],
+    } as unknown as FinancialData;
+
+    const snap = computeDashboardKpiSnapshot(data, 3.75, () => ({ SAR: 0, USD: 0 }));
+    expect(snap).not.toBeNull();
+    // Without gate: totalBudget ≈ 11000, expenses 60500 → variance hugely negative.
+    // With gate: rent excess 50000 stripped → variance ≈ 11000 - 10500 = 500.
+    expect(snap!.budgetVariance).toBeGreaterThan(0);
+    expect(snap!.budgetVariance).toBeCloseTo(500, 0);
+  });
+
   it('converts USD checking balance to SAR for liquidCashSar', () => {
     const accounts: Account[] = [
       { id: 'a1', name: 'USD Check', type: 'Checking', balance: 1000, currency: 'USD' } as Account,
