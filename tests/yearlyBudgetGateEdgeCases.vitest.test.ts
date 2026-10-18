@@ -2,6 +2,8 @@
  * Best-in-class edge matrix for yearly-period budgets (any category).
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   isYearlyPeriodBudget,
   normalizeBudgetPeriod,
@@ -21,6 +23,8 @@ import {
 } from '../utils/financialMonth';
 import { financialPlanYearYtdWindow as ytdFromWindows } from '../services/budgetViewSpendWindows';
 import type { Budget } from '../types';
+
+const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
 describe('yearly budget gate — edge scenarios', () => {
   const finKey = { year: 2026, month: 6 };
@@ -211,5 +215,19 @@ describe('yearly budget gate — edge scenarios', () => {
       ytdSpentByCat: new Map([['Vehicle Insurance', 13_000]]),
     });
     expect(excess).toBe(0);
+  });
+
+  it('soft lumpy UX is text-only (no HTML injection surface)', () => {
+    const cards = read('components/BudgetCardMetricsBlocks.tsx');
+    const tx = read('pages/Transactions.tsx');
+    expect(cards).toContain('lumpyMonthWithinAnnual');
+    expect(tx).toContain('lumpyMonthWithinAnnualHint');
+    expect(cards).not.toContain('dangerouslySetInnerHTML');
+    // Transactions page may use other safe patterns elsewhere; soft hint block must stay JSX text.
+    const hintIdx = tx.indexOf('lumpyMonthWithinAnnualHint');
+    expect(hintIdx).toBeGreaterThan(0);
+    const snippet = tx.slice(hintIdx, hintIdx + 800);
+    expect(snippet).not.toContain('dangerouslySetInnerHTML');
+    expect(snippet).not.toContain('innerHTML');
   });
 });
