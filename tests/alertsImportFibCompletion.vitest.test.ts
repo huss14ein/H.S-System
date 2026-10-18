@@ -86,7 +86,11 @@ describe('alertsImportFibCompletion', () => {
     expect(read('components/LiveAdvisorModal.tsx')).toContain('yearly_plan');
     expect(read('components/BudgetCardMetricsBlocks.tsx')).toContain('lumpyMonthWithinAnnual');
     expect(read('pages/Transactions.tsx')).toContain('transactionBudgetSpendMaps');
+    expect(read('pages/Transactions.tsx')).toContain('headroomByCategoryKey');
+    expect(read('pages/Transactions.tsx')).toContain('buildNormalizedSpendLookup');
     expect(read('pages/Transactions.tsx')).toContain('lumpyMonthWithinAnnualHint');
+    expect(read('context/NotificationsContext.tsx')).toContain('buildNormalizedSpendLookup');
+    expect(read('context/NotificationsContext.tsx')).toContain('YTD exceeds the yearly plan');
     expect(read('supabase/functions/send-weekly-digest/index.ts')).toContain('lumpyYearlyExcess');
     expect(read('services/annualPlanFromData.ts')).toContain('yearlyEnvelope');
     expect(read('pages/Plan.tsx')).toContain('yearlyEnvelope');

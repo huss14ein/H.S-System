@@ -48,10 +48,12 @@ import {
     getTransactionBudgetSubmitBlockReason,
 } from '../services/transactionBudgetCoverage';
 import {
+    buildNormalizedSpendLookup,
     resolveBudgetCategoryHeadroom,
-    spendFromCategoryMap,
+    spendFromNormalizedLookup,
     ytdRangeForFinancialMonth,
 } from '../services/budgetOverspendGate';
+import { normalizeBudgetCategoryKey } from '../utils/budgetPeriod';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, fromSAR } from '../utils/currencyMath';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
@@ -381,17 +383,22 @@ const TransactionModal: React.FC<{
         return financialMonthKey(parsedDate, monthStartDay);
     }, [date, monthStartDay]);
 
-    /** Single pass month + YTD spend maps — shared by remaining + yearly soft gate (no double scan). */
+    /**
+     * Single TX pass → month/YTD spend + normalized lookups + per-category headroom.
+     * Downstream remaining / coverage / soft-gate all read this (no rescans, no O(n²) finds).
+     */
     const transactionBudgetSpendMaps = useMemo(() => {
         const { start: monthStart, end: monthEnd } = transactionFinancialMonthBounds;
         const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(transactionFinKey, monthStartDay);
         const monthSpent = new Map<string, number>();
         const ytdSpent = new Map<string, number>();
+        const currencyByAccountId = new Map(
+            accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+        );
         const accumulate = (t: Transaction, into: Map<string, number>) => {
             if (!countsAsExpenseForCashflowKpi(t) || (t.status ?? 'Approved') !== 'Approved') return;
             if (t.id === transactionToEdit?.id) return;
-            const acc = accounts.find((a) => a.id === t.accountId);
-            const txCur = acc?.currency === 'USD' ? 'USD' : 'SAR';
+            const txCur = currencyByAccountId.get(String(t.accountId)) ?? 'SAR';
             getTransactionBudgetAllocations(t).forEach((allocation) => {
                 const usedInSar = toSAR(Math.abs(Number(allocation.amount) || 0), txCur, sarPerUsd);
                 into.set(allocation.category, (into.get(allocation.category) ?? 0) + usedInSar);
@@ -401,7 +408,9 @@ const TransactionModal: React.FC<{
             if (dateInRange(t.date, monthStart, monthEnd)) accumulate(t, monthSpent);
             if (dateInRange(t.date, ytdStart, ytdEnd)) accumulate(t, ytdSpent);
         });
-        return { monthSpent, ytdSpent };
+        const monthLookup = buildNormalizedSpendLookup(monthSpent);
+        const ytdLookup = buildNormalizedSpendLookup(ytdSpent);
+        return { monthSpent, ytdSpent, monthLookup, ytdLookup };
     }, [
         accounts,
         existingTransactions,
@@ -412,19 +421,26 @@ const TransactionModal: React.FC<{
         monthStartDay,
     ]);
 
-    const remainingByCategory = useMemo(() => {
-        const map = new Map<string, number>();
-        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
+    /** Headroom without upcoming amount — stable remaining for coverage cards. */
+    const headroomByCategoryKey = useMemo(() => {
+        const map = new Map<string, ReturnType<typeof resolveBudgetCategoryHeadroom>>();
+        const { monthLookup, ytdLookup } = transactionBudgetSpendMaps;
         currentBudgetRows.forEach((b) => {
-            const headroom = resolveBudgetCategoryHeadroom({
-                category: b.category,
-                finKey: transactionFinKey,
-                monthStartDay,
-                budgets,
-                monthSpentSar: spendFromCategoryMap(monthSpent, b.category),
-                ytdSpentSar: spendFromCategoryMap(ytdSpent, b.category),
-            });
-            map.set(b.category, headroom.remainingSar);
+            const cat = String(b.category || '').trim();
+            if (!cat) return;
+            const key = normalizeBudgetCategoryKey(cat);
+            if (map.has(key)) return;
+            map.set(
+                key,
+                resolveBudgetCategoryHeadroom({
+                    category: cat,
+                    finKey: transactionFinKey,
+                    monthStartDay,
+                    budgets,
+                    monthSpentSar: spendFromNormalizedLookup(monthLookup, cat),
+                    ytdSpentSar: spendFromNormalizedLookup(ytdLookup, cat),
+                }),
+            );
         });
         return map;
     }, [
@@ -435,6 +451,27 @@ const TransactionModal: React.FC<{
         monthStartDay,
     ]);
 
+    const remainingByCategory = useMemo(() => {
+        const map = new Map<string, number>();
+        currentBudgetRows.forEach((b) => {
+            const cat = String(b.category || '').trim();
+            if (!cat) return;
+            const h = headroomByCategoryKey.get(normalizeBudgetCategoryKey(cat));
+            if (h) map.set(cat, h.remainingSar);
+        });
+        return map;
+    }, [currentBudgetRows, headroomByCategoryKey]);
+
+    const remainingForCategory = (cat: string): number => {
+        const direct = remainingByCategory.get(cat);
+        if (direct != null) return direct;
+        const h = headroomByCategoryKey.get(normalizeBudgetCategoryKey(cat));
+        return h?.remainingSar ?? 0;
+    };
+
+    const headroomForCategory = (cat: string) =>
+        headroomByCategoryKey.get(normalizeBudgetCategoryKey(cat));
+
     const inputAmountSar = useMemo(() => {
         const abs = Math.abs(Number(debouncedAmount) || 0);
         return toSAR(abs, selectedAccountCurrency, sarPerUsd);
@@ -442,24 +479,10 @@ const TransactionModal: React.FC<{
 
     const splitCoverage = useMemo(() => {
         if (type !== 'expense') return [];
-        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
         const limitForCategory = (cat: string, entryLimit: number) => {
-            const h = resolveBudgetCategoryHeadroom({
-                category: cat,
-                finKey: transactionFinKey,
-                monthStartDay,
-                budgets,
-                monthSpentSar: spendFromCategoryMap(monthSpent, cat),
-                ytdSpentSar: spendFromCategoryMap(ytdSpent, cat),
-            });
-            return h.hasAnnualEnvelope ? h.limitSar : entryLimit;
+            const h = headroomForCategory(cat);
+            return h?.hasAnnualEnvelope ? h.limitSar : entryLimit;
         };
-        const remainingFor = (cat: string) =>
-            remainingByCategory.get(cat) ??
-            [...remainingByCategory.entries()].find(
-                ([k]) => k.trim().toLowerCase() === cat.trim().toLowerCase(),
-            )?.[1] ??
-            0;
         const parsedLines = splitRows
             .map((row) => {
                 const raw = Math.abs(Number(row.amount) || 0);
@@ -473,7 +496,7 @@ const TransactionModal: React.FC<{
         if (parsedLines.length === 0) {
             const cat = String(budgetCategory || '').trim();
             const entry = currentBudgetRows.find((b) => b.category === cat);
-            const remainingSar = remainingFor(cat);
+            const remainingSar = remainingForCategory(cat);
             return cat
                 ? [{
                     category: cat,
@@ -485,7 +508,7 @@ const TransactionModal: React.FC<{
                 : [];
         }
         return parsedLines.map((line) => {
-            const remainingSar = remainingFor(line.category);
+            const remainingSar = remainingForCategory(line.category);
             const entry = currentBudgetRows.find((b) => b.category === line.category);
             return {
                 category: line.category,
@@ -503,11 +526,8 @@ const TransactionModal: React.FC<{
         budgetCategory,
         inputAmountSar,
         remainingByCategory,
+        headroomByCategoryKey,
         currentBudgetRows,
-        transactionBudgetSpendMaps,
-        transactionFinKey,
-        monthStartDay,
-        budgets,
     ]);
 
     const splitCoverageRows = useMemo(
@@ -515,7 +535,7 @@ const TransactionModal: React.FC<{
             splitRows.map((row, index) => {
                 const category = String(row.category || '').trim();
                 const entry = currentBudgetRows.find((b) => b.category === category);
-                const remainingSar = remainingByCategory.get(category) ?? 0;
+                const remainingSar = remainingForCategory(category);
                 const rawAmount = Math.abs(Number(row.amount) || 0);
                 const amountSar = toSAR(rawAmount, selectedAccountCurrency, sarPerUsd);
                 const shortfall = Math.max(0, amountSar - remainingSar);
@@ -530,7 +550,7 @@ const TransactionModal: React.FC<{
                     shortfallLabel: formatCurrencyString(shortfall, { inCurrency: 'SAR' }),
                 };
             }),
-        [splitRows, currentBudgetRows, remainingByCategory, selectedAccountCurrency, sarPerUsd, formatCurrencyString],
+        [splitRows, currentBudgetRows, remainingByCategory, headroomByCategoryKey, selectedAccountCurrency, sarPerUsd, formatCurrencyString],
     );
 
     const budgetCoverageSummary = useMemo(() => {
@@ -538,24 +558,24 @@ const TransactionModal: React.FC<{
         const cat = String(budgetCategory || '').trim();
         if (!cat) return null;
         const entry = currentBudgetRows.find((b) => b.category === cat);
-        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
+        const { monthLookup, ytdLookup } = transactionBudgetSpendMaps;
+        // Include upcoming amount only for the active category (projected annual util).
         const headroom = resolveBudgetCategoryHeadroom({
             category: cat,
             finKey: transactionFinKey,
             monthStartDay,
             budgets,
-            monthSpentSar: spendFromCategoryMap(monthSpent, cat),
-            ytdSpentSar: spendFromCategoryMap(ytdSpent, cat),
+            monthSpentSar: spendFromNormalizedLookup(monthLookup, cat),
+            ytdSpentSar: spendFromNormalizedLookup(ytdLookup, cat),
             upcomingSar: inputAmountSar,
         });
+        const base = headroomForCategory(cat);
         const limitSar = headroom.hasAnnualEnvelope
             ? headroom.limitSar
             : entry
               ? Number(entry.limit) || 0
               : 0;
-        const remainingSar =
-            remainingByCategory.get(cat) ??
-            (headroom.hasAnnualEnvelope ? headroom.remainingSar : limitSar);
+        const remainingSar = remainingForCategory(cat) || (base?.remainingSar ?? limitSar);
         const spentSar = headroom.hasAnnualEnvelope
             ? headroom.spentSar
             : Math.max(0, limitSar - remainingSar);
@@ -578,6 +598,7 @@ const TransactionModal: React.FC<{
         budgetCategory,
         currentBudgetRows,
         remainingByCategory,
+        headroomByCategoryKey,
         inputAmountSar,
         formatCurrencyString,
         transactionBudgetSpendMaps,
@@ -605,14 +626,14 @@ const TransactionModal: React.FC<{
         [type, amount, budgetCategory, splitCoverage, useSplitExpense, budgetCoverageSummary, inputAmountSar],
     );
 
-    /** Active expense categories → annual-aware headroom (reuses spend maps — no second TX scan). */
+    /** Active expense categories → projected headroom (upcoming included; reuses spend lookups). */
     const activeExpenseHeadrooms = useMemo(() => {
         if (type !== 'expense') return [] as Array<ReturnType<typeof resolveBudgetCategoryHeadroom>>;
         const cats = useSplitExpense
             ? splitCoverage.map((l) => l.category).filter(Boolean)
             : [String(budgetCategory || '').trim()].filter(Boolean);
         if (cats.length === 0) return [];
-        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
+        const { monthLookup, ytdLookup } = transactionBudgetSpendMaps;
         return cats.map((cat) => {
             const lineAmt = useSplitExpense
                 ? splitCoverage.find((l) => l.category === cat)?.amountSar ?? 0
@@ -622,8 +643,8 @@ const TransactionModal: React.FC<{
                 finKey: transactionFinKey,
                 monthStartDay,
                 budgets,
-                monthSpentSar: spendFromCategoryMap(monthSpent, cat),
-                ytdSpentSar: spendFromCategoryMap(ytdSpent, cat),
+                monthSpentSar: spendFromNormalizedLookup(monthLookup, cat),
+                ytdSpentSar: spendFromNormalizedLookup(ytdLookup, cat),
                 upcomingSar: lineAmt,
             });
         });

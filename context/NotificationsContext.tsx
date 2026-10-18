@@ -49,10 +49,13 @@ import { detectSpendingAnomaliesFromTransactions } from '../services/householdBu
 import { computeExpenseBudgetAnalysisModel } from '../services/expenseBudgetAnalysisModel';
 import { buildBudgetDrillDownAction } from '../services/spendingDrillDown';
 import {
+  buildNormalizedSpendLookup,
   resolveBudgetCategoryHeadroom,
   shouldWarnBudgetOverspend,
+  spendFromNormalizedLookup,
   ytdRangeForFinancialMonth,
 } from '../services/budgetOverspendGate';
+import { isYearlyPeriodBudget } from '../utils/budgetPeriod';
 import { aggregatePersonalBudgetCategorySpendSar } from '../services/budgetSpendMath';
 import { cachedSupabaseHeadCount } from '../services/supabaseQueryCache';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
@@ -266,6 +269,9 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       data,
       sarPerUsd,
     );
+    // One normalize pass — case/whitespace-insensitive category matching without O(n) rescans.
+    const notifMonthLookup = buildNormalizedSpendLookup(notifMonthSpend);
+    const notifYtdLookup = buildNormalizedSpendLookup(notifYtdSpend);
     const budgetCandidates = budgetsForFinancialMonthView(data.budgets ?? [], notifFinRange.key, notifMonthStartDay)
       .map((b) => {
         const cat = String(b.category ?? '').trim() || 'Budget';
@@ -274,8 +280,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           finKey: notifFinRange.key,
           monthStartDay: notifMonthStartDay,
           budgets: data.budgets ?? [],
-          monthSpentSar: notifMonthSpend.get(cat) ?? 0,
-          ytdSpentSar: notifYtdSpend.get(cat) ?? 0,
+          monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, cat),
+          ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, cat),
         });
         const pct = headroom.hasAnnualEnvelope ? headroom.annualUtilizationPct : headroom.utilizationPct;
         return { b, pct, headroom, cat };
@@ -286,7 +292,11 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
     budgetCandidates.forEach(({ b, pct, headroom, cat }) => {
       const period = String((b as { period?: string }).period ?? 'monthly').toLowerCase();
-      const periodTag = period === 'weekly' || period === 'yearly' || period === 'daily' ? period : 'monthly';
+      const periodTag = isYearlyPeriodBudget(b)
+        ? 'yearly'
+        : period === 'weekly' || period === 'daily'
+          ? period
+          : 'monthly';
       const y = Number((b as { year?: number }).year) || now.getFullYear();
       const m = Number((b as { month?: number }).month) || (now.getMonth() + 1);
       const envelopeLabel = headroom.hasAnnualEnvelope ? 'yearly plan' : 'limit';
@@ -769,8 +779,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           finKey: notifFinRange.key,
           monthStartDay: notifMonthStartDay,
           budgets: data.budgets ?? [],
-          monthSpentSar: notifMonthSpend.get(d.category) ?? 0,
-          ytdSpentSar: notifYtdSpend.get(d.category) ?? 0,
+          monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, d.category),
+          ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, d.category),
         });
         // Bi-annual rent (etc.) looks like huge drift vs monthly baseline — suppress while yearly plan OK.
         if (driftHeadroom.hasAnnualEnvelope && driftHeadroom.annualUtilizationPct <= 100.0001) {
@@ -802,8 +812,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             finKey: notifFinRange.key,
             monthStartDay: notifMonthStartDay,
             budgets: data.budgets ?? [],
-            monthSpentSar: notifMonthSpend.get(c.category) ?? 0,
-            ytdSpentSar: notifYtdSpend.get(c.category) ?? 0,
+            monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, c.category),
+            ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, c.category),
           });
           if (!shouldWarnBudgetOverspend(headroom, 100) && headroom.hasAnnualEnvelope) continue;
           const utilPct = headroom.hasAnnualEnvelope ? headroom.annualUtilizationPct : c.utilizationPct;
@@ -823,7 +833,9 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             ),
             severity: utilPct >= 100 ? 'urgent' : 'warning',
             actionHint: headroom.hasAnnualEnvelope
-              ? 'Yearly plan still has headroom — lumpy months (e.g. rent) are expected.'
+              ? utilPct >= 100
+                ? 'YTD exceeds the yearly plan — reduce spend or raise the annual limit.'
+                : 'Approaching yearly plan — lumpy months are OK while YTD stays within the annual cap.'
               : 'Review transactions in this category or adjust the budget envelope.',
           });
         }
@@ -845,8 +857,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           finKey: notifFinRange.key,
           monthStartDay: notifMonthStartDay,
           budgets: data.budgets ?? [],
-          monthSpentSar: notifMonthSpend.get(a.category) ?? a.actualAmount,
-          ytdSpentSar: notifYtdSpend.get(a.category) ?? 0,
+          monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, a.category) || a.actualAmount,
+          ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, a.category),
         });
         if (headroom.hasAnnualEnvelope && headroom.annualUtilizationPct <= 100.0001) return false;
         return true;
