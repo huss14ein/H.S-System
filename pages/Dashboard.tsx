@@ -71,7 +71,6 @@ import {
     addMonthsToKey,
     resolveMonthStartDayFromData,
     dateInRange,
-    budgetsForFinancialMonthView,
     financialMonthKeyFromTransactionDate,
 } from '../utils/financialMonth';
 import { budgetCardCategoryNames } from '../utils/budgetCardCategories';
@@ -376,7 +375,7 @@ const DashboardContent: React.FC<{
     const { kpiSummary, investmentTreemapData, monthlyCashflowData, uncategorizedTransactions, recentTransactions, projectedCash30d, currentCash } = useMemo(() => {
         try {
             if (!workingData || showHydrateBanner || !kpiSnapshot) {
-                return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+                return { kpiSummary: {}, investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
             }
 
             const sarPerUsd = canonicalSarPerUsd;
@@ -402,19 +401,10 @@ const DashboardContent: React.FC<{
                 return toSAR(raw, 'USD', r);
             };
 
-            // Current financial month (same window as `computeDashboardKpiSnapshot` P&L) + KPI snapshot
-            const monthlyTransactions = transactions.filter((t: { date: string }) =>
-                dateInRange(t.date, currentFinMonth.start, currentFinMonth.end),
-            );
-            const budgetToMonthly = (b: { limit: number; period?: string }) => b.period === 'yearly' ? b.limit / 12 : b.period === 'weekly' ? b.limit * (52 / 12) : b.period === 'daily' ? b.limit * (365 / 12) : b.limit;
-            const currentMonthBudgets = budgetsForFinancialMonthView(
-                workingData?.budgets ?? [],
-                currentFinMonth.key,
-                monthStartDay,
-            );
+            // Budget variance KPI comes only from `kpiSnapshot` (annual-aware gate) — no local ÷12 path.
             const snap = kpiSnapshot;
             if (!snap) {
-                return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+                return { kpiSummary: {}, investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
             }
             const {
                 netWorth,
@@ -430,30 +420,7 @@ const DashboardContent: React.FC<{
             } = snap;
 
             const investmentTreemapData = buildPersonalInvestmentTreemapRows(workingData, sarPerUsd, liveQuotePrices);
-            const monthlySpending = new Map<string, number>();
-            monthlyTransactions
-                .filter((t: { type?: string }) => countsAsExpenseForCashflowKpi(t))
-                .forEach((t: Transaction) => {
-                    const allocations = getTransactionBudgetAllocations(t);
-                    allocations.forEach((allocation) => {
-                        const key = allocation.category;
-                        const currentSpend = monthlySpending.get(key) || 0;
-                        monthlySpending.set(
-                            key,
-                            currentSpend + txCashflowSar({ accountId: t.accountId, amount: allocation.amount, date: t.date }),
-                        );
-                    });
-                });
 
-            const monthlyBudgets = currentMonthBudgets
-                .map(budget => {
-                    const spent = monthlySpending.get(budget.category) || 0;
-                    const monthlyLimit = budgetToMonthly(budget);
-                    const percentage = monthlyLimit > 0 ? (spent / monthlyLimit) * 100 : 0;
-                    return { ...budget, spent, percentage, monthlyLimit };
-                })
-                .sort((a, b) => b.percentage - a.percentage);
-            
             // Cashflow Chart Data (personal only) — last 12 financial months
             const finMonthKeys12 = financialMonthKeysEndingAt(now, 12, monthStartDay);
             const earliestCashflow = financialMonthRangeFromKey(finMonthKeys12[0], monthStartDay).start;
@@ -527,7 +494,6 @@ const DashboardContent: React.FC<{
                 },
                 projectedCash30d,
                 currentCash,
-                monthlyBudgets,
                 investmentTreemapData,
                 monthlyCashflowData,
                 uncategorizedTransactions,
@@ -535,7 +501,7 @@ const DashboardContent: React.FC<{
             };
         } catch (e) {
             console.error("Dashboard calculation error:", e);
-            return { kpiSummary: {}, monthlyBudgets: [], investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
+            return { kpiSummary: {}, investmentTreemapData: [], monthlyCashflowData: [], uncategorizedTransactions: [], recentTransactions: [], projectedCash30d: 0, currentCash: 0 };
         }
     }, [workingData, exchangeRate, getAvailableCashForAccount, kpiSnapshot, canonicalSarPerUsd, liveQuotePrices, showHydrateBanner]);
 

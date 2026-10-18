@@ -85,5 +85,17 @@ describe('alertsImportFibCompletion', () => {
     expect(read('pages/Plan.tsx')).toContain('% of yearly plan');
     expect(read('services/planExpenseOutliers.ts')).toContain('withinYearlyPlan');
     expect(read('services/geminiService.ts')).toContain('within yearly plan (lumpy month OK)');
+    expect(read('services/enhancedBudgetEngine.ts')).toContain('effectiveSpendLimit');
+    // Dashboard must not recompute ungated yearly÷12 budget variance for UI.
+    const dash = read('pages/Dashboard.tsx');
+    expect(dash).toContain('annual-aware gate');
+    expect(dash).not.toContain('budgetToMonthly');
+    expect(dash).not.toContain('monthlyBudgets');
+  });
+
+  it('version 5.0.0.0 is shipped end to end', () => {
+    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '5.0.0.0'");
+    expect(read('package.json')).toContain('"version": "5.0.0.0"');
+    expect(read('FEATURES.md')).toContain('5.0.0.0');
   });
 });

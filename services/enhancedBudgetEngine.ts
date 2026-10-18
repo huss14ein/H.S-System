@@ -363,15 +363,37 @@ export function analyzeSpendingPatterns(transactions: Transaction[]): SpendingPa
  * Calculate comprehensive budget health metrics
  */
 export function calculateBudgetHealthMetrics(
-  budgets: Array<{ category: string; limit: number; spent: number }>,
+  budgets: Array<{
+    category: string;
+    limit: number;
+    spent: number;
+    /** When yearly + YTD within annual plan, do not score as overrun. */
+    period?: string;
+    annualLimit?: number;
+    ytdSpent?: number;
+  }>,
   transactions: Transaction[],
   _monthsOfHistory: number = 3
 ): BudgetHealthMetrics {
+  const effectiveSpendLimit = (b: {
+    limit: number;
+    spent: number;
+    period?: string;
+    annualLimit?: number;
+    ytdSpent?: number;
+  }) => {
+    if (b.period === 'yearly') {
+      const annual = Number(b.annualLimit ?? b.limit) || 0;
+      const ytd = Number(b.ytdSpent ?? b.spent) || 0;
+      return { spent: ytd, limit: annual };
+    }
+    return { spent: b.spent ?? 0, limit: b.limit ?? 0 };
+  };
+
   // Adherence score
   const adherenceScores = budgets.map(b => {
-    const limit = b.limit ?? 0;
+    const { limit, spent } = effectiveSpendLimit(b);
     if (limit <= 0) return 100;
-    const spent = b.spent ?? 0;
     if (spent <= limit) return 100;
     const overrun = (spent - limit) / limit;
     return Math.max(0, 100 - overrun * 100);
@@ -400,13 +422,19 @@ export function calculateBudgetHealthMetrics(
     ? Math.max(0, 100 - (forecastErrors / forecastCount) * 100)
     : 50;
   
-  // Stress resilience
-  const overruns = budgets.filter(b => (b.spent ?? 0) > (b.limit ?? 0)).length;
+  // Stress resilience (yearly rows use YTD vs annual envelope)
+  const overruns = budgets.filter((b) => {
+    const { spent, limit } = effectiveSpendLimit(b);
+    return limit > 0 && spent > limit;
+  }).length;
   const stressResilience = budgets.length > 0 ? Math.max(0, 100 - (overruns / budgets.length) * 100) : 100;
   
   // Optimization potential
   const avgUtilization = budgets.length > 0
-    ? budgets.reduce((sum, b) => sum + ((b.limit ?? 0) > 0 ? (b.spent ?? 0) / (b.limit ?? 1) : 0), 0) / budgets.length
+    ? budgets.reduce((sum, b) => {
+        const { spent, limit } = effectiveSpendLimit(b);
+        return sum + (limit > 0 ? spent / limit : 0);
+      }, 0) / budgets.length
     : 0;
   const optimizationPotential = avgUtilization < 0.7 
     ? Math.round((0.7 - avgUtilization) * 100)
