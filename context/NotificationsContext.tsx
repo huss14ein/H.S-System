@@ -38,25 +38,13 @@ import { useEnhancementSignals } from '../hooks/useEnhancementSignals';
 import { buildNotificationsDataFingerprint } from '../services/budgetSpendFingerprint';
 import {
   addMonthsToKey,
-  budgetsForFinancialMonthView,
   currentFinancialMonthIso,
   financialMonthIsoKey,
   financialMonthKeyFromTransactionDate,
   financialMonthRange,
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
-import { detectSpendingAnomaliesFromTransactions } from '../services/householdBudgetAnalytics';
-import { computeExpenseBudgetAnalysisModel } from '../services/expenseBudgetAnalysisModel';
-import { buildBudgetDrillDownAction } from '../services/spendingDrillDown';
-import {
-  buildNormalizedSpendLookup,
-  resolveBudgetCategoryHeadroom,
-  shouldWarnBudgetOverspend,
-  spendFromNormalizedLookup,
-  ytdRangeForFinancialMonth,
-} from '../services/budgetOverspendGate';
-import { isYearlyPeriodBudget } from '../utils/budgetPeriod';
-import { aggregatePersonalBudgetCategorySpendSar } from '../services/budgetSpendMath';
+import { buildBudgetRelatedNotifications } from '../services/notificationBudgetAlerts';
 import { cachedSupabaseHeadCount } from '../services/supabaseQueryCache';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
@@ -240,78 +228,18 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       list.push(n);
     };
 
-    // Budgets: keep only the top 4 closest to breach (yearly-period uses YTD vs yearly cap).
-    const threshold = data.settings?.budgetThreshold ?? 90;
-    const notifMonthStartDay = resolveMonthStartDayFromData(data);
-    const notifFinRange = financialMonthRange(now, notifMonthStartDay);
-    const notifAccounts = getPersonalAccounts(data);
-    const notifTxs = getPersonalTransactions(data);
-    const notifAccFx = new Map(
-      notifAccounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
-    );
-    const notifMonthSpend = aggregatePersonalBudgetCategorySpendSar(
-      notifTxs,
-      notifFinRange.start,
-      notifFinRange.end,
-      notifAccFx,
+    // Budget alerts (threshold + drift/envelope/anomaly): yearly-gated, Transactions drill-down.
+    // Enhancement budget rows respect mark-all dismiss grace (same as other enhancement signals).
+    const inDismissGraceEarly = Date.now() < dismissGraceUntilRef.current;
+    for (const n of buildBudgetRelatedNotifications({
       data,
       sarPerUsd,
-    );
-    const { start: notifYtdStart, end: notifYtdEnd } = ytdRangeForFinancialMonth(
-      notifFinRange.key,
-      notifMonthStartDay,
-    );
-    const notifYtdSpend = aggregatePersonalBudgetCategorySpendSar(
-      notifTxs,
-      notifYtdStart,
-      notifYtdEnd,
-      notifAccFx,
-      data,
-      sarPerUsd,
-    );
-    // One normalize pass — case/whitespace-insensitive category matching without O(n) rescans.
-    const notifMonthLookup = buildNormalizedSpendLookup(notifMonthSpend);
-    const notifYtdLookup = buildNormalizedSpendLookup(notifYtdSpend);
-    const budgetCandidates = budgetsForFinancialMonthView(data.budgets ?? [], notifFinRange.key, notifMonthStartDay)
-      .map((b) => {
-        const cat = String(b.category ?? '').trim() || 'Budget';
-        const headroom = resolveBudgetCategoryHeadroom({
-          category: cat,
-          finKey: notifFinRange.key,
-          monthStartDay: notifMonthStartDay,
-          budgets: data.budgets ?? [],
-          monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, cat),
-          ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, cat),
-        });
-        const pct = headroom.hasAnnualEnvelope ? headroom.annualUtilizationPct : headroom.utilizationPct;
-        return { b, pct, headroom, cat };
-      })
-      .filter((x) => x.pct >= threshold && shouldWarnBudgetOverspend(x.headroom, threshold))
-      .sort((a, b) => b.pct - a.pct)
-      .slice(0, 4);
-
-    budgetCandidates.forEach(({ b, pct, headroom, cat }) => {
-      const period = String((b as { period?: string }).period ?? 'monthly').toLowerCase();
-      const periodTag = isYearlyPeriodBudget(b)
-        ? 'yearly'
-        : period === 'weekly' || period === 'daily'
-          ? period
-          : 'monthly';
-      const y = Number((b as { year?: number }).year) || now.getFullYear();
-      const m = Number((b as { month?: number }).month) || (now.getMonth() + 1);
-      const envelopeLabel = headroom.hasAnnualEnvelope ? 'yearly plan' : 'limit';
-      push({
-        id: `budget-${b.id}`,
-        category: 'Budget',
-        message: `"${cat}" is at ${pct.toFixed(0)}% of ${envelopeLabel}.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Transactions',
-        pageAction: safePageAction('Transactions', `filter-by-budget:${encodeURIComponent(cat)}:${periodTag}:${y}:${m}`),
-        severity: pct >= 100 ? 'urgent' : 'warning',
-        actionHint: pct >= 100 ? 'Review and reduce spending or increase approved limit.' : 'Monitor this category and reduce optional spend.',
-      });
-    });
+      now,
+      budgetDrift: inDismissGraceEarly ? [] : enhancementSignals.budgetDrift,
+      skipEnhancementBudgetAlerts: inDismissGraceEarly,
+    })) {
+      push(n);
+    }
 
     // Goals near deadline
     (data.goals ?? []).forEach((g) => {
@@ -773,112 +701,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
         });
       }
-      for (const d of enhancementSignals.budgetDrift.slice(0, 2)) {
-        const driftHeadroom = resolveBudgetCategoryHeadroom({
-          category: d.category,
-          finKey: notifFinRange.key,
-          monthStartDay: notifMonthStartDay,
-          budgets: data.budgets ?? [],
-          monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, d.category),
-          ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, d.category),
-        });
-        // Bi-annual rent (etc.) looks like huge drift vs monthly baseline — suppress while yearly plan OK.
-        if (driftHeadroom.hasAnnualEnvelope && driftHeadroom.annualUtilizationPct <= 100.0001) {
-          continue;
-        }
-        push({
-          id: `budget-drift-${d.category}`,
-          category: 'Budget',
-          message: `${d.category} spend is ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs your 3-month baseline.`,
-          date: now.toISOString(),
-          isRead: false,
-          pageLink: 'Analysis',
-          pageAction: safePageAction(
-            'Transactions',
-            buildBudgetDrillDownAction({ budgetCategory: d.category, data }),
-          ),
-          severity: Math.abs(d.driftPct) >= 30 ? 'warning' : 'info',
-          actionHint: 'Open Analysis or Transactions to adjust limits or investigate the category.',
-        });
-      }
-
-      const spendModel = computeExpenseBudgetAnalysisModel(data, sarPerUsd, now, 'personal');
-      if (spendModel) {
-        const finIso = currentFinancialMonthIso(now, notifMonthStartDay);
-        for (const c of spendModel.overBudgetCategories.slice(0, 3)) {
-          // Belt-and-suspenders: never surface yearly-plan categories still within annual cap.
-          const headroom = resolveBudgetCategoryHeadroom({
-            category: c.category,
-            finKey: notifFinRange.key,
-            monthStartDay: notifMonthStartDay,
-            budgets: data.budgets ?? [],
-            monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, c.category),
-            ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, c.category),
-          });
-          if (!shouldWarnBudgetOverspend(headroom, 100) && headroom.hasAnnualEnvelope) continue;
-          const utilPct = headroom.hasAnnualEnvelope ? headroom.annualUtilizationPct : c.utilizationPct;
-          const spentShow = headroom.hasAnnualEnvelope ? headroom.spentSar : c.spentSar;
-          const limitShow = headroom.hasAnnualEnvelope ? headroom.annualLimitSar : c.limitSar;
-          const envelopeWord = headroom.hasAnnualEnvelope ? 'yearly plan' : 'fiscal envelope';
-          push({
-            id: `spend-envelope-${c.category}-${finIso}`,
-            category: 'Budget',
-            message: `"${c.category}" is ${utilPct.toFixed(0)}% of your ${envelopeWord} (${Math.round(spentShow).toLocaleString()} / ${Math.round(limitShow).toLocaleString()} SAR).`,
-            date: now.toISOString(),
-            isRead: false,
-            pageLink: 'Transactions',
-            pageAction: safePageAction(
-              'Transactions',
-              buildBudgetDrillDownAction({ budgetCategory: c.category, data }),
-            ),
-            severity: utilPct >= 100 ? 'urgent' : 'warning',
-            actionHint: headroom.hasAnnualEnvelope
-              ? utilPct >= 100
-                ? 'YTD exceeds the yearly plan — reduce spend or raise the annual limit.'
-                : 'Approaching yearly plan — lumpy months are OK while YTD stays within the annual cap.'
-              : 'Review transactions in this category or adjust the budget envelope.',
-          });
-        }
-      }
-
-      const finKey = financialMonthKeyFromTransactionDate(now, notifMonthStartDay);
-      const anomalies = detectSpendingAnomaliesFromTransactions({
-        year: finKey.year,
-        transactions: notifTxs,
-        accounts: notifAccounts,
-        sarPerUsd,
-        monthStartDay: notifMonthStartDay,
-        budgets: data.budgets ?? [],
-      }).filter((a) => {
-        // Only surface anomalies for the current financial month; skip yearly-plan categories within cap.
-        if (a.month !== finKey.month) return false;
-        const headroom = resolveBudgetCategoryHeadroom({
-          category: a.category,
-          finKey: notifFinRange.key,
-          monthStartDay: notifMonthStartDay,
-          budgets: data.budgets ?? [],
-          monthSpentSar: spendFromNormalizedLookup(notifMonthLookup, a.category) || a.actualAmount,
-          ytdSpentSar: spendFromNormalizedLookup(notifYtdLookup, a.category),
-        });
-        if (headroom.hasAnnualEnvelope && headroom.annualUtilizationPct <= 100.0001) return false;
-        return true;
-      });
-      for (const a of anomalies.slice(0, 2)) {
-        push({
-          id: `spend-anomaly-${a.category}-${finKey.month}`,
-          category: 'Budget',
-          message: `Unusual spend in ${a.category}: ${a.explanation}`,
-          date: now.toISOString(),
-          isRead: false,
-          pageLink: 'Transactions',
-          pageAction: safePageAction(
-            'Transactions',
-            buildBudgetDrillDownAction({ budgetCategory: a.category, data }),
-          ),
-          severity: a.severity === 'high' ? 'urgent' : 'warning',
-          actionHint: 'Review this month’s transactions for one-off or mis-categorized items.',
-        });
-      }
+      // Budget drift / envelope / anomaly alerts: built via buildBudgetRelatedNotifications above
+      // (yearly-gated + Transactions pageAction pairing). Goal conflicts stay here.
     }
 
     const execLogs = (data.executionLogs ?? []) as { created_at?: string; date?: string }[];

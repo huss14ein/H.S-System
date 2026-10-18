@@ -67,9 +67,9 @@ describe('budgetOverspendGate', () => {
 
   it('Notifications + anomalies + Budgets pass yearly budgets into anomaly detection', () => {
     const notif = read('context/NotificationsContext.tsx');
-    expect(notif).toContain('shouldWarnBudgetOverspend');
-    expect(notif).toContain('budgets: data.budgets ?? []');
-    expect(notif).toContain('yearly plan');
+    expect(notif).toContain('buildBudgetRelatedNotifications');
+    expect(read('services/notificationBudgetAlerts.ts')).toContain('shouldWarnBudgetOverspend');
+    expect(read('services/notificationBudgetAlerts.ts')).toContain('yearly plan');
     expect(read('pages/Budgets.tsx')).toContain('budgets: data?.budgets ?? []');
     expect(read('services/householdBudgetAnalytics.ts')).toContain('hasAnnualEnvelope');
     expect(read('services/dashboardKpiSnapshot.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');

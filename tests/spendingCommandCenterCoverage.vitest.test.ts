@@ -35,10 +35,13 @@ describe('spendingCommandCenterCoverage', () => {
   it('NotificationsContext surfaces budget drift, envelope, and anomaly alerts with drill-down', () => {
     const ctx = read('context/NotificationsContext.tsx');
     expect(ctx).toContain('enhancementSignals.budgetDrift');
-    expect(ctx).toContain('computeExpenseBudgetAnalysisModel');
-    expect(ctx).toContain('overBudgetCategories');
-    expect(ctx).toContain('detectSpendingAnomaliesFromTransactions');
-    expect(ctx).toContain('buildBudgetDrillDownAction');
+    expect(ctx).toContain('buildBudgetRelatedNotifications');
+    const alerts = read('services/notificationBudgetAlerts.ts');
+    expect(alerts).toContain('computeExpenseBudgetAnalysisModel');
+    expect(alerts).toContain('overBudgetCategories');
+    expect(alerts).toContain('detectSpendingAnomaliesFromTransactions');
+    expect(alerts).toContain('buildBudgetDrillDownAction');
+    expect(alerts).toContain('withTransactionsDrillDown');
   });
 
   it('shared spending services exist and export drill-down + brief', () => {

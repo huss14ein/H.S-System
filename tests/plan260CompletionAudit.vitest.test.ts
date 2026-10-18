@@ -64,7 +64,8 @@ describe('plan 2.6 feature completion audit', () => {
     expect(read('services/spendingReportExport.ts')).toContain('downloadSpendingBriefPdf');
     expect(read('components/charts/ExpenseBreakdownChart.tsx')).toContain('buildBudgetDrillDownAction');
     expect(read('components/dashboard/ExpenseDonutDrilldown.tsx')).toContain('spendingIntelMapping');
-    expect(read('context/NotificationsContext.tsx')).toContain('detectSpendingAnomaliesFromTransactions');
+    expect(read('context/NotificationsContext.tsx')).toContain('buildBudgetRelatedNotifications');
+    expect(read('services/notificationBudgetAlerts.ts')).toContain('detectSpendingAnomaliesFromTransactions');
   });
 
   it('Track D — ultra analytics workspace + zones + creative charts', () => {
