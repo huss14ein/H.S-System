@@ -132,6 +132,11 @@ export function validatePreparedStatementInvestmentRow(tx: InvestmentTransaction
   return reasons;
 }
 
+/** Public for review-table row highlighting before import. */
+export function getPreparedBankRowValidationReasons(tx: Transaction, accounts?: Account[]): string[] {
+  return validatePreparedBankRow(tx, accounts);
+}
+
 function validatePreparedBankRow(tx: Transaction, accounts?: Account[]): string[] {
   const reasons: string[] = [];
   if (!tx.date) reasons.push('missing date');

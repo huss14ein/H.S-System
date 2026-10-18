@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import { AreaChart, Area, ResponsiveContainer, Tooltip, YAxis } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer, Tooltip, YAxis, ReferenceLine, ReferenceArea } from 'recharts';
+import type { FibAnalysis } from '../../services/fibonacciAnalysis';
 
 export interface HistoricalPoint {
     day: number;
@@ -40,9 +41,13 @@ interface MiniPriceChartProps {
     historicalData?: HistoricalPoint[] | null;
     /** When true, avoid synthetic curves and show unavailable state unless real data exists. */
     realDataOnly?: boolean;
+    /** Optional Fibonacci retracement overlay (reversal zone + key levels). */
+    fibAnalysis?: FibAnalysis | null;
+    /** Chart height in px (default 56 for watchlist sparkline; use taller for detail panels). */
+    height?: number;
 }
 
-const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, changePercent, formatPrice = (p: number) => p.toFixed(2), showIllustrativeLabel = false, historicalData, realDataOnly = false }) => {
+const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, changePercent, formatPrice = (p: number) => p.toFixed(2), showIllustrativeLabel = false, historicalData, realDataOnly = false, fibAnalysis = null, height = 56 }) => {
     const data = useMemo(() => {
         if (historicalData && historicalData.length > 0) return [...historicalData].sort((a, b) => a.day - b.day);
         if (realDataOnly) return [] as HistoricalPoint[];
@@ -54,6 +59,21 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
     const endPrice = data.length > 0 ? data[data.length - 1].price : 0;
     const isRealData = Boolean(historicalData && historicalData.length > 0);
     const trendPct = startPrice > 0 && data.length >= 2 ? ((endPrice - startPrice) / startPrice) * 100 : null;
+    const fibLevels = useMemo(() => {
+        if (!fibAnalysis?.levels?.length) return [];
+        return fibAnalysis.levels.filter((l) => l.ratio === 0.618 || l.ratio === 0.786 || l.ratio === 0.5);
+    }, [fibAnalysis]);
+    const yDomain = useMemo(() => {
+        const prices = data.map((d) => d.price).filter((p) => Number.isFinite(p));
+        if (fibAnalysis) {
+            prices.push(fibAnalysis.reversalZone.low, fibAnalysis.reversalZone.high, fibAnalysis.swingHigh.price, fibAnalysis.swingLow.price);
+        }
+        if (prices.length === 0) return ['dataMin - 1', 'dataMax + 1'] as const;
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        const pad = Math.max((max - min) * 0.08, max * 0.005, 0.01);
+        return [min - pad, max + pad] as [number, number];
+    }, [data, fibAnalysis]);
 
     if (realDataOnly && data.length === 0) {
         return (
@@ -96,7 +116,12 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
                     <span className="text-[10px] text-slate-400 font-medium" title={realDataOnly ? 'Real 1-month trend is unavailable for this symbol' : '1-month trend not available'}>—</span>
                 )}
             </div>
-            <div style={{ width: '100%', height: 56 }}>
+            {fibAnalysis?.inReversalZone && (
+                <p className="text-[10px] text-amber-800 font-medium mb-0.5" title={fibAnalysis.summary}>
+                    Fib reversal zone ({fibAnalysis.direction})
+                </p>
+            )}
+            <div style={{ width: '100%', height }}>
                 <ResponsiveContainer>
                     <AreaChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
                         <defs>
@@ -105,7 +130,7 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
                                 <stop offset="95%" stopColor={color} stopOpacity={0}/>
                             </linearGradient>
                         </defs>
-                        <YAxis hide domain={['dataMin - 1', 'dataMax + 1']} />
+                        <YAxis hide domain={yDomain} />
                         <Tooltip
                             content={({ active, payload }) => {
                                 if (!active || !payload?.length) return null;
@@ -117,6 +142,26 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
                                 );
                             }}
                         />
+                        {fibAnalysis && (
+                            <ReferenceArea
+                                y1={fibAnalysis.reversalZone.low}
+                                y2={fibAnalysis.reversalZone.high}
+                                fill="#f59e0b"
+                                fillOpacity={0.18}
+                                strokeOpacity={0}
+                                ifOverflow="extendDomain"
+                            />
+                        )}
+                        {fibLevels.map((lvl) => (
+                            <ReferenceLine
+                                key={`${symbol}-fib-${lvl.ratio}`}
+                                y={lvl.price}
+                                stroke={lvl.ratio === 0.786 ? '#e11d48' : lvl.ratio === 0.618 ? '#ea580c' : '#94a3b8'}
+                                strokeDasharray="3 3"
+                                strokeWidth={1}
+                                ifOverflow="extendDomain"
+                            />
+                        ))}
                         <Area type="monotone" dataKey="price" stroke={color} strokeWidth={1.5} fill={`url(#colorPrice-${symbol ?? 'def'})`} dot={false} />
                     </AreaChart>
                 </ResponsiveContainer>

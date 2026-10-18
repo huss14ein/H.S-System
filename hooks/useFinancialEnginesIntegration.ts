@@ -22,6 +22,7 @@ import {
 import { scheduleIdleWorkAsync } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
 import { yieldToMain } from '../utils/yieldToMain';
+import { useCanonicalSpotFx } from './useCanonicalFinancialMetrics';
 
 export interface UseFinancialEnginesIntegrationResult {
   /** Unified context (cash, risk, household) from all engines */
@@ -61,6 +62,7 @@ type Options = {
 export function useFinancialEnginesIntegration(options?: Options): UseFinancialEnginesIntegrationResult {
   const eager = options?.eager === true;
   const { data, showHydrateBanner } = useContext(DataContext)!;
+  const sarPerUsd = useCanonicalSpotFx();
   const [idleSnapshot, setIdleSnapshot] = useState(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
 
   const dataFingerprint = useMemo(
@@ -75,8 +77,10 @@ export function useFinancialEnginesIntegration(options?: Options): UseFinancialE
         (data as { personalTransactions?: unknown[] })?.personalTransactions?.length ?? 0,
         (data as { personalAccounts?: unknown[] })?.personalAccounts?.length ?? 0,
         (data as { personalInvestments?: unknown[] })?.personalInvestments?.length ?? 0,
+        data?.settings?.emergencyFundMonthsTarget ?? '',
+        Number(sarPerUsd).toFixed(4),
       ].join(':'),
-    [data, showHydrateBanner],
+    [data, showHydrateBanner, sarPerUsd],
   );
 
   const cachedSyncRef = useRef(EMPTY_FINANCIAL_ENGINES_SNAPSHOT);
@@ -86,10 +90,10 @@ export function useFinancialEnginesIntegration(options?: Options): UseFinancialE
     if (isBackgroundWorkPaused() && cachedSyncRef.current.ready) {
       return cachedSyncRef.current;
     }
-    const next = computeFinancialEnginesIntegration(data, showHydrateBanner);
+    const next = computeFinancialEnginesIntegration(data, showHydrateBanner, { sarPerUsd });
     if (next.ready) cachedSyncRef.current = next;
     return next;
-  }, [eager, data, showHydrateBanner, dataFingerprint]);
+  }, [eager, data, showHydrateBanner, dataFingerprint, sarPerUsd]);
 
   useEffect(() => {
     if (eager) return;
@@ -101,10 +105,10 @@ export function useFinancialEnginesIntegration(options?: Options): UseFinancialE
       if (isBackgroundWorkPaused()) return;
       await yieldToMain(16);
       if (isBackgroundWorkPaused()) return;
-      const next = computeFinancialEnginesIntegration(data, showHydrateBanner);
+      const next = computeFinancialEnginesIntegration(data, showHydrateBanner, { sarPerUsd });
       startTransition(() => setIdleSnapshot(next));
     }, 2500);
-  }, [eager, data, showHydrateBanner, dataFingerprint]);
+  }, [eager, data, showHydrateBanner, dataFingerprint, sarPerUsd]);
 
   const result = eager ? syncResult : idleSnapshot;
 

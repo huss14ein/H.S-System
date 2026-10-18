@@ -1916,6 +1916,8 @@ export type WatchlistAdviceOptions = {
     insightOpts?: AiInsightOptions;
     items?: Array<{ symbol: string; name?: string }>;
     holdingsSymbols?: string[];
+    /** Precomputed Fibonacci levels per symbol (educational grounding — do not invent Fibs). */
+    fibonacciGrounding?: string[];
 };
 
 export const getAIInvestmentOverviewAnalysis = async (
@@ -2331,6 +2333,8 @@ export interface TradeAnalysisContext {
     txDateNewest?: string;
     /** Human note e.g. "Last 20 trades by date (preferring last 90 days)." */
     tradeSelectionNote?: string;
+    /** Precomputed Fibonacci swing levels for symbols in the trade batch. */
+    fibonacciGrounding?: string[];
 }
 
 export const getAITradeAnalysis = async (
@@ -2391,6 +2395,7 @@ ${mergedContext.planBudget != null && mergedContext.planBudget > 0 ? `Monthly pl
 ${mergedContext.planExecutionCurrency ? `Plan execution currency: ${mergedContext.planExecutionCurrency}` : ''}
 ${mergedContext.corePct != null ? `Core/Upside sleeve split: ${(mergedContext.corePct * 100).toFixed(0)}% / ${((mergedContext.upsidePct ?? 0) * 100).toFixed(0)}%` : ''}
 ${mergedContext.tradeActivitySummary ? `Activity summary: ${mergedContext.tradeActivitySummary}` : ''}
+${mergedContext.fibonacciGrounding?.length ? `Computed Fibonacci (use these exact levels — do not invent):\n${mergedContext.fibonacciGrounding.join('\n')}` : ''}
 `.trim()
         : '';
 
@@ -2433,7 +2438,7 @@ What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 ### Technical Framework Matrix
 - Dow Theory: regime (uptrend/downtrend/range) and why.
 - Elliott Wave: likely wave context (impulse/corrective) and what would invalidate it.
-- Fibonacci: key retracement/extension zone(s) to monitor.
+- Fibonacci: cite computed 61.8% (golden) / 78.6% reversal zone from GROUND TRUTH when provided; for downtrends draw high→low and watch selling pressure in that zone; invalidate above 78.6%.
 - Chart Patterns: active pattern hypothesis and trigger level.
 - Candlestick Patterns: strongest recent candle signal and interpretation.
 - Combined Method (confluence): where 2+ frameworks align and where they conflict.
@@ -2541,6 +2546,7 @@ export const getAIWatchlistAdvice = async (
         }
         return out;
     };
+    const fibLines = (options?.fibonacciGrounding ?? []).filter(Boolean).slice(0, 12);
     const watchBlock = [
         '=== WATCHLIST ===',
         `Symbols (${normalized.length}): ${list}`,
@@ -2548,8 +2554,11 @@ export const getAIWatchlistAdvice = async (
             ? `Already in portfolio (overlap): ${overlap.join(', ')} — discuss concentration, not as new ideas.`
             : 'No watchlist symbol overlaps top holdings list (or holdings empty).',
         g?.topHoldingsLines?.length ? `Top holdings (SAR): ${g.topHoldingsLines.join('; ')}` : '',
+        fibLines.length
+            ? `Computed Fibonacci (use these exact levels — do not invent):\n${fibLines.join('\n')}`
+            : '',
         '=== END WATCHLIST ===',
-        'Do not invent prices, targets, or fundamentals — symbols/names only unless in GROUND TRUTH.',
+        'Do not invent prices, targets, fundamentals, or Fib levels — symbols/names only unless in GROUND TRUTH.',
     ]
         .filter(Boolean)
         .join('\n');
@@ -3122,6 +3131,8 @@ export const getAIStockAnalysis = async (
         forceRefresh?: boolean;
         wealthGrounding?: string;
         investableCashSar?: number;
+        /** Precomputed Fibonacci swing text for this symbol. */
+        fibonacciGrounding?: string;
     },
 ): Promise<{ content: string, groundingChunks: any[] }> => {
     const dayKey = new Date().toISOString().slice(0, 10);
@@ -3138,6 +3149,9 @@ export const getAIStockAnalysis = async (
         ? Number(holding.currentValue || 0) / Number(holding.quantity || 1)
         : Number(holding.avgCost || 0);
     const wealthBlock = options?.wealthGrounding ? `\n${options.wealthGrounding}\n` : '';
+    const fibBlock = options?.fibonacciGrounding
+        ? `\nComputed Fibonacci (use these exact levels — do not invent):\n${options.fibonacciGrounding}\n`
+        : '';
     const cashHint =
         options?.investableCashSar != null && Number.isFinite(options.investableCashSar)
             ? `Investable / tradable cash (SAR): ${Math.round(options.investableCashSar).toLocaleString()}. Size any proposed trade ActionCard as a modest % of this cash.`
@@ -3145,7 +3159,7 @@ export const getAIStockAnalysis = async (
     const primaryPrompt = `You are Finova AI Investor Copilot, a very clever expert investment analyst.
 Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol ?? ''}) using Google Search.
 Treat stale/outdated references as low confidence and prefer latest items.
-${wealthBlock}
+${wealthBlock}${fibBlock}
 Portfolio snapshot context (for relevance only):
 - Shares: ${Number(holding.quantity || 0).toLocaleString()}
 - Avg cost: ${Number(holding.avgCost || 0).toFixed(2)}
@@ -3162,6 +3176,9 @@ Return Markdown only (no HTML):
 
 ### Analyst Sentiment
 - One short paragraph: current sentiment (bullish/bearish/neutral) and why.
+
+### Fibonacci / technical levels
+- If computed Fib ground truth is present: cite the 61.8–78.6% zone and whether price is inside it; educational only.
 
 ### Portfolio fit advice
 - How this position fits THIS user's liquidity, concentration, and investable cash (cite GROUND TRUTH when present). 2 bullets of suggestions + one preferred recommendation CTA (Record Trade / Recovery / hold).

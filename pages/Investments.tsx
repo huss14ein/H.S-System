@@ -44,6 +44,13 @@ import { useFormatCurrency } from '../hooks/useFormatCurrency';
 import { formatUnknownError } from '../utils/formatUnknownError';
 import { fetchCompanyNameForSymbol, useCompanyNames, symbolsNeedingCompanyName } from '../hooks/useSymbolCompanyName';
 import MiniPriceChart from '../components/charts/MiniPriceChart';
+import { getStockCandles1M, type CandlePoint } from '../services/finnhubService';
+import {
+    evaluateFibonacciRetracement,
+    formatFibForAiGrounding,
+    formatFibSignalShort,
+    shouldNotifyFibZoneEntry,
+} from '../services/fibonacciAnalysis';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { ChartPieIcon } from '../components/icons/ChartPieIcon';
@@ -1928,6 +1935,7 @@ const HoldingDetailModal: React.FC<{
     const [isFundamentalsLoading, setIsFundamentalsLoading] = useState(false);
     const [fundamentalsError, setFundamentalsError] = useState<string | null>(null);
     const [fundamentalsFetchedAt, setFundamentalsFetchedAt] = useState<number | null>(null);
+    const [holdingCandles1M, setHoldingCandles1M] = useState<CandlePoint[] | null>(null);
 
     const handleGetAIAnalysis = useCallback(async (forceRefresh = false) => {
         if (!holding) return;
@@ -1937,10 +1945,26 @@ const HoldingDetailModal: React.FC<{
         setAnalystAr(null);
         setGroundingChunks([]);
         try {
+            const candlePrices = (holdingCandles1M ?? [])
+                .map((c) => c.price)
+                .filter((p): p is number => Number.isFinite(p));
+            const liveRow = lookupLiveQuoteForSymbol(liveQuoteMap, holding.symbol);
+            const fibForAi =
+                candlePrices.length >= 15
+                    ? evaluateFibonacciRetracement(candlePrices, {
+                          currentPrice:
+                              Number(liveRow?.price) > 0
+                                  ? Number(liveRow!.price)
+                                  : candlePrices[candlePrices.length - 1],
+                      })
+                    : null;
             const { content, groundingChunks: chunks } = await getAIStockAnalysis(holding, {
                 forceRefresh,
                 wealthGrounding: wealthGroundingPrompt?.promptBlock,
                 investableCashSar: wealthGroundingPrompt?.investableCashSar,
+                fibonacciGrounding: fibForAi
+                    ? formatFibForAiGrounding(String(holding.symbol ?? ''), fibForAi)
+                    : undefined,
             });
             const resolvedContent = content || buildFallbackAnalystReport(holding);
             const isFallbackContent = /coverage status|analyst engine note|ai analyst engine was unavailable/i.test(resolvedContent);
@@ -1956,7 +1980,7 @@ const HoldingDetailModal: React.FC<{
         } finally {
             setIsLoading(false);
         }
-    }, [holding, analystDisplayLang, wealthGroundingPrompt]);
+    }, [holding, analystDisplayLang, wealthGroundingPrompt, holdingCandles1M, liveQuoteMap]);
 
     useEffect(() => {
         if (analystDisplayLang !== 'ar' || !aiAnalysis.trim() || analystAr != null || !aiActionsEnabled) return;
@@ -2010,6 +2034,7 @@ const HoldingDetailModal: React.FC<{
         setAnalystSource(null);
         setFundamentals(null);
         setFundamentalsError(null);
+        setHoldingCandles1M(null);
         setFundamentalsFetchedAt(null);
     }, [holdingKey]);
 
@@ -2039,6 +2064,39 @@ const HoldingDetailModal: React.FC<{
             cancelled = true;
         };
     }, [holdingKey, isOpen]);
+
+    useEffect(() => {
+        if (!holdingKey || !holding || !isOpen) return;
+        let cancelled = false;
+        getStockCandles1M(holding.symbol)
+            .then((points) => {
+                if (!cancelled) setHoldingCandles1M(points?.length ? points : null);
+            })
+            .catch(() => {
+                if (!cancelled) setHoldingCandles1M(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [holdingKey, isOpen, holding?.symbol]);
+
+    const holdingFibAnalysis = useMemo(() => {
+        const prices = (holdingCandles1M ?? []).map((c) => c.price).filter((p): p is number => Number.isFinite(p));
+        if (prices.length < 15) return null;
+        const live = holding ? Number(lookupLiveQuoteForSymbol(liveQuoteMap, holding.symbol)?.price) : NaN;
+        return evaluateFibonacciRetracement(prices, {
+            currentPrice: Number.isFinite(live) && live > 0 ? live : prices[prices.length - 1],
+        });
+    }, [holdingCandles1M, holding, liveQuoteMap]);
+
+    useEffect(() => {
+        if (!holding?.symbol || !holdingFibAnalysis) return;
+        if (!shouldNotifyFibZoneEntry(holdingFibAnalysis, holding.symbol)) return;
+        toast(
+            `${holding.symbol}: price entered Fib 61.8–78.6% reversal zone (${holdingFibAnalysis.direction}). ${holdingFibAnalysis.summary}`,
+            'warning',
+        );
+    }, [holdingFibAnalysis, holding?.symbol]);
 
     if (!holding) return null;
 
@@ -2327,17 +2385,29 @@ const HoldingDetailModal: React.FC<{
                     </div>
                 </div>
 
-                {/* Price trend chart */}
+                {/* Price trend chart + Fibonacci overlay */}
                 <div className="rounded-xl border border-slate-100 bg-white p-4 min-w-0 overflow-hidden">
                     <p className="text-sm font-semibold text-slate-700 mb-1 break-words">Price trend (last ~1 month)</p>
-                    <p className="text-xs text-slate-500 mb-3">Daily closes when available; otherwise an illustrative trend is shown.</p>
+                    <p className="text-xs text-slate-500 mb-3">
+                        Daily closes when available. Fibonacci retracement (61.8–78.6% zone) overlays when a swing is detected.
+                    </p>
                     <MiniPriceChart
                         symbol={holding.symbol}
                         currentPrice={currentPrice}
                         changePercent={priceTrendPercent}
                         formatPrice={(p) => fmtPerUnit(p)}
                         showIllustrativeLabel
+                        historicalData={holdingCandles1M}
+                        realDataOnly
+                        fibAnalysis={holdingFibAnalysis}
+                        height={120}
                     />
+                    {holdingFibAnalysis && (
+                        <p className="mt-2 text-xs text-slate-600" title={holdingFibAnalysis.summary}>
+                            <span className="font-semibold text-slate-800">Fib:</span>{' '}
+                            {formatFibSignalShort(holdingFibAnalysis)} — {holdingFibAnalysis.summary}
+                        </p>
+                    )}
                 </div>
 
                 {/* AI Analyst */}

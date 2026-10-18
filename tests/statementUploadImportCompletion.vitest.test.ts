@@ -72,6 +72,13 @@ describe('statementUploadImportCompletion', () => {
     expect(stmt).toContain('selectedInboundMissingFrom');
     expect(stmt).toContain('selectedOutboundMissingTo');
     expect(stmt).toContain('Local transfer in (حوالة واردة)');
+    // External income حوالة واردة must not throw — only internal missing Received-from.
+    expect(stmt).toContain("resolveSmsAccountTransferScope(tx) === 'internal'");
+    expect(stmt).toContain('getPreparedBankRowValidationReasons');
+    expect(stmt).toContain('bankRowValidationByIndex');
+    expect(stmt).toContain('invalidRowIndices');
+    expect(stmt).toContain("toast(");
+    expect(stmt).not.toContain("alert(`Import completed with issues:");
     const acct = read('services/smsAccountTransfer.ts');
     expect(acct).toContain('applySmsAccountTransfers');
     expect(acct).toContain('applySmsAccountTransferIns');

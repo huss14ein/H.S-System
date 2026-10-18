@@ -66,10 +66,27 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const showToast = useCallback(
     (message: string, variant: ToastVariant = 'default', duration?: number, action?: ToastAction) => {
-      const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const normalized = String(message || '').trim();
+      if (!normalized) return;
       const resolvedDuration = duration ?? defaultDurationForVariant(variant);
-      const item: ToastItem = { id, message, variant, duration: resolvedDuration, action };
-      setToasts((prev) => [...prev.slice(-4), item]);
+      setToasts((prev) => {
+        // Dedupe identical active toasts (e.g. double-submit / StrictMode duplicate listeners).
+        const dupIdx = prev.findIndex((t) => t.message === normalized && t.variant === variant);
+        if (dupIdx >= 0) {
+          const existing = prev[dupIdx];
+          const refreshed: ToastItem = {
+            ...existing,
+            id: `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            duration: resolvedDuration,
+            action: action ?? existing.action,
+          };
+          const without = prev.filter((_, i) => i !== dupIdx);
+          return [...without.slice(-4), refreshed];
+        }
+        const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const item: ToastItem = { id, message: normalized, variant, duration: resolvedDuration, action };
+        return [...prev.slice(-4), item];
+      });
     },
     [],
   );

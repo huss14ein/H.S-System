@@ -34,6 +34,12 @@ import { XMarkIcon } from '../components/icons';
 import { toSAR } from '../utils/currencyMath';
 import { useCanonicalSpotFx } from '../hooks/useCanonicalFinancialMetrics';
 import { rsi, rsiSignal, zScore, zScoreSignal, bollingerBands, shortTermCrossoverSignal } from '../services/technicalIndicators';
+import {
+    evaluateFibonacciRetracement,
+    formatFibForAiGrounding,
+    formatFibSignalShort,
+    shouldNotifyFibZoneEntry,
+} from '../services/fibonacciAnalysis';
 import { rankWatchlistIdeas } from '../services/decisionEngine';
 import { computeBuyScore } from '../services/buyScore';
 import { useEmergencyFund } from '../hooks/useEmergencyFund';
@@ -527,6 +533,9 @@ const WatchlistItemRow: React.FC<{
             else bbLabel = 'BB: mid';
         }
         const stCross = shortTermCrossoverSignal(prices, 5, 10);
+        const fib = evaluateFibonacciRetracement(prices, {
+            currentPrice: priceInfo.price > 0 ? priceInfo.price : lastPrice,
+        });
         return {
             rsi: Number.isFinite(lastRsi) ? lastRsi : null,
             rsiSig: lastRsi != null ? rsiSignal(lastRsi) : null,
@@ -534,8 +543,10 @@ const WatchlistItemRow: React.FC<{
             zSig: lastZ != null ? zScoreSignal(lastZ) : null,
             bb: bbLabel,
             smaCross: stCross?.golden ? 'golden' as const : stCross?.death ? 'death' as const : null,
+            fib,
+            fibLabel: formatFibSignalShort(fib),
         };
-    }, [historical1M]);
+    }, [historical1M, priceInfo.price]);
 
     useEffect(() => {
         if (priceInfo) {
@@ -550,6 +561,15 @@ const WatchlistItemRow: React.FC<{
             }
         }
     }, [priceInfo]);
+
+    useEffect(() => {
+        const fib = techSignals?.fib;
+        if (!fib || !shouldNotifyFibZoneEntry(fib, item.symbol)) return;
+        toast(
+            `${item.symbol}: price entered Fib 61.8–78.6% reversal zone (${fib.direction}). ${fib.summary}`,
+            'warning',
+        );
+    }, [techSignals?.fib, item.symbol]);
 
     return (
         <tr ref={rowRef} className={`transition-colors duration-1000 ${flashClass}`}>
@@ -585,7 +605,7 @@ const WatchlistItemRow: React.FC<{
                 )}
             </td>
             <td className="px-4 py-2 w-36">
-                <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} realDataOnly />
+                <MiniPriceChart symbol={item.symbol} currentPrice={priceInfo.price} changePercent={priceInfo.changePercent} formatPrice={formatPrice} showIllustrativeLabel historicalData={historical1M} realDataOnly fibAnalysis={techSignals?.fib ?? null} />
             </td>
             <td className="px-4 py-2 text-right font-semibold text-dark whitespace-nowrap tabular-nums">
                 {quoteSource === 'none' ? (
@@ -652,6 +672,20 @@ const WatchlistItemRow: React.FC<{
                         {techSignals.smaCross && (
                             <span className={`block leading-tight ${techSignals.smaCross === 'golden' ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}`}>
                                 SMA(5/10): {techSignals.smaCross === 'golden' ? 'golden cross' : 'death cross'}
+                            </span>
+                        )}
+                        {techSignals.fibLabel && (
+                            <span
+                                className={`block leading-tight ${
+                                    techSignals.fib?.signal === 'in_reversal_zone'
+                                        ? 'text-amber-800 font-semibold'
+                                        : techSignals.fib?.signal === 'scenario_invalidated'
+                                          ? 'text-slate-500'
+                                          : 'text-orange-700 font-medium'
+                                }`}
+                                title={techSignals.fib?.summary}
+                            >
+                                {techSignals.fibLabel}
                             </span>
                         )}
                     </div>
@@ -1130,10 +1164,17 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
             const holdingsSymbols = getPersonalInvestments(data).flatMap((p) =>
                 (p.holdings ?? []).map((h) => String(h.symbol ?? '').trim()).filter(Boolean),
             );
+            const fibonacciGrounding = symbols.slice(0, 12).map((sym) => {
+                const candles = historicalBySymbol[String(sym).trim().toUpperCase()] ?? historicalBySymbol[sym];
+                const prices = (candles ?? []).map((c) => c.price).filter((p): p is number => Number.isFinite(p));
+                const fib = prices.length >= 15 ? evaluateFibonacciRetracement(prices) : null;
+                return formatFibForAiGrounding(sym, fib);
+            });
             const tips = await getAIWatchlistAdvice(symbols, {
                 data,
                 items: watchlist.map((w) => ({ symbol: w.symbol ?? '', name: w.name })),
                 holdingsSymbols,
+                fibonacciGrounding,
                 insightOpts: {
                     exchangeRate: sarPerUsd,
                     getAvailableCashForAccount,
@@ -1147,7 +1188,7 @@ const WatchlistView: React.FC<WatchlistViewProps> = ({ onNavigateToTab, setActiv
         } finally {
             setAiWatchlistLoading(false);
         }
-    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, aiActionsEnabled]);
+    }, [data, exchangeRate, getAvailableCashForAccount, simulatedPrices, aiActionsEnabled, historicalBySymbol, sarPerUsd]);
     const handleSaveAlert = (symbol: string, targetPrice: number, currency: 'USD' | 'SAR') => {
         void addPriceAlert({ symbol, targetPrice, currency }, { confirmed: true });
     };

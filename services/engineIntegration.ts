@@ -8,6 +8,14 @@ import { generateCashflowStressSignals, calculateDynamicBaselines } from './enha
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { detectRecurringBillPatterns } from './hybridBudgetCategorization';
 import { calculatePortfolioRisk } from './advancedRiskScoring';
+import { toSAR } from '../utils/currencyMath';
+
+export type BuildUnifiedFinancialContextOptions = {
+  /** Spot SAR per USD for multi-currency cash accounts (defaults to 1 = treat balances as SAR). */
+  sarPerUsd?: number;
+  /** Emergency fund months target from settings (defaults to 6). */
+  emergencyFundMonthsTarget?: number;
+};
 
 interface Investment {
   id: string;
@@ -146,11 +154,20 @@ export function buildUnifiedFinancialContext(
   accounts: Account[],
   budgets: Budget[],
   goals: Goal[],
-  investments: Investment[]
+  investments: Investment[],
+  options?: BuildUnifiedFinancialContextOptions,
 ): UnifiedFinancialContext {
-  // Calculate cash constraints
+  const sarPerUsd = Number(options?.sarPerUsd);
+  const fx = Number.isFinite(sarPerUsd) && sarPerUsd > 0 ? sarPerUsd : 1;
+  const efMonthsRaw = Number(options?.emergencyFundMonthsTarget);
+  const efMonths = Math.min(24, Math.max(1, Number.isFinite(efMonthsRaw) && efMonthsRaw > 0 ? efMonthsRaw : 6));
+
+  // Cash in SAR so USD Checking/Savings do not distort buffer / min-balance signals.
   const cashAccounts = accounts.filter(a => a.type === 'Checking' || a.type === 'Savings');
-  const totalCash = cashAccounts.reduce((sum, a) => sum + (a.balance ?? 0), 0);
+  const totalCash = cashAccounts.reduce((sum, a) => {
+    const cur = a.currency === 'USD' ? 'USD' : 'SAR';
+    return sum + toSAR(Number(a.balance) || 0, cur, fx);
+  }, 0);
   
   // Get recurring bills (hybrid categorization + pattern detection)
   const recurringBills = mapRecurringBillsToInfo(transactions);
@@ -174,20 +191,22 @@ export function buildUnifiedFinancialContext(
   const totalExpenses = lastMonthTransactions
     .filter(t => countsAsExpenseForCashflowKpi(t))
     .reduce((sum, t) => sum + Math.abs(Number(t.amount) ?? 0), 0);
+
+  const efTargetSar = monthlyRecurring * efMonths;
   
   const stressSignals = generateCashflowStressSignals(
     totalCash,
     totalExpenses,
     totalCash * 0.1, // Assume 10% is upcoming income
     monthlyRecurring,
-    monthlyRecurring * 6, // 6 months emergency fund target
+    efTargetSar,
     15 // Assume 15 days until payday
   );
   
   return {
     cash: {
       availableCash: totalCash,
-      emergencyReserve: Math.min(totalCash, monthlyRecurring * 6),
+      emergencyReserve: Math.min(totalCash, efTargetSar),
       monthlyRequiredExpenses: monthlyRecurring,
       discretionaryBudget: Math.max(0, totalCash - monthlyRecurring * 2),
       cashflowBuffer: totalCash / Math.max(monthlyRecurring, 1)
@@ -297,14 +316,18 @@ export function runCrossEngineAnalysis(context: UnifiedFinancialContext): CrossE
     });
   }
   
-  // Check household stress signals
-  const criticalStress = context.household.cashflowStressSignals.find(s => s.type === 'critical');
-  if (criticalStress) {
-    const shortfall = /shortfall/i.test(criticalStress.message);
+  // Promote every critical household stress signal (min balance, shortfall, EF, …).
+  const seenStressMessages = new Set<string>();
+  for (const criticalStress of context.household.cashflowStressSignals.filter((s) => s.type === 'critical')) {
+    const msg = String(criticalStress.message || '').trim();
+    if (!msg || seenStressMessages.has(msg)) continue;
+    seenStressMessages.add(msg);
+    const shortfall = /shortfall/i.test(msg);
+    const ef = /emergency fund/i.test(msg);
     alerts.push({
       severity: 'critical',
       category: 'household',
-      message: criticalStress.message,
+      message: msg,
       suggestedAction: criticalStress.recommendedAction,
       relatedMetrics: { impact: criticalStress.impact },
       links: shortfall
@@ -313,10 +336,16 @@ export function runCrossEngineAnalysis(context: UnifiedFinancialContext): CrossE
             { label: 'Budgets', page: 'Budgets' },
             { label: 'Plan', page: 'Plan' },
           ]
-        : [
-            { label: 'Accounts', page: 'Accounts' },
-            { label: 'Transactions', page: 'Transactions' },
-          ],
+        : ef
+          ? [
+              { label: 'Accounts & cash', page: 'Accounts' },
+              { label: 'Summary', page: 'Summary' },
+              { label: 'Budgets', page: 'Budgets' },
+            ]
+          : [
+              { label: 'Accounts', page: 'Accounts' },
+              { label: 'Transactions', page: 'Transactions' },
+            ],
     });
   }
   

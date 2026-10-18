@@ -81,6 +81,7 @@ export const EMPTY_FINANCIAL_ENGINES_SNAPSHOT: FinancialEnginesIntegrationSnapsh
 export function computeFinancialEnginesIntegration(
   data: FinancialData | null | undefined,
   showHydrateBanner: boolean,
+  options?: { sarPerUsd?: number },
 ): FinancialEnginesIntegrationSnapshot {
   if (!data || showHydrateBanner) return EMPTY_FINANCIAL_ENGINES_SNAPSHOT;
 
@@ -91,7 +92,21 @@ export function computeFinancialEnginesIntegration(
   const investments = getPersonalInvestments(data);
   const investmentsFlat = mapInvestmentsForContext(investments);
 
-  const context = buildUnifiedFinancialContext(transactions, accounts, budgets, goals, investmentsFlat);
+  const sarPerUsdRaw = Number(
+    (data as { settings?: { exchangeRate?: number } })?.settings?.exchangeRate,
+  );
+  // Prefer caller FX when provided; else settings spot; else leave unset (SAR-denominated).
+  const sarPerUsd =
+    options?.sarPerUsd != null && Number.isFinite(options.sarPerUsd) && options.sarPerUsd > 0
+      ? options.sarPerUsd
+      : Number.isFinite(sarPerUsdRaw) && sarPerUsdRaw > 0
+        ? sarPerUsdRaw
+        : undefined;
+  const efMonths = Number(data.settings?.emergencyFundMonthsTarget);
+  const context = buildUnifiedFinancialContext(transactions, accounts, budgets, goals, investmentsFlat, {
+    sarPerUsd,
+    emergencyFundMonthsTarget: Number.isFinite(efMonths) ? efMonths : undefined,
+  });
   const analysis = runCrossEngineAnalysis(context);
   const actionQueue = generatePrioritizedActionQueue(analysis);
 

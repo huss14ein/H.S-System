@@ -120,8 +120,8 @@ function matchToAllowedCategory(suggested: string, allowed: string[]): string | 
 const TransactionModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSave: (transaction: Omit<Transaction, 'id'> | Transaction) => void;
-    onSaveAndTrade: (transaction: Omit<Transaction, 'id'>) => void;
+    onSave: (transaction: Omit<Transaction, 'id'> | Transaction) => void | Promise<void>;
+    onSaveAndTrade: (transaction: Omit<Transaction, 'id'>) => void | Promise<void>;
     transactionToEdit: Transaction | null;
     budgets: Budget[],
     allCategories: string[],
@@ -1868,29 +1868,32 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
         }
     }, [pageAction, clearPageAction, monthStartDay]);
 
-    const handleSaveTransaction = (transaction: Omit<Transaction, 'id'> | Transaction) => {
+    const handleSaveTransaction = async (transaction: Omit<Transaction, 'id'> | Transaction) => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         if (userRole === 'Restricted' && transaction.type === 'expense' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
-            return;
+            throw new Error('Restricted category');
         }
 
         if ('id' in transaction) {
-            updateTransaction(transaction, { confirmed: true });
+            const ok = await updateTransaction(transaction, { confirmed: true });
+            if (!ok) throw new Error('Transaction blocked');
         } else {
             const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
-            addTransaction({ ...transaction, status: nextStatus }, { confirmed: true });
+            const ok = await addTransaction({ ...transaction, status: nextStatus }, { confirmed: true });
+            if (!ok) throw new Error('Transaction blocked');
         }
     };
     
-    const handleSaveAndTrade = (transaction: Omit<Transaction, 'id'>) => {
+    const handleSaveAndTrade = async (transaction: Omit<Transaction, 'id'>) => {
         const allowedRestrictedCategories = new Set([...permittedBudgetCategories, ...sharedBudgetCategories]);
         if (userRole === 'Restricted' && (!transaction.budgetCategory || !allowedRestrictedCategories.has(transaction.budgetCategory))) {
             alert('You can only submit expenses under your assigned budget categories.');
-            return;
+            throw new Error('Restricted category');
         }
         const nextStatus = userRole === 'Restricted' ? 'Pending' : 'Approved';
-        addTransaction({ ...transaction, status: nextStatus }, { confirmed: true });
+        const ok = await addTransaction({ ...transaction, status: nextStatus }, { confirmed: true });
+        if (!ok) throw new Error('Transaction blocked');
         triggerPageAction('Investments', `open-trade-modal:with-amount:${Math.abs(transaction.amount)}`);
     };
     
@@ -2075,16 +2078,18 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                 .maybeSingle();
             
             if (updatedTx) {
-                // Find the transaction in local state and update it, which will trigger sync to shared budgets
+                // Find the transaction in local state and update it, which will trigger sync to shared budgets.
+                // system: true — DB already approved; skip posting-policy toast on zero-balance accounts.
                 const existingTx = data?.transactions?.find(t => t.id === transactionId);
                 if (existingTx) {
-                    // Use updateTransaction which handles syncSharedBudgetTransactionMirror
-                    await updateTransaction({
-                        ...existingTx,
-                        status: 'Approved' as const,
-                    });
+                    await updateTransaction(
+                        {
+                            ...existingTx,
+                            status: 'Approved' as const,
+                        },
+                        { system: true },
+                    );
                 } else {
-                    // If not in local state, add it
                     const newTx = {
                         id: updatedTx.id,
                         date: updatedTx.date,
@@ -2099,7 +2104,7 @@ const Transactions: React.FC<TransactionsProps> = ({ pageAction, clearPageAction
                         transactionNature: updatedTx.transaction_nature || updatedTx.transactionNature,
                         expenseType: updatedTx.expense_type || updatedTx.expenseType,
                     };
-                    await updateTransaction(newTx as Transaction);
+                    await updateTransaction(newTx as Transaction, { system: true });
                 }
             }
             

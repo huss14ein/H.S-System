@@ -16,9 +16,11 @@ import { sortByNewestFirst } from '../utils/sortRecency';
 import { buildDividendDedupeKey, normalizeDividendForDedupe } from '../services/dividendLedgerGuards';
 import {
   computeStatementReviewDuplicates,
+  getPreparedBankRowValidationReasons,
   planStatementImport,
   type StatementImportContext,
 } from '../services/statementImportPrepare';
+import { toast } from '../context/ToastContext';
 import { parseSmsCardLast4FromNote } from '../services/smsImportRouting';
 import {
   isSmsAtmWithdrawalTx,
@@ -99,6 +101,8 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [importResultMessage, setImportResultMessage] = useState<string | null>(null);
+  /** Row indices with blocking validation (missing Received-from, etc.) for rose highlight. */
+  const [invalidRowIndices, setInvalidRowIndices] = useState<Set<number>>(new Set());
   const [parseStats, setParseStats] = useState<{
     totalTransactions: number;
     validTransactions: number;
@@ -493,6 +497,27 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     statementImportCtx,
   ]);
 
+  /** Live per-row validation reasons (all bank rows) for highlight + inline hints. */
+  const bankRowValidationByIndex = useMemo(() => {
+    const map = new Map<number, string[]>();
+    if (!isReviewModalOpen) return map;
+    extractedTransactions.forEach((tx, idx) => {
+      if (
+        shouldSkipPairedSmsAccountTransferIn(tx, extractedTransactions, selectedTransactions, idx)
+      ) {
+        return;
+      }
+      const reasons = getPreparedBankRowValidationReasons(tx, statementImportCtx.accounts);
+      if (reasons.length > 0) map.set(idx, reasons);
+    });
+    return map;
+  }, [
+    isReviewModalOpen,
+    extractedTransactions,
+    selectedTransactions,
+    statementImportCtx.accounts,
+  ]);
+
   const handleApproveTransactions = async () => {
     if (importSubmitLockRef.current || importConfirmPendingRef.current) return;
     try {
@@ -527,8 +552,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return !physicalCashAccountChoices.some((a) => a.id === cashTo);
       });
       if (selectedAtmMissingCash.length > 0) {
-        alert(
+        setInvalidRowIndices(new Set(selectedAtmMissingCash));
+        setSelectedTransactions(new Set(selectedAtmMissingCash));
+        toast(
           `${selectedAtmMissingCash.length} ATM withdrawal(s) need a Cash account destination (different from the card/account withdrawn from). Set Cash role “Physical cash / wallet” on Accounts, or pick Cash on each ATM row.`,
+          'error',
         );
         return;
       }
@@ -543,8 +571,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return !ccFundingAccountChoices.some((a) => a.id === fundedFrom);
       });
       if (selectedCcMissingFunding.length > 0) {
-        alert(
+        setInvalidRowIndices(new Set(selectedCcMissingFunding));
+        setSelectedTransactions(new Set(selectedCcMissingFunding));
+        toast(
           `${selectedCcMissingFunding.length} card payment(s) (سداد) need a Paid-from Checking/Savings account (different from the card). Set Cash role “Debt servicing” / “Bills payment” on Accounts, or pick Paid from on each سداد row.`,
+          'error',
         );
         return;
       }
@@ -571,8 +602,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return !accountTransferDestinationChoices.some((a) => a.id === transferFrom);
       });
       if (selectedInboundMissingFrom.length > 0) {
-        alert(
+        setInvalidRowIndices(new Set(selectedInboundMissingFrom));
+        setSelectedTransactions(new Set(selectedInboundMissingFrom));
+        toast(
           `${selectedInboundMissingFrom.length} between-accounts incoming transfer(s) (حوالة واردة) need a Received-from account. Switch to “External (income)” if the sender is not your account, or pick Received from / paste the sending-account SMS.`,
+          'error',
         );
         return;
       }
@@ -588,8 +622,11 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         return !accountTransferDestinationChoices.some((a) => a.id === transferTo);
       });
       if (selectedOutboundMissingTo.length > 0) {
-        alert(
+        setInvalidRowIndices(new Set(selectedOutboundMissingTo));
+        setSelectedTransactions(new Set(selectedOutboundMissingTo));
+        toast(
           `${selectedOutboundMissingTo.length} between-accounts حوالة row(s) need a Transfer-to account. Switch to “External (expense)” if the payee is not your account, or pick Transfer to.`,
+          'error',
         );
         return;
       }
@@ -727,17 +764,19 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                     0,
                     { system: true },
                   );
-                } else if (
-                  isSmsAtmWithdrawalTx(tx) ||
-                  isSmsCcPaymentTx(tx) ||
-                  isSmsAccountTransferInTx(tx)
-                ) {
+                } else if (isSmsAtmWithdrawalTx(tx) && Number(tx.amount) < 0) {
+                  throw new Error('ATM withdrawal must import as a transfer to Cash (pick Cash destination).');
+                } else if (isSmsCcPaymentTx(tx)) {
                   throw new Error(
-                    isSmsAtmWithdrawalTx(tx)
-                      ? 'ATM withdrawal must import as a transfer to Cash (pick Cash destination).'
-                      : isSmsCcPaymentTx(tx)
-                        ? 'Card payment (سداد) must import as a transfer from a funding account (pick Paid from).'
-                        : 'Incoming transfer (حوالة واردة) must import as a transfer from a source account (pick Received from).',
+                    'Card payment (سداد) must import as a transfer from a funding account (pick Paid from).',
+                  );
+                } else if (
+                  isSmsAccountTransferInTx(tx) &&
+                  resolveSmsAccountTransferScope(tx) === 'internal'
+                ) {
+                  // External (income) حوالة واردة falls through to addTransaction — do not require Received-from.
+                  throw new Error(
+                    'Incoming transfer (حوالة واردة) must import as a transfer from a source account (pick Received from).',
                   );
                 } else {
                   await addTransaction({
@@ -875,6 +914,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         setExtractedInvestmentTransactions([]);
         setDuplicateTransactions(new Set());
         setSelectedTransactions(new Set());
+        setInvalidRowIndices(new Set());
         setValidationWarnings([]);
         setValidationErrors([]);
         setParseStats(null);
@@ -888,14 +928,24 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
         }
       } else {
         setSelectedTransactions(new Set(failedIndices));
+        setInvalidRowIndices(new Set(failedIndices));
         setProcessingProgress(0);
+        const issueLines = importErrors.slice(0, 8);
         setImportResultMessage(
-          `Imported ${importedCount} transaction(s). ${failedCount} failed. Summary: parsed=${importSummary.parsed}, normalized=${importSummary.normalized}, duplicates=${importSummary.duplicate}, rejected=${importSummary.rejected}, imported=${importSummary.imported}, cashLedgerInserted=${importSummary.cashLedgerInserted}, recomputed=${importSummary.recomputed ? 'yes' : 'no'}.`,
+          [
+            `Imported ${importedCount} transaction(s). ${failedCount} failed. Summary: parsed=${importSummary.parsed}, normalized=${importSummary.normalized}, duplicates=${importSummary.duplicate}, rejected=${importSummary.rejected}, imported=${importSummary.imported}, cashLedgerInserted=${importSummary.cashLedgerInserted}, recomputed=${importSummary.recomputed ? 'yes' : 'no'}.`,
+            issueLines.length ? `Issues:\n• ${issueLines.join('\n• ')}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
         );
       }
 
       if (importErrors.length > 0) {
-        alert(`Import completed with issues: ${importErrors.slice(0, 3).join(' | ')}`);
+        toast(
+          `Import completed with issues (${importErrors.length}): ${importErrors.slice(0, 2).join(' | ')}`,
+          'error',
+        );
       }
     } catch (error) {
       console.error('Error saving transactions:', error);
@@ -912,6 +962,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
     setIsReviewModalOpen(false);
     setSelectedTransactions(new Set());
     setDuplicateTransactions(new Set());
+    setInvalidRowIndices(new Set());
     setValidationWarnings([]);
     setValidationErrors([]);
     setImportResultMessage(null);
@@ -1493,7 +1544,7 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
 
             {importResultMessage && (
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-blue-800">{importResultMessage}</p>
+                <p className="text-sm text-blue-800 whitespace-pre-line">{importResultMessage}</p>
               </div>
             )}
 
@@ -1584,6 +1635,10 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                       {extractedTransactions.map((tx, index) => {
                         const isDuplicate = duplicateTransactions.has(index);
                         const isSelected = selectedTransactions.has(index);
+                        const rowValidation = bankRowValidationByIndex.get(index) ?? [];
+                        const isInvalidRow =
+                          invalidRowIndices.has(index) ||
+                          (isSelected && rowValidation.length > 0);
                         const cardLast4 = parseSmsCardLast4FromNote(tx.note);
                         const rowAccount = bankAccounts.find((a) => a.id === tx.accountId);
                         const rowCurrency = rowAccount?.currency === 'USD' ? 'USD' : selectedAccountCurrency;
@@ -1643,7 +1698,15 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                         return (
                           <tr
                             key={index}
-                            className={isDuplicate ? 'bg-amber-50' : isSelected ? 'bg-blue-50' : ''}
+                            className={
+                              isInvalidRow
+                                ? 'bg-rose-50 ring-1 ring-inset ring-rose-200'
+                                : isDuplicate
+                                  ? 'bg-amber-50'
+                                  : isSelected
+                                    ? 'bg-blue-50'
+                                    : ''
+                            }
                           >
                             <td className="px-4 py-3 text-center">
                               <input
@@ -1651,7 +1714,13 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                                 checked={isSelected}
                                 onChange={() => handleToggleTransaction(index)}
                                 className="rounded border-slate-300 text-primary focus:ring-primary"
-                                title={isDuplicate ? 'Duplicate — tick to import anyway' : undefined}
+                                title={
+                                  isInvalidRow
+                                    ? rowValidation[0] || 'Fix validation before import'
+                                    : isDuplicate
+                                      ? 'Duplicate — tick to import anyway'
+                                      : undefined
+                                }
                               />
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-900 min-w-[140px]">
@@ -1671,6 +1740,12 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
                               <div>{tx.description}</div>
                               {cardLast4 && (
                                 <div className="text-xs text-slate-500 mt-0.5">Card ••••{cardLast4}</div>
+                              )}
+                              {isInvalidRow && rowValidation.length > 0 && (
+                                <div className="text-xs text-rose-700 mt-1 font-medium" role="alert">
+                                  {rowValidation[0]}
+                                  {rowValidation.length > 1 ? ` (+${rowValidation.length - 1} more)` : ''}
+                                </div>
                               )}
                               {isAtmRow && (
                                 <div className="text-xs text-sky-700 mt-0.5">ATM → cash transfer (no budget)</div>
@@ -2184,12 +2259,24 @@ const StatementUpload: React.FC<StatementUploadProps> = ({ setActivePage, trigge
               <button
                 type="button"
                 onClick={handleApproveTransactions}
-                disabled={selectedTransactions.size === 0 || processingProgress > 0 || isImporting}
+                disabled={
+                  selectedTransactions.size === 0 ||
+                  processingProgress > 0 ||
+                  isImporting ||
+                  (selectedImportPlan != null && selectedImportPlan.importableCount === 0)
+                }
                 className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                title={
+                  selectedImportPlan && selectedImportPlan.skippedValidation > 0
+                    ? `${selectedImportPlan.skippedValidation} selected row(s) need fixes (e.g. Received from) before import`
+                    : undefined
+                }
               >
                 {processingProgress > 0 || isImporting
                   ? `Importing... ${Math.round(processingProgress)}%`
-                  : `Import ${selectedImportPlan?.importableCount ?? selectedTransactions.size} Transaction(s)`
+                  : selectedImportPlan && selectedImportPlan.importableCount === 0 && selectedTransactions.size > 0
+                    ? 'Fix highlighted rows to import'
+                    : `Import ${selectedImportPlan?.importableCount ?? selectedTransactions.size} Transaction(s)`
                 }
               </button>
             </div>
