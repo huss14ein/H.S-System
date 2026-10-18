@@ -105,7 +105,10 @@ export interface WealthSummaryReportModel {
 }
 
 function budgetToMonthly(b: { limit: number; period?: string }): number {
-  return monthlyEquivalentStoredLimit(b);
+  return monthlyEquivalentStoredLimit({
+    limit: b.limit,
+    period: b.period as 'daily' | 'weekly' | 'monthly' | 'yearly' | undefined,
+  });
 }
 
 /**

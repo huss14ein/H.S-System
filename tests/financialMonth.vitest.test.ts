@@ -134,10 +134,11 @@ describe('budgetRowViewMatchScore yearly visibility', () => {
       'Monthly',
     );
     expect(score).toBeGreaterThanOrEqual(0);
-    expect(score).toBe(150);
+    // Above exact monthly (200) so dual monthly+yearly prefers yearly for annual-aware dials.
+    expect(score).toBe(210);
   });
 
-  it('prefers current-month monthly over yearly in Monthly view', () => {
+  it('prefers yearly over current-month monthly in Monthly view (annual-aware dial)', () => {
     const monthly = budgetRowViewMatchScore(
       { year: 2026, month: 8, period: 'monthly' },
       august,
@@ -150,7 +151,7 @@ describe('budgetRowViewMatchScore yearly visibility', () => {
       monthStartDay,
       'Monthly',
     );
-    expect(monthly).toBeGreaterThan(yearly);
+    expect(yearly).toBeGreaterThan(monthly);
   });
 
   it('prefers yearly over monthly when viewing Yearly', () => {

@@ -165,9 +165,13 @@ async function calculateBudgetSummary(supabase: any, userId: string, periodEnd: 
     .eq('user_id', userId)
     .eq('year', key.year);
 
+  const isYearlyPeriod = (period: unknown) => {
+    const p = String(period ?? '').trim().toLowerCase();
+    return p === 'yearly' || p === 'annual' || p === 'annually';
+  };
   const budgets = (budgetsRaw || []).filter(
     (b: any) =>
-      b.period === 'yearly' || Number(b.month) === key.month,
+      isYearlyPeriod(b.period) || Number(b.month) === key.month,
   );
 
   // Month + YTD transactions (YTD needed for yearly-plan overspend gate)
@@ -219,10 +223,10 @@ async function calculateBudgetSummary(supabase: any, userId: string, periodEnd: 
   const overCategories: string[] = [];
   let lumpyYearlyExcess = 0;
   (budgets || []).forEach((b: any) => {
-    const period = String(b.period ?? 'monthly').toLowerCase();
+    const period = String(b.period ?? 'monthly').trim().toLowerCase();
     const spent = categorySpending.get(b.category) || 0;
     // Any yearly-period category (not rent-only): overspend only when YTD > annual limit.
-    if (period === 'yearly') {
+    if (isYearlyPeriod(period)) {
       const annualLimit = Number(b.limit) || 0;
       const ytd = ytdCategorySpending.get(b.category) || 0;
       // Only flag overspend when YTD exceeds the yearly plan (not a lumpy single month).
