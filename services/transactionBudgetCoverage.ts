@@ -242,11 +242,14 @@ export function getTransactionBudgetSubmitBlockReason(
 
 /**
  * Optional confirm-dialog warning when an expense exceeds remaining budget headroom.
+ * Pass `suppressOverWarn` when the annual plan envelope still has headroom (lumpy months).
  */
 export function buildTransactionBudgetConfirmWarning(
   state: Pick<TransactionBudgetCoverageState, 'isWithinBudget' | 'tone' | 'summary' | 'shortfalls'>,
   formatSar: (amount: number) => string = (n) => String(Math.round(n)),
+  opts?: { suppressOverWarn?: boolean },
 ): string | null {
+  if (opts?.suppressOverWarn) return null;
   if (state.isWithinBudget || state.tone === 'neutral') return null;
   if (state.shortfalls.length > 0) {
     const lines = state.shortfalls.map(

@@ -47,6 +47,10 @@ import {
     evaluateTransactionBudgetCoverageState,
     getTransactionBudgetSubmitBlockReason,
 } from '../services/transactionBudgetCoverage';
+import {
+    resolveBudgetCategoryHeadroom,
+    ytdRangeForFinancialMonth,
+} from '../services/budgetOverspendGate';
 import { useCurrency } from '../context/CurrencyContext';
 import { toSAR, fromSAR } from '../utils/currencyMath';
 import { usePageDeferredData } from '../context/PageDeferredDataContext';
@@ -371,34 +375,56 @@ const TransactionModal: React.FC<{
         return financialMonthRangeFromKey(key, monthStartDay);
     }, [date, monthStartDay]);
 
+    const transactionFinKey = useMemo(() => {
+        const parsedDate = parseCalendarDateLocal(date || new Date().toISOString().slice(0, 10));
+        return financialMonthKey(parsedDate, monthStartDay);
+    }, [date, monthStartDay]);
+
     const remainingByCategory = useMemo(() => {
         const map = new Map<string, number>();
-        currentBudgetRows.forEach((b) => map.set(b.category, Number(b.limit) || 0));
-        const { start, end } = transactionFinancialMonthBounds;
-        existingTransactions
-            .filter(
-                (t) => {
-                    return (
-                        dateInRange(t.date, start, end) &&
-                        countsAsExpenseForCashflowKpi(t) &&
-                        (t.status ?? 'Approved') === 'Approved' &&
-                        t.id !== transactionToEdit?.id
-                    );
-                },
-            )
-            .forEach((t) => {
-                const acc = accounts.find((a) => a.id === t.accountId);
-                const txCur = acc?.currency === 'USD' ? 'USD' : 'SAR';
-                const allocations = getTransactionBudgetAllocations(t);
-                allocations.forEach((allocation) => {
-                    const usedInSar = toSAR(Math.abs(Number(allocation.amount) || 0), txCur, sarPerUsd);
-                    const current = map.get(allocation.category);
-                    if (current == null) return;
-                    map.set(allocation.category, current - usedInSar);
-                });
+        const { start: monthStart, end: monthEnd } = transactionFinancialMonthBounds;
+        const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(transactionFinKey, monthStartDay);
+
+        const monthSpent = new Map<string, number>();
+        const ytdSpent = new Map<string, number>();
+        const accumulate = (t: Transaction, into: Map<string, number>) => {
+            if (!countsAsExpenseForCashflowKpi(t) || (t.status ?? 'Approved') !== 'Approved') return;
+            if (t.id === transactionToEdit?.id) return;
+            const acc = accounts.find((a) => a.id === t.accountId);
+            const txCur = acc?.currency === 'USD' ? 'USD' : 'SAR';
+            getTransactionBudgetAllocations(t).forEach((allocation) => {
+                const usedInSar = toSAR(Math.abs(Number(allocation.amount) || 0), txCur, sarPerUsd);
+                into.set(allocation.category, (into.get(allocation.category) ?? 0) + usedInSar);
             });
+        };
+        existingTransactions.forEach((t) => {
+            if (dateInRange(t.date, monthStart, monthEnd)) accumulate(t, monthSpent);
+            if (dateInRange(t.date, ytdStart, ytdEnd)) accumulate(t, ytdSpent);
+        });
+
+        currentBudgetRows.forEach((b) => {
+            const headroom = resolveBudgetCategoryHeadroom({
+                category: b.category,
+                finKey: transactionFinKey,
+                monthStartDay,
+                budgets,
+                monthSpentSar: monthSpent.get(b.category) ?? 0,
+                ytdSpentSar: ytdSpent.get(b.category) ?? 0,
+            });
+            map.set(b.category, headroom.remainingSar);
+        });
         return map;
-    }, [accounts, currentBudgetRows, existingTransactions, sarPerUsd, transactionToEdit?.id, transactionFinancialMonthBounds]);
+    }, [
+        accounts,
+        budgets,
+        currentBudgetRows,
+        existingTransactions,
+        sarPerUsd,
+        transactionToEdit?.id,
+        transactionFinancialMonthBounds,
+        transactionFinKey,
+        monthStartDay,
+    ]);
 
     const inputAmountSar = useMemo(() => {
         const abs = Math.abs(Number(debouncedAmount) || 0);
@@ -506,6 +532,63 @@ const TransactionModal: React.FC<{
             }),
         [type, amount, budgetCategory, splitCoverage, useSplitExpense, budgetCoverageSummary, inputAmountSar],
     );
+
+    /** Suppress over-budget confirm when annual plan envelope still has headroom (lumpy months). */
+    const suppressBudgetOverWarn = useMemo(() => {
+        if (type !== 'expense') return false;
+        const cats = useSplitExpense
+            ? splitCoverage.map((l) => l.category).filter(Boolean)
+            : [String(budgetCategory || '').trim()].filter(Boolean);
+        if (cats.length === 0) return false;
+        const { start: monthStart, end: monthEnd } = transactionFinancialMonthBounds;
+        const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(transactionFinKey, monthStartDay);
+        const monthSpent = new Map<string, number>();
+        const ytdSpent = new Map<string, number>();
+        existingTransactions.forEach((t) => {
+            if (!countsAsExpenseForCashflowKpi(t) || (t.status ?? 'Approved') !== 'Approved') return;
+            if (t.id === transactionToEdit?.id) return;
+            const acc = accounts.find((a) => a.id === t.accountId);
+            const txCur = acc?.currency === 'USD' ? 'USD' : 'SAR';
+            getTransactionBudgetAllocations(t).forEach((allocation) => {
+                const used = toSAR(Math.abs(Number(allocation.amount) || 0), txCur, sarPerUsd);
+                if (dateInRange(t.date, monthStart, monthEnd)) {
+                    monthSpent.set(allocation.category, (monthSpent.get(allocation.category) ?? 0) + used);
+                }
+                if (dateInRange(t.date, ytdStart, ytdEnd)) {
+                    ytdSpent.set(allocation.category, (ytdSpent.get(allocation.category) ?? 0) + used);
+                }
+            });
+        });
+        return cats.every((cat) => {
+            const lineAmt = useSplitExpense
+                ? splitCoverage.find((l) => l.category === cat)?.amountSar ?? 0
+                : inputAmountSar;
+            const h = resolveBudgetCategoryHeadroom({
+                category: cat,
+                finKey: transactionFinKey,
+                monthStartDay,
+                budgets,
+                monthSpentSar: monthSpent.get(cat) ?? 0,
+                ytdSpentSar: ytdSpent.get(cat) ?? 0,
+                upcomingSar: lineAmt,
+            });
+            return h.hasAnnualEnvelope && h.annualUtilizationPct <= 100.0001;
+        });
+    }, [
+        type,
+        useSplitExpense,
+        splitCoverage,
+        budgetCategory,
+        transactionFinancialMonthBounds,
+        transactionFinKey,
+        monthStartDay,
+        existingTransactions,
+        transactionToEdit?.id,
+        accounts,
+        sarPerUsd,
+        budgets,
+        inputAmountSar,
+    ]);
     const splitCoverageError = useMemo(() => {
         if (!useSplitExpense) return '';
         const missing = splitRows.some((row) => String(row.category || '').trim() === '');
@@ -614,7 +697,9 @@ const TransactionModal: React.FC<{
             window.alert(budgetBlockReason);
             return;
         }
-        const budgetConfirmWarning = buildTransactionBudgetConfirmWarning(budgetCoverageState, formatBudgetSar);
+        const budgetConfirmWarning = buildTransactionBudgetConfirmWarning(budgetCoverageState, formatBudgetSar, {
+            suppressOverWarn: suppressBudgetOverWarn,
+        });
 
         const acc = accounts.find((a) => a.id === accountId);
         const confirmOk = await confirmAction({

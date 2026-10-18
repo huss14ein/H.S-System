@@ -7,6 +7,11 @@ import type { Account, Budget, BudgetTier, FinancialData, Transaction } from '..
 import { aggregatePersonalBudgetCategorySpendSar, expenseAmountSarForBudget } from './budgetSpendMath';
 import { monthlyEquivalentStoredLimit } from './budgetEnvelopeMath';
 import { utilizationLabelFromPercentage } from './budgetCardMetrics';
+import {
+  resolveBudgetCategoryHeadroom,
+  statusFromAnnualAwareUtilization,
+  ytdRangeForFinancialMonth,
+} from './budgetOverspendGate';
 import { getTransactionBudgetAllocations } from './transactionBudgetAllocations';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { detectBudgetDrift, type BudgetDriftRow } from './budgetDrift';
@@ -226,6 +231,15 @@ export function computeExpenseBudgetAnalysisModel(
     data,
     exchangeRate,
   );
+  const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(finKey, msd);
+  const ytdSpend = aggregatePersonalBudgetCategorySpendSar(
+    transactions,
+    ytdStart,
+    ytdEnd,
+    accountCurrencyById,
+    data,
+    exchangeRate,
+  );
 
   const budgets = data.budgets ?? [];
   const currentLimits = new Map<string, { limitSar: number; tier?: BudgetTier }>();
@@ -247,17 +261,32 @@ export function computeExpenseBudgetAnalysisModel(
     const spentSar = currentSpend.get(category) ?? 0;
     const priorMonthSpentSar = priorSpend.get(category) ?? 0;
     const lim = currentLimits.get(category);
-    const limitSar = lim?.limitSar ?? 0;
+    const monthLimitSar = lim?.limitSar ?? 0;
     const tier = lim?.tier;
-    const utilizationPct = limitSar > 0 ? (spentSar / limitSar) * 100 : spentSar > 0 ? 100 : 0;
-    const remainingSar = limitSar > 0 ? limitSar - spentSar : 0;
+    const headroom = resolveBudgetCategoryHeadroom({
+      category,
+      finKey,
+      monthStartDay: msd,
+      budgets,
+      monthSpentSar: spentSar,
+      ytdSpentSar: ytdSpend.get(category) ?? 0,
+    });
+    // Display period spend/limit for charts; status uses annual-aware gate so lumpy months
+    // (e.g. rent twice/year) are not Critical while YTD is within the yearly plan.
+    const limitSar = headroom.mode === 'annual' ? headroom.limitSar : monthLimitSar;
+    const displaySpent = headroom.mode === 'annual' ? headroom.spentSar : spentSar;
+    const utilizationPct = limitSar > 0 ? (displaySpent / limitSar) * 100 : displaySpent > 0 ? 100 : 0;
+    const remainingSar = limitSar > 0 ? limitSar - displaySpent : 0;
+    const status = headroom.hasAnnualEnvelope
+      ? statusFromAnnualAwareUtilization(headroom.annualUtilizationPct, headroom.annualLimitSar > 0)
+      : statusFromUtilization(utilizationPct, limitSar > 0);
     categories.push({
       category,
-      spentSar,
+      spentSar: displaySpent,
       limitSar,
       remainingSar,
       utilizationPct,
-      status: statusFromUtilization(utilizationPct, limitSar > 0),
+      status,
       tier,
       transactionCount: 0,
       priorMonthSpentSar,

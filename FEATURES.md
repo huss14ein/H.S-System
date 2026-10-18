@@ -2,6 +2,8 @@
 
 This document reflects features and functionalities implemented in the codebase. It serves as the single source of truth for what the platform delivers.
 
+**5.0.0.0 rollout:** Footer/Settings version **5.0.0.0**. Annual-aware budget overspend gate (lumpy yearly categories like rent paid twice/year stay within plan without false Critical warnings); Fibonacci TA hub on Watchlist/Investments; SMS حوالة واردة import validation + toast dedupe; alerts P100 semantics fixed.
+
 **4.0.0.0 rollout:** Footer/Settings version **4.0.0.0**. SMS import treats ATM withdrawals and credit-card settlements (سداد / card payment) as internal transfers across Al Rajhi, Alinma, SNB, SABB and English KSA templates — no budget prompts; Cash / Paid-from counterparties required.
 
 **3.2.2.0 rollout:** Footer/Settings version **3.2.2.0**. Balance-vs-ledger Keep stored / Reconcile dismissals stay sticky (`account_id`-safe nets, observed post-apply ack, hydrate merge of `ui_acks`); personal transaction slice keeps snake_case rows; hybrid net capital falls back to scoped capital when the platform pass sums to zero.
