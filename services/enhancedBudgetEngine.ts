@@ -462,7 +462,14 @@ export function calculateBudgetHealthMetrics(
  * Generate smart budget recommendations
  */
 export function generateSmartBudgetRecommendations(
-  currentBudgets: Array<{ category: string; limit: number; spent: number }>,
+  currentBudgets: Array<{
+    category: string;
+    limit: number;
+    spent: number;
+    period?: string;
+    annualLimit?: number;
+    ytdSpent?: number;
+  }>,
   baselines: DynamicBaseline[],
   patterns: SpendingPattern[],
   _income: number
@@ -474,14 +481,22 @@ export function generateSmartBudgetRecommendations(
     const pattern = patterns.find(p => p.category === budget.category);
     
     if (!baseline || !pattern) return;
+
+    // Yearly plan: evaluate YTD vs annual — skip false overspend increases while within plan.
+    const isYearly = budget.period === 'yearly';
+    const annualLimit = Number(budget.annualLimit ?? (isYearly ? budget.limit : 0)) || 0;
+    const ytdSpent = Number(budget.ytdSpent ?? 0) || 0;
+    if (isYearly && annualLimit > 0 && ytdSpent <= annualLimit + 0.0001) {
+      return;
+    }
     
-    const limit = budget.limit ?? 0;
-    const spent = budget.spent ?? 0;
+    const limit = isYearly && annualLimit > 0 ? annualLimit : (budget.limit ?? 0);
+    const spent = isYearly && annualLimit > 0 ? ytdSpent : (budget.spent ?? 0);
     const utilization = limit > 0 ? spent / limit : 0;
     
     // Case 1: Consistently under-spending
     if (utilization < 0.7 && baseline.trendDirection !== 'increasing') {
-      const recommended = Math.round(budget.limit * 0.85);
+      const recommended = Math.round(limit * 0.85);
       recommendations.push({
         type: 'decrease',
         category: budget.category,
@@ -501,7 +516,9 @@ export function generateSmartBudgetRecommendations(
         category: budget.category,
         currentBudget: limit,
         recommendedBudget: recommended,
-        rationale: `Spending consistently exceeds budget with upward trend. Align budget with actual spending pattern.`,
+        rationale: isYearly
+          ? `YTD exceeds yearly plan with upward trend. Align annual limit with actual spending pattern.`
+          : `Spending consistently exceeds budget with upward trend. Align budget with actual spending pattern.`,
         expectedImpact: -(recommended - limit),
         confidence: 75
       });

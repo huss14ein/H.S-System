@@ -68,6 +68,12 @@ This document reflects features and functionalities implemented in the codebase.
 - Shared budgets, budget requests (New Category / Increase Limit), approval flow, governance categories
 - Shared budget transactions: current month default, month/status/category filters
 
+### Annual-aware overspend gate (`services/budgetOverspendGate.ts`)
+- **Problem:** Yearly-period envelopes (e.g. Housing Rent paid twice/year) look “Critical” if you compare a lumpy month to `limit ÷ 12`.
+- **Rule:** When a yearly-period row exists, Critical / unusual / drift / KPI / digest / LiveAdvisor / Plan grid / outliers use **YTD vs yearly plan** — no false alarm while YTD ≤ annual cap.
+- **Wired:** Notifications, Transactions confirm, Analysis model, Budget burn-rate, Dashboard KPI (`computeDashboardKpiSnapshot`), wealth summary, weekly digest, AI automation, Plan (`yearlyEnvelope`), Budgets Weekly/Daily dials + admin remaining, import/budget AI grounding.
+- **Not this gate:** Cross-engine cashflow-buffer / min-balance alerts stay **liquidity** signals (intentionally not envelope math).
+
 ### Emergency Fund & Sinking Funds
 - **Location:** `hooks/useEmergencyFund.ts`, `pages/SinkingFunds.tsx`, `pages/Accounts.tsx`, `pages/Goals.tsx`
 - Emergency fund calculation and display

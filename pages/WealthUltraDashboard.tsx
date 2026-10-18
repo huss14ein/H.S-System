@@ -708,30 +708,21 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                           <p className="text-xs font-bold text-slate-700">→ {toSafeText(a.actionHint, '')}</p>
                         </div>
                       )}
-                      {(triggerPageAction || setActivePage) && (
+                      {setActivePage && (a.links?.length ?? 0) > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (triggerPageAction) {
-                                triggerPageAction('Investments', 'focus-investment-plan');
-                                return;
-                              }
-                              setActivePage?.('Investment Plan');
-                            }}
-                            className="text-xs font-semibold text-primary hover:underline"
-                          >
-                            Investment Plan →
-                          </button>
-                          {setActivePage && (
+                          {(a.links ?? []).map((lnk) => (
                             <button
+                              key={`${lnk.label}-${lnk.page}-${i}`}
                               type="button"
-                              onClick={() => setActivePage('Budgets')}
+                              onClick={() => {
+                                if (lnk.action && triggerPageAction) triggerPageAction(lnk.page, lnk.action);
+                                else setActivePage(lnk.page);
+                              }}
                               className="text-xs font-semibold text-primary hover:underline"
                             >
-                              Budgets →
+                              {lnk.label} →
                             </button>
-                          )}
+                          ))}
                         </div>
                       )}
                     </li>

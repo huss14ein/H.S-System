@@ -1239,6 +1239,8 @@ export interface WealthUltraAlert {
   tickers?: string[];
   sleeve?: WealthUltraSleeve;
   value?: number;
+  /** Optional in-app navigation (Wealth Ultra alert cards). */
+  links?: Array<{ label: string; page: Page; action?: string }>;
 }
 
 // --- Recovery Plan (Averaging / Correction Engine) ---

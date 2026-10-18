@@ -97,5 +97,20 @@ describe('alertsImportFibCompletion', () => {
     expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '5.0.0.0'");
     expect(read('package.json')).toContain('"version": "5.0.0.0"');
     expect(read('FEATURES.md')).toContain('5.0.0.0');
+    expect(read('FEATURES.md')).toContain('Annual-aware overspend gate');
+    expect(read('FEATURES.md')).toContain('budgetOverspendGate');
+  });
+
+  it('Wealth Ultra native alerts expose type-specific nav links', () => {
+    expect(read('wealth-ultra/alertEngine.ts')).toContain('defaultLinksForWealthUltraAlert');
+    expect(read('pages/WealthUltraDashboard.tsx')).toContain('a.links');
+    expect(read('types.ts')).toContain('links?: Array<{ label: string; page: Page');
+  });
+
+  it('budget AI analysis uses annual-aware headroom when data is present', () => {
+    const gemini = read('services/geminiService.ts');
+    expect(gemini).toContain('resolveBudgetCategoryHeadroom');
+    expect(gemini).toContain('ytdRangeForFinancialMonth');
+    expect(gemini).toContain('within yearly plan (lumpy month OK)');
   });
 });

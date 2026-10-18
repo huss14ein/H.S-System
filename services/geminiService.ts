@@ -5,6 +5,16 @@ import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupK
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD, resolveSarPerUsd } from '../utils/currencyMath';
+import {
+  financialMonthRange,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
+import {
+  resolveBudgetCategoryHeadroom,
+  ytdRangeForFinancialMonth,
+} from './budgetOverspendGate';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
 import { getSahmkLivePrices } from './sahmkQuote';
@@ -1495,25 +1505,81 @@ export const getAITransactionAnalysis = async (
         withAdviceAndActionCards(buildDeterministicStatementImportInsight(transactions, budgets), seedCards);
 
     try {
-        const spending = new Map<string, number>();
-        transactions.filter((t) => countsAsExpenseForCashflowKpi(t)).forEach((t) => {
-            const bucket = String(t.budgetCategory || t.category || '').trim();
-            if (!bucket) return;
-            spending.set(bucket, (spending.get(bucket) || 0) + Math.abs(Number(t.amount) || 0));
-        });
+        // Build month + YTD spend from full personal ledger when available so Budgets AI
+        // does not compare multi-year lifetime spend to a single yearly plan limit.
+        let monthSpentByCat = new Map<string, number>();
+        let ytdSpentByCat = new Map<string, number>();
+        let finKeyForHeadroom: { year: number; month: number } | null = null;
+        let monthStartDay: unknown = 1;
+        if (data) {
+            monthStartDay = resolveMonthStartDayFromData(data);
+            const range = financialMonthRange(new Date(), monthStartDay);
+            finKeyForHeadroom = range.key;
+            const accounts = getPersonalAccounts(data);
+            const accountCurrencyById = new Map(
+                accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+            );
+            const ledgerTx = getPersonalTransactions(data);
+            const fx = resolveSarPerUsd(data, undefined);
+            monthSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+                ledgerTx,
+                range.start,
+                range.end,
+                accountCurrencyById,
+                data,
+                fx,
+            );
+            const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(range.key, monthStartDay);
+            ytdSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+                ledgerTx,
+                ytdStart,
+                ytdEnd,
+                accountCurrencyById,
+                data,
+                fx,
+            );
+        } else {
+            transactions.filter((t) => countsAsExpenseForCashflowKpi(t)).forEach((t) => {
+                const bucket = String(t.budgetCategory || t.category || '').trim();
+                if (!bucket) return;
+                const amt = Math.abs(Number(t.amount) || 0);
+                monthSpentByCat.set(bucket, (monthSpentByCat.get(bucket) || 0) + amt);
+                ytdSpentByCat.set(bucket, (ytdSpentByCat.get(bucket) || 0) + amt);
+            });
+        }
 
         const budgetPerformance = budgets
             .map((b) => {
-                const spent = spending.get(b.category) || 0;
                 const isYearly = b.period === 'yearly';
+                if (data && finKeyForHeadroom) {
+                    const headroom = resolveBudgetCategoryHeadroom({
+                        category: b.category,
+                        finKey: finKeyForHeadroom,
+                        monthStartDay,
+                        budgets,
+                        monthSpentSar: monthSpentByCat.get(b.category) ?? 0,
+                        ytdSpentSar: ytdSpentByCat.get(b.category) ?? 0,
+                    });
+                    const limit = headroom.hasAnnualEnvelope ? headroom.annualLimitSar : headroom.limitSar;
+                    const spent = headroom.hasAnnualEnvelope ? headroom.spentSar : headroom.monthSpentSar;
+                    const pct = headroom.hasAnnualEnvelope
+                        ? headroom.annualUtilizationPct
+                        : headroom.utilizationPct;
+                    const unit = headroom.hasAnnualEnvelope ? 'yearly plan' : 'monthly limit';
+                    const note = headroom.lumpyMonthWithinAnnual
+                        ? ' — within yearly plan (lumpy month OK)'
+                        : headroom.hasAnnualEnvelope && pct <= 100.0001
+                          ? ' — within yearly plan'
+                          : '';
+                    return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${limit.toLocaleString()} SAR (${pct.toFixed(0)}% of ${unit})${note}`;
+                }
+                const spent = monthSpentByCat.get(b.category) || 0;
                 const limit = Number(b.limit) || 0;
-                // Yearly plans: compare import-batch spend to annual cap (not ÷12), and note lumpy months.
+                // Import-batch path: yearly = annual cap (not ÷12).
                 const percentage = limit > 0 ? (spent / limit) * 100 : 0;
                 const withinAnnual = isYearly && limit > 0 && spent <= limit;
                 const unit = isYearly ? 'yearly plan' : 'limit';
-                const note = withinAnnual
-                    ? ' — within yearly plan (lumpy month OK)'
-                    : '';
+                const note = withinAnnual ? ' — within yearly plan (lumpy month OK)' : '';
                 return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${limit.toLocaleString()} SAR (${percentage.toFixed(0)}% of ${unit})${note}`;
             })
             .join('\n');

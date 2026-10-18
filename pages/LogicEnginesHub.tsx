@@ -279,7 +279,7 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
     const yearly = scoped.budgets.filter((b) => b.period === 'yearly' && b.year === y);
     if (yearly.length > 0) {
       const total = yearly.reduce((s, b) => s + (Number(b.limit) || 0), 0);
-      return { amount: total / 12, label: 'From yearly budgets (÷12)' as const };
+      return { amount: total / 12, label: 'Monthly provision from yearly plans (÷12 pacing — overspend uses YTD vs annual)' as const };
     }
     return {
       amount: annualExpenseMonthlyProvision({ annualAmount: 12_000, dueMonth: 12 }),
