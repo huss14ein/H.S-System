@@ -5,6 +5,7 @@
 
 import { Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import { isYearlyPeriodBudget } from './budgetPeriod';
 
 // Types for enhanced budget engine
 export interface DynamicBaseline {
@@ -382,7 +383,7 @@ export function calculateBudgetHealthMetrics(
     annualLimit?: number;
     ytdSpent?: number;
   }) => {
-    if (b.period === 'yearly') {
+    if (isYearlyPeriodBudget(b)) {
       const annual = Number(b.annualLimit ?? b.limit) || 0;
       const ytd = Number(b.ytdSpent ?? b.spent) || 0;
       return { spent: ytd, limit: annual };
@@ -483,7 +484,7 @@ export function generateSmartBudgetRecommendations(
     if (!baseline || !pattern) return;
 
     // Yearly plan: evaluate YTD vs annual — skip false overspend increases while within plan.
-    const isYearly = budget.period === 'yearly';
+    const isYearly = isYearlyPeriodBudget(budget);
     const annualLimit = Number(budget.annualLimit ?? (isYearly ? budget.limit : 0)) || 0;
     const ytdSpent = Number(budget.ytdSpent ?? 0) || 0;
     if (isYearly && annualLimit > 0 && ytdSpent <= annualLimit + 0.0001) {

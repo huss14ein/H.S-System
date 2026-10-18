@@ -178,9 +178,13 @@ describe('yearly budget gate — all categories', () => {
 
   it('gate implementation does not hardcode Housing Rent as the only yearly category', () => {
     const gate = read('services/budgetOverspendGate.ts');
+    const period = read('utils/budgetPeriod.ts');
     expect(gate).toContain('isYearlyPeriodBudget');
-    expect(gate).toContain("=== 'yearly'");
+    expect(period).toContain("=== 'yearly'");
     expect(gate).toContain('every');
+    // Soft lumpy UX wired on cards + Transactions.
+    expect(read('components/BudgetCardMetricsBlocks.tsx')).toContain('lumpyMonthWithinAnnual');
+    expect(read('pages/Transactions.tsx')).toContain('lumpyMonthWithinAnnualHint');
     // Category matching uses the passed category string, not a rent constant.
     expect(gate).not.toMatch(/category\s*===\s*['\"]Housing Rent['\"]/);
     expect(gate).not.toMatch(/includes\(['\"]Housing Rent['\"]\)/);

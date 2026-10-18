@@ -75,11 +75,18 @@ describe('alertsImportFibCompletion', () => {
   it('yearly plan gate covers digest, KPI, LiveAdvisor, automation, and drift', () => {
     expect(read('services/budgetOverspendGate.ts')).toContain('lumpyYearlyMonthExcessWithinPlanSar');
     expect(read('services/budgetOverspendGate.ts')).toContain('isYearlyPeriodBudget');
+    expect(read('utils/budgetPeriod.ts')).toContain('normalizeBudgetPeriod');
+    expect(read('utils/budgetPeriod.ts')).toContain('buildNormalizedSpendLookup');
+    expect(read('services/budgetPeriod.ts')).toContain("from '../utils/budgetPeriod'");
     expect(read('services/dashboardKpiSnapshot.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
+    expect(read('services/dashboardKpiSnapshot.ts')).toContain('isYearlyPeriodBudget');
     expect(read('services/wealthSummaryReportModel.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
     expect(read('services/budgetDrift.ts')).toContain('hasAnnualEnvelope');
     expect(read('services/aiBudgetAutomation.ts')).toContain('yearly plan');
     expect(read('components/LiveAdvisorModal.tsx')).toContain('yearly_plan');
+    expect(read('components/BudgetCardMetricsBlocks.tsx')).toContain('lumpyMonthWithinAnnual');
+    expect(read('pages/Transactions.tsx')).toContain('transactionBudgetSpendMaps');
+    expect(read('pages/Transactions.tsx')).toContain('lumpyMonthWithinAnnualHint');
     expect(read('supabase/functions/send-weekly-digest/index.ts')).toContain('lumpyYearlyExcess');
     expect(read('services/annualPlanFromData.ts')).toContain('yearlyEnvelope');
     expect(read('pages/Plan.tsx')).toContain('yearlyEnvelope');

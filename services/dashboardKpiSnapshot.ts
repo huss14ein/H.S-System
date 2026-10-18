@@ -25,6 +25,7 @@ import {
 import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
 import {
   adjustMonthExpensesForYearlyPlanHeadroom,
+  isYearlyPeriodBudget,
   ytdRangeForFinancialMonth,
 } from './budgetOverspendGate';
 
@@ -157,15 +158,18 @@ export function computeDashboardKpiSnapshot(
       monthStartDay,
     );
     // Include yearly-period rows for the plan year even when stored as month=1 only.
+    // Do not double-count when a monthly row for the same category already won the view.
     const year = currentRange.key.year;
     const yearlyPlanRows = (data.budgets ?? []).filter(
-      (b) => b.period === 'yearly' && Number(b.year) === year,
+      (b) => isYearlyPeriodBudget(b) && Number(b.year) === year,
     );
     const budgetsForVariance = [...currentMonthBudgets];
     for (const yb of yearlyPlanRows) {
-      if (!budgetsForVariance.some((b) => b.category === yb.category && b.period === 'yearly')) {
-        budgetsForVariance.push(yb);
+      const cat = String(yb.category || '').trim().toLowerCase();
+      if (budgetsForVariance.some((b) => String(b.category || '').trim().toLowerCase() === cat)) {
+        continue;
       }
+      budgetsForVariance.push(yb);
     }
     const totalBudget = budgetsForVariance.reduce((sum, b) => sum + budgetToMonthly(b), 0);
     const accountCurrencyById = new Map(

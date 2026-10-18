@@ -800,6 +800,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
         annualPercentage?: number;
         annualUtilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
         showDualEnvelope?: boolean;
+        lumpyMonthWithinAnnual?: boolean;
         periodWindowLabel?: string;
         periodSpendCap?: number;
         /** Limit − spend in next financial month (same category). */
@@ -1565,6 +1566,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     annualPercentage: visual.annualPercentage,
                     annualUtilizationLabel: visual.annualUtilizationLabel,
                     showDualEnvelope: visual.showDualEnvelope,
+                    lumpyMonthWithinAnnual: visual.lumpyMonthWithinAnnual,
                     colorClass: visual.colorClass,
                     previousPeriodSpent: trend.previousPeriodSpent,
                     trendDelta: trend.trendDelta,
@@ -1711,6 +1713,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                 annualPercentage: visual.annualPercentage,
                 annualUtilizationLabel: visual.annualUtilizationLabel,
                 showDualEnvelope: visual.showDualEnvelope,
+                lumpyMonthWithinAnnual: visual.lumpyMonthWithinAnnual,
                 colorClass: visual.colorClass,
                 previousPeriodSpent: trend.previousPeriodSpent,
                 trendDelta: trend.trendDelta,
@@ -2099,6 +2102,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     annualPercentage: visual.annualPercentage,
                     annualUtilizationLabel: visual.annualUtilizationLabel,
                     showDualEnvelope: visual.showDualEnvelope,
+                    lumpyMonthWithinAnnual: visual.lumpyMonthWithinAnnual,
                     colorClass: visual.colorClass,
                     displayLimit: b.limit,
                     monthlyLimit: visual.monthlyLimit,

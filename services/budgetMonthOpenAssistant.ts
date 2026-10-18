@@ -7,6 +7,7 @@ import {
   type FinancialMonthKey,
 } from '../utils/financialMonth';
 import { getPersonalTransactions } from '../utils/wealthScope';
+import { isYearlyPeriodBudget } from './budgetPeriod';
 
 export type BudgetMonthOpenHint = {
   id: string;
@@ -16,12 +17,14 @@ export type BudgetMonthOpenHint = {
 
 const OPEN_WINDOW_DAYS = 7;
 
+type MonthOpenBudgetRow = { category: string; year: number; month: number; period?: string | null };
+
 /** Actionable hints during the first week of a financial month (Budgets page). */
 export function buildBudgetMonthOpenHints(args: {
   data: FinancialData;
   currentViewKey: FinancialMonthKey;
   budgetDrift: BudgetDriftRow[];
-  budgets: Array<{ category: string; year: number; month: number }>;
+  budgets: MonthOpenBudgetRow[];
   ref?: Date;
 }): BudgetMonthOpenHint[] {
   const ref = args.ref ?? new Date();
@@ -35,9 +38,13 @@ export function buildBudgetMonthOpenHints(args: {
   if (dayIndex < 0 || dayIndex > OPEN_WINDOW_DAYS) return [];
 
   const hints: BudgetMonthOpenHint[] = [];
-  const hasRowsThisMonth = args.budgets.some(
-    (b) => Number(b.year) === args.currentViewKey.year && Number(b.month) === args.currentViewKey.month,
-  );
+  const coversViewMonth = (b: MonthOpenBudgetRow) => {
+    if (Number(b.year) !== args.currentViewKey.year) return false;
+    // Yearly-period plans cover every month of the plan year.
+    if (isYearlyPeriodBudget(b)) return true;
+    return Number(b.month) === args.currentViewKey.month;
+  };
+  const hasRowsThisMonth = args.budgets.some((b) => coversViewMonth(b));
   if (!hasRowsThisMonth && dayIndex <= 3) {
     hints.push({
       id: 'copy-last-month',
@@ -56,9 +63,7 @@ export function buildBudgetMonthOpenHints(args: {
     if (cat) spentCats.add(cat);
   }
   const budgetedCats = new Set(
-    args.budgets
-      .filter((b) => Number(b.year) === args.currentViewKey.year && Number(b.month) === args.currentViewKey.month)
-      .map((b) => String(b.category).trim()),
+    args.budgets.filter((b) => coversViewMonth(b)).map((b) => String(b.category).trim()),
   );
   const missingBudget = [...spentCats].filter((c) => !budgetedCats.has(c)).slice(0, 2);
   for (const cat of missingBudget) {

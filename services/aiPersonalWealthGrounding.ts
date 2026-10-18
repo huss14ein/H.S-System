@@ -36,6 +36,7 @@ import {
   ytdRangeForFinancialMonth,
 } from './budgetOverspendGate';
 import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
+import { monthlyEquivalentStoredLimit } from './budgetEnvelopeMath';
 
 export type AiGroundingBuildOptions = {
   data: FinancialData;
@@ -101,10 +102,7 @@ const fmt = (n: number) =>
   Number.isFinite(n) ? Math.round(n).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '0';
 
 function budgetMonthlyLimit(b: Budget): number {
-  if (b.period === 'yearly') return b.limit / 12;
-  if (b.period === 'weekly') return b.limit * (52 / 12);
-  if (b.period === 'daily') return b.limit * (365 / 12);
-  return b.limit;
+  return monthlyEquivalentStoredLimit(b);
 }
 
 function topHoldingsLines(

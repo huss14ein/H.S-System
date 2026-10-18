@@ -19,6 +19,23 @@ import {
   financialMonthRangeFromKey,
   type FinancialMonthKey,
 } from '../utils/financialMonth';
+import { financialPlanYearYtdWindow } from './budgetViewSpendWindows';
+import {
+  buildNormalizedSpendLookup,
+  isYearlyPeriodBudget,
+  normalizeBudgetCategoryKey,
+  spendFromCategoryMap,
+  spendFromNormalizedLookup,
+} from './budgetPeriod';
+
+export {
+  buildNormalizedSpendLookup,
+  isYearlyPeriodBudget,
+  normalizeBudgetPeriod,
+  normalizeBudgetCategoryKey,
+  spendFromCategoryMap,
+  spendFromNormalizedLookup,
+} from './budgetPeriod';
 
 export type BudgetHeadroomMode = 'monthly' | 'annual';
 
@@ -43,23 +60,24 @@ export type BudgetCategoryHeadroom = {
 
 const EPS = 0.0001;
 
-/** True when the stored budget row is a yearly-period plan (any category). */
-export function isYearlyPeriodBudget(b: { period?: string } | null | undefined): boolean {
-  return String(b?.period ?? '').trim().toLowerCase() === 'yearly';
-}
-
 export function planYearForFinancialKey(finKey: FinancialMonthKey): number {
   return Number(finKey.year) || new Date().getFullYear();
 }
 
-/** YTD range for a financial-month key (plan year Jan 1 → end of this financial month). */
+/**
+ * YTD range aligned with Budgets cards (`financialPlanYearYtdWindow`):
+ * financial-month 1 of the plan year → end of the active financial month
+ * (respects `monthStartDay`, not hard-coded calendar Jan 1).
+ */
 export function ytdRangeForFinancialMonth(
   finKey: FinancialMonthKey,
   monthStartDay: unknown,
 ): { start: Date; end: Date } {
   const year = planYearForFinancialKey(finKey);
-  const { end } = financialMonthRangeFromKey(finKey, monthStartDay);
-  return { start: new Date(year, 0, 1), end };
+  const msd = Number(monthStartDay);
+  const day = Number.isFinite(msd) && msd >= 1 && msd <= 31 ? msd : 1;
+  const { ytdStart, ytdEnd } = financialPlanYearYtdWindow(year, finKey.month, day);
+  return { start: ytdStart, end: ytdEnd };
 }
 
 /**
@@ -76,20 +94,20 @@ export function resolveBudgetCategoryHeadroom(args: {
   upcomingSar?: number;
 }): BudgetCategoryHeadroom {
   const category = String(args.category || '').trim();
+  const categoryKey = normalizeBudgetCategoryKey(category);
   const year = planYearForFinancialKey(args.finKey);
+  const catMatch = (b: { category?: string }) =>
+    normalizeBudgetCategoryKey(b.category) === categoryKey;
   const rows = budgetsForFinancialMonthView(args.budgets, args.finKey, args.monthStartDay).filter(
-    (b) => b.category === category,
+    catMatch,
   );
   // Prefer a yearly-period row for this category in the plan year (not only the current
-  // financial-month view) so any lumpy yearly category (rent, tuition, iqama, insurance, …)
-  // still uses the annual gate every month — keyed by period, never by category name.
+  // financial-month view) so any lumpy yearly category still uses the annual gate every month
+  // — keyed by period (+ case-insensitive category), never by a hard-coded category name.
   const yearlyRow =
     rows.find((b) => isYearlyPeriodBudget(b)) ??
     args.budgets.find(
-      (b) =>
-        String(b.category || '').trim() === category &&
-        Number(b.year) === year &&
-        isYearlyPeriodBudget(b),
+      (b) => catMatch(b) && Number(b.year) === year && isYearlyPeriodBudget(b),
     );
   const monthlyEq = rows.reduce((s, b) => s + monthlyEquivalentStoredLimit(b), 0);
   // Only treat as an annual *plan* envelope when a yearly-period row exists.
@@ -224,8 +242,8 @@ export function headroomFromSpendMaps(
     finKey,
     monthStartDay,
     budgets,
-    monthSpentSar: monthSpent.get(category) ?? 0,
-    ytdSpentSar: ytdSpent.get(category) ?? 0,
+    monthSpentSar: spendFromCategoryMap(monthSpent, category),
+    ytdSpentSar: spendFromCategoryMap(ytdSpent, category),
     upcomingSar,
   });
 }
@@ -252,10 +270,13 @@ export function lumpyYearlyMonthExcessWithinPlanSar(args: {
     const t = String(b.category || '').trim();
     if (t) cats.add(t);
   }
+  // One O(n) normalize pass each — avoid O(categories × mapSize) rescans.
+  const monthLookup = buildNormalizedSpendLookup(args.monthSpentByCat);
+  const ytdLookup = buildNormalizedSpendLookup(args.ytdSpentByCat);
   let excess = 0;
   for (const category of cats) {
-    const monthSpent = args.monthSpentByCat.get(category) ?? 0;
-    const ytdSpent = args.ytdSpentByCat.get(category) ?? 0;
+    const monthSpent = spendFromNormalizedLookup(monthLookup, category);
+    const ytdSpent = spendFromNormalizedLookup(ytdLookup, category);
     const headroom = resolveBudgetCategoryHeadroom({
       category,
       finKey: args.finKey,

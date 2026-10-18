@@ -49,6 +49,7 @@ import {
 } from '../services/transactionBudgetCoverage';
 import {
     resolveBudgetCategoryHeadroom,
+    spendFromCategoryMap,
     ytdRangeForFinancialMonth,
 } from '../services/budgetOverspendGate';
 import { useCurrency } from '../context/CurrencyContext';
@@ -380,11 +381,10 @@ const TransactionModal: React.FC<{
         return financialMonthKey(parsedDate, monthStartDay);
     }, [date, monthStartDay]);
 
-    const remainingByCategory = useMemo(() => {
-        const map = new Map<string, number>();
+    /** Single pass month + YTD spend maps — shared by remaining + yearly soft gate (no double scan). */
+    const transactionBudgetSpendMaps = useMemo(() => {
         const { start: monthStart, end: monthEnd } = transactionFinancialMonthBounds;
         const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(transactionFinKey, monthStartDay);
-
         const monthSpent = new Map<string, number>();
         const ytdSpent = new Map<string, number>();
         const accumulate = (t: Transaction, into: Map<string, number>) => {
@@ -401,27 +401,36 @@ const TransactionModal: React.FC<{
             if (dateInRange(t.date, monthStart, monthEnd)) accumulate(t, monthSpent);
             if (dateInRange(t.date, ytdStart, ytdEnd)) accumulate(t, ytdSpent);
         });
+        return { monthSpent, ytdSpent };
+    }, [
+        accounts,
+        existingTransactions,
+        sarPerUsd,
+        transactionToEdit?.id,
+        transactionFinancialMonthBounds,
+        transactionFinKey,
+        monthStartDay,
+    ]);
 
+    const remainingByCategory = useMemo(() => {
+        const map = new Map<string, number>();
+        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
         currentBudgetRows.forEach((b) => {
             const headroom = resolveBudgetCategoryHeadroom({
                 category: b.category,
                 finKey: transactionFinKey,
                 monthStartDay,
                 budgets,
-                monthSpentSar: monthSpent.get(b.category) ?? 0,
-                ytdSpentSar: ytdSpent.get(b.category) ?? 0,
+                monthSpentSar: spendFromCategoryMap(monthSpent, b.category),
+                ytdSpentSar: spendFromCategoryMap(ytdSpent, b.category),
             });
             map.set(b.category, headroom.remainingSar);
         });
         return map;
     }, [
-        accounts,
         budgets,
         currentBudgetRows,
-        existingTransactions,
-        sarPerUsd,
-        transactionToEdit?.id,
-        transactionFinancialMonthBounds,
+        transactionBudgetSpendMaps,
         transactionFinKey,
         monthStartDay,
     ]);
@@ -433,6 +442,24 @@ const TransactionModal: React.FC<{
 
     const splitCoverage = useMemo(() => {
         if (type !== 'expense') return [];
+        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
+        const limitForCategory = (cat: string, entryLimit: number) => {
+            const h = resolveBudgetCategoryHeadroom({
+                category: cat,
+                finKey: transactionFinKey,
+                monthStartDay,
+                budgets,
+                monthSpentSar: spendFromCategoryMap(monthSpent, cat),
+                ytdSpentSar: spendFromCategoryMap(ytdSpent, cat),
+            });
+            return h.hasAnnualEnvelope ? h.limitSar : entryLimit;
+        };
+        const remainingFor = (cat: string) =>
+            remainingByCategory.get(cat) ??
+            [...remainingByCategory.entries()].find(
+                ([k]) => k.trim().toLowerCase() === cat.trim().toLowerCase(),
+            )?.[1] ??
+            0;
         const parsedLines = splitRows
             .map((row) => {
                 const raw = Math.abs(Number(row.amount) || 0);
@@ -446,28 +473,42 @@ const TransactionModal: React.FC<{
         if (parsedLines.length === 0) {
             const cat = String(budgetCategory || '').trim();
             const entry = currentBudgetRows.find((b) => b.category === cat);
+            const remainingSar = remainingFor(cat);
             return cat
                 ? [{
                     category: cat,
                     amountSar: inputAmountSar,
-                    remainingSar: remainingByCategory.get(cat) ?? 0,
-                    shortfallSar: Math.max(0, inputAmountSar - (remainingByCategory.get(cat) ?? 0)),
-                    limitSar: entry ? Number(entry.limit) || 0 : 0,
+                    remainingSar,
+                    shortfallSar: Math.max(0, inputAmountSar - remainingSar),
+                    limitSar: limitForCategory(cat, entry ? Number(entry.limit) || 0 : 0),
                 }]
                 : [];
         }
         return parsedLines.map((line) => {
-            const remainingSar = remainingByCategory.get(line.category) ?? 0;
+            const remainingSar = remainingFor(line.category);
             const entry = currentBudgetRows.find((b) => b.category === line.category);
             return {
                 category: line.category,
                 amountSar: line.amountSar,
                 remainingSar,
                 shortfallSar: Math.max(0, line.amountSar - remainingSar),
-                limitSar: entry ? Number(entry.limit) || 0 : 0,
+                limitSar: limitForCategory(line.category, entry ? Number(entry.limit) || 0 : 0),
             };
         });
-    }, [type, splitRows, selectedAccountCurrency, sarPerUsd, budgetCategory, inputAmountSar, remainingByCategory, currentBudgetRows]);
+    }, [
+        type,
+        splitRows,
+        selectedAccountCurrency,
+        sarPerUsd,
+        budgetCategory,
+        inputAmountSar,
+        remainingByCategory,
+        currentBudgetRows,
+        transactionBudgetSpendMaps,
+        transactionFinKey,
+        monthStartDay,
+        budgets,
+    ]);
 
     const splitCoverageRows = useMemo(
         () =>
@@ -497,9 +538,27 @@ const TransactionModal: React.FC<{
         const cat = String(budgetCategory || '').trim();
         if (!cat) return null;
         const entry = currentBudgetRows.find((b) => b.category === cat);
-        const limitSar = entry ? Number(entry.limit) || 0 : 0;
-        const remainingSar = remainingByCategory.get(cat) ?? limitSar;
-        const spentSar = Math.max(0, limitSar - remainingSar);
+        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
+        const headroom = resolveBudgetCategoryHeadroom({
+            category: cat,
+            finKey: transactionFinKey,
+            monthStartDay,
+            budgets,
+            monthSpentSar: spendFromCategoryMap(monthSpent, cat),
+            ytdSpentSar: spendFromCategoryMap(ytdSpent, cat),
+            upcomingSar: inputAmountSar,
+        });
+        const limitSar = headroom.hasAnnualEnvelope
+            ? headroom.limitSar
+            : entry
+              ? Number(entry.limit) || 0
+              : 0;
+        const remainingSar =
+            remainingByCategory.get(cat) ??
+            (headroom.hasAnnualEnvelope ? headroom.remainingSar : limitSar);
+        const spentSar = headroom.hasAnnualEnvelope
+            ? headroom.spentSar
+            : Math.max(0, limitSar - remainingSar);
         const shortfallSar = Math.max(0, inputAmountSar - remainingSar);
         return {
             category: cat,
@@ -507,12 +566,25 @@ const TransactionModal: React.FC<{
             spentSar,
             remainingSar,
             shortfallSar,
+            hasAnnualEnvelope: headroom.hasAnnualEnvelope,
+            lumpyMonthWithinAnnual: headroom.lumpyMonthWithinAnnual,
             limitLabel: formatCurrencyString(limitSar, { inCurrency: 'SAR' }),
             spentLabel: formatCurrencyString(spentSar, { inCurrency: 'SAR' }),
             remainingLabel: formatCurrencyString(Math.max(0, remainingSar), { inCurrency: 'SAR' }),
             shortfallLabel: formatCurrencyString(shortfallSar, { inCurrency: 'SAR' }),
         };
-    }, [type, budgetCategory, currentBudgetRows, remainingByCategory, inputAmountSar, formatCurrencyString]);
+    }, [
+        type,
+        budgetCategory,
+        currentBudgetRows,
+        remainingByCategory,
+        inputAmountSar,
+        formatCurrencyString,
+        transactionBudgetSpendMaps,
+        transactionFinKey,
+        monthStartDay,
+        budgets,
+    ]);
     const budgetCoverageState = useMemo(
         () =>
             evaluateTransactionBudgetCoverageState({
@@ -533,62 +605,55 @@ const TransactionModal: React.FC<{
         [type, amount, budgetCategory, splitCoverage, useSplitExpense, budgetCoverageSummary, inputAmountSar],
     );
 
-    /** Suppress over-budget confirm when annual plan envelope still has headroom (lumpy months). */
-    const suppressBudgetOverWarn = useMemo(() => {
-        if (type !== 'expense') return false;
+    /** Active expense categories → annual-aware headroom (reuses spend maps — no second TX scan). */
+    const activeExpenseHeadrooms = useMemo(() => {
+        if (type !== 'expense') return [] as Array<ReturnType<typeof resolveBudgetCategoryHeadroom>>;
         const cats = useSplitExpense
             ? splitCoverage.map((l) => l.category).filter(Boolean)
             : [String(budgetCategory || '').trim()].filter(Boolean);
-        if (cats.length === 0) return false;
-        const { start: monthStart, end: monthEnd } = transactionFinancialMonthBounds;
-        const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(transactionFinKey, monthStartDay);
-        const monthSpent = new Map<string, number>();
-        const ytdSpent = new Map<string, number>();
-        existingTransactions.forEach((t) => {
-            if (!countsAsExpenseForCashflowKpi(t) || (t.status ?? 'Approved') !== 'Approved') return;
-            if (t.id === transactionToEdit?.id) return;
-            const acc = accounts.find((a) => a.id === t.accountId);
-            const txCur = acc?.currency === 'USD' ? 'USD' : 'SAR';
-            getTransactionBudgetAllocations(t).forEach((allocation) => {
-                const used = toSAR(Math.abs(Number(allocation.amount) || 0), txCur, sarPerUsd);
-                if (dateInRange(t.date, monthStart, monthEnd)) {
-                    monthSpent.set(allocation.category, (monthSpent.get(allocation.category) ?? 0) + used);
-                }
-                if (dateInRange(t.date, ytdStart, ytdEnd)) {
-                    ytdSpent.set(allocation.category, (ytdSpent.get(allocation.category) ?? 0) + used);
-                }
-            });
-        });
-        return cats.every((cat) => {
+        if (cats.length === 0) return [];
+        const { monthSpent, ytdSpent } = transactionBudgetSpendMaps;
+        return cats.map((cat) => {
             const lineAmt = useSplitExpense
                 ? splitCoverage.find((l) => l.category === cat)?.amountSar ?? 0
                 : inputAmountSar;
-            const h = resolveBudgetCategoryHeadroom({
+            return resolveBudgetCategoryHeadroom({
                 category: cat,
                 finKey: transactionFinKey,
                 monthStartDay,
                 budgets,
-                monthSpentSar: monthSpent.get(cat) ?? 0,
-                ytdSpentSar: ytdSpent.get(cat) ?? 0,
+                monthSpentSar: spendFromCategoryMap(monthSpent, cat),
+                ytdSpentSar: spendFromCategoryMap(ytdSpent, cat),
                 upcomingSar: lineAmt,
             });
-            return h.hasAnnualEnvelope && h.annualUtilizationPct <= 100.0001;
         });
     }, [
         type,
         useSplitExpense,
         splitCoverage,
         budgetCategory,
-        transactionFinancialMonthBounds,
+        transactionBudgetSpendMaps,
         transactionFinKey,
         monthStartDay,
-        existingTransactions,
-        transactionToEdit?.id,
-        accounts,
-        sarPerUsd,
         budgets,
         inputAmountSar,
     ]);
+
+    /** Suppress over-budget confirm when annual plan envelope still has headroom (lumpy months). */
+    const suppressBudgetOverWarn = useMemo(
+        () =>
+            activeExpenseHeadrooms.length > 0 &&
+            activeExpenseHeadrooms.every(
+                (h) => h.hasAnnualEnvelope && h.annualUtilizationPct <= 100.0001,
+            ),
+        [activeExpenseHeadrooms],
+    );
+
+    /** Soft UX: month is hot vs monthly-eq but yearly plan still OK. */
+    const lumpyMonthWithinAnnualHint = useMemo(
+        () => activeExpenseHeadrooms.some((h) => h.lumpyMonthWithinAnnual),
+        [activeExpenseHeadrooms],
+    );
     const splitCoverageError = useMemo(() => {
         if (!useSplitExpense) return '';
         const missing = splitRows.some((row) => String(row.category || '').trim() === '');
@@ -919,7 +984,9 @@ const TransactionModal: React.FC<{
                         {type === 'expense' && (budgetCoverageState.tone !== 'neutral' || Boolean(budgetCategory.trim())) && (
                             <div
                                 className={`rounded-xl border px-3.5 py-3 text-sm ${
-                                    budgetCoverageState.tone === 'red'
+                                    suppressBudgetOverWarn && budgetCoverageState.tone === 'red'
+                                        ? 'border-teal-200 bg-teal-50 text-teal-950'
+                                        : budgetCoverageState.tone === 'red'
                                         ? 'border-rose-200 bg-rose-50 text-rose-950'
                                         : budgetCoverageState.tone === 'yellow'
                                           ? 'border-amber-200 bg-amber-50 text-amber-950'
@@ -929,8 +996,21 @@ const TransactionModal: React.FC<{
                                 }`}
                                 role="status"
                             >
-                                <p className="font-semibold tracking-tight">{budgetCoverageState.title}</p>
-                                <p className="mt-1 text-[13px] leading-snug opacity-90">{budgetCoverageState.summary}</p>
+                                <p className="font-semibold tracking-tight">
+                                    {suppressBudgetOverWarn && budgetCoverageState.tone === 'red'
+                                        ? 'Within yearly plan'
+                                        : budgetCoverageState.title}
+                                </p>
+                                <p className="mt-1 text-[13px] leading-snug opacity-90">
+                                    {suppressBudgetOverWarn && budgetCoverageState.tone === 'red'
+                                        ? 'This amount fits the yearly plan even if this month looks high vs a monthly pace.'
+                                        : budgetCoverageState.summary}
+                                </p>
+                                {lumpyMonthWithinAnnualHint ? (
+                                    <p className="mt-2 text-[12px] font-medium leading-snug text-teal-900/90">
+                                        Lumpy month within yearly plan — overspend alerts stay quiet until YTD exceeds the annual cap.
+                                    </p>
+                                ) : null}
                                 {budgetCoverageState.detail && budgetCoverageState.detail.limitSar > 0 && (
                                     <dl className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1 text-xs tabular-nums sm:grid-cols-4">
                                         <div>

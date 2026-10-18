@@ -77,7 +77,11 @@ export function isIncomeLikeBudgetCategory(category: string): boolean {
 }
 
 function budgetToMonthly(limit: number, period?: string): number {
-  return period === 'yearly' ? limit / 12 : period === 'weekly' ? limit * (52 / 12) : period === 'daily' ? limit * (365 / 12) : limit;
+  const p = String(period ?? 'monthly').trim().toLowerCase();
+  if (p === 'yearly' || p === 'annual' || p === 'annually') return limit / 12;
+  if (p === 'weekly' || p === 'week') return limit * (52 / 12);
+  if (p === 'daily' || p === 'day') return limit * (365 / 12);
+  return limit;
 }
 
 function normalizeCategory(cat: string): string {
@@ -202,7 +206,12 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     const period = (b as { period?: string }).period;
     const monthly = budgetToMonthly(limit, period);
     const monthIndex = ((b as { month?: number }).month ?? 1) - 1;
-    const appliesAllYear = period === 'yearly' || period === 'weekly' || period === 'daily';
+    const appliesAllYear =
+      period === 'yearly' ||
+      period === 'annual' ||
+      period === 'annually' ||
+      period === 'weekly' ||
+      period === 'daily';
     if (appliesAllYear) {
       for (let m = 0; m < 12; m++) budgetIncomePlanned[m] += monthly;
     } else {
@@ -251,7 +260,12 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     const entry = byCategory.get(key)!;
     const planned = entry.planned;
     if (String(period ?? '').toLowerCase() === 'yearly') entry.yearlyEnvelope = true;
-    const appliesAllYear = period === 'yearly' || period === 'weekly' || period === 'daily';
+    const appliesAllYear =
+      period === 'yearly' ||
+      period === 'annual' ||
+      period === 'annually' ||
+      period === 'weekly' ||
+      period === 'daily';
     if (appliesAllYear) {
       for (let mm = 0; mm < 12; mm++) planned[mm] += monthly;
     } else {

@@ -72,6 +72,8 @@ export type BudgetCardMetricsModel = {
     secondaryBarMax?: number;
     showDualEnvelope?: boolean;
     annualUtilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
+    /** Soft: month hot vs pace but YTD still within yearly plan. */
+    lumpyMonthWithinAnnual?: boolean;
     colorClass: string;
     utilizationLabel?: 'Healthy' | 'Watch' | 'Critical';
     periodSpendCap?: number;
@@ -158,6 +160,14 @@ const BudgetCardMetricsBlocks: React.FC<{
                     moved to a prior month
                 </p>
             )}
+            {budget.lumpyMonthWithinAnnual ? (
+                <p
+                    className="mb-2 rounded-lg border border-teal-200/80 bg-teal-50/90 px-2.5 py-1.5 text-[11px] font-medium leading-snug text-teal-950"
+                    role="status"
+                >
+                    This period looks high vs a monthly pace, but year-to-date is still within the yearly plan.
+                </p>
+            ) : null}
             <div className="shrink-0 space-y-3">
                 {showDual ? (
                     <>

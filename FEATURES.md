@@ -70,8 +70,9 @@ This document reflects features and functionalities implemented in the codebase.
 
 ### Annual-aware overspend gate (`services/budgetOverspendGate.ts`)
 - **Problem:** Any yearly-period envelope (Housing Rent, Iqama Renewal, Vehicle Insurance, School Tuition, Istimara, Fahas, Dependent Fees, Exit/Re-entry Visa, Zakat, custom yearly categories, …) looks “Critical” if you compare a lumpy month to `limit ÷ 12`.
-- **Rule:** Keyed by **`period: 'yearly'`** for **every category name** — not a Housing Rent special case. Critical / unusual / drift / KPI / digest / LiveAdvisor / Plan grid / outliers use **YTD vs yearly plan** while YTD ≤ annual cap.
-- **Wired:** Notifications, Transactions confirm, Analysis model, Budget burn-rate, Dashboard KPI (`computeDashboardKpiSnapshot`), wealth summary, weekly digest, AI automation, Plan (`yearlyEnvelope`), Budgets Weekly/Daily dials + admin remaining, import/budget AI grounding.
+- **Rule:** Keyed by **`period: 'yearly'`** (also `annual` / `annually`, case-insensitive) for **every category name** — not a Housing Rent special case. Critical / unusual / drift / KPI / digest / LiveAdvisor / Plan grid / outliers use **financial-plan YTD** (respects `monthStartDay`) vs yearly plan while YTD ≤ annual cap. Dual monthly+yearly rows prefer the yearly plan (match score 210).
+- **Soft UX:** Budgets cards + Transactions show a calm “lumpy month within yearly plan” note when the month is hot vs monthly pace but YTD is still within the annual cap (no Critical / confirm scare).
+- **Wired:** Notifications, Transactions confirm + coverage, Analysis model, Budget burn-rate, Dashboard KPI (`computeDashboardKpiSnapshot`), wealth summary, weekly digest, AI automation, Plan (`yearlyEnvelope`), Budgets Weekly/Daily dials + admin remaining, import/budget AI grounding. Shared helpers: `utils/budgetPeriod.ts` / `services/budgetPeriod.ts`.
 - **Not this gate:** Cross-engine cashflow-buffer / min-balance alerts stay **liquidity** signals (intentionally not envelope math).
 
 ### Emergency Fund & Sinking Funds

@@ -41,6 +41,7 @@ import {
   adjustMonthExpensesForYearlyPlanHeadroom,
   ytdRangeForFinancialMonth,
 } from './budgetOverspendGate';
+import { monthlyEquivalentStoredLimit } from './budgetEnvelopeMath';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -104,10 +105,7 @@ export interface WealthSummaryReportModel {
 }
 
 function budgetToMonthly(b: { limit: number; period?: string }): number {
-  if (b.period === 'yearly') return b.limit / 12;
-  if (b.period === 'weekly') return b.limit * (52 / 12);
-  if (b.period === 'daily') return b.limit * (365 / 12);
-  return b.limit;
+  return monthlyEquivalentStoredLimit(b);
 }
 
 /**
