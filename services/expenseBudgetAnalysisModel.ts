@@ -8,6 +8,7 @@ import { aggregatePersonalBudgetCategorySpendSar, expenseAmountSarForBudget } fr
 import { monthlyEquivalentStoredLimit } from './budgetEnvelopeMath';
 import { utilizationLabelFromPercentage } from './budgetCardMetrics';
 import {
+  adjustMonthExpensesForYearlyPlanHeadroom,
   resolveBudgetCategoryHeadroom,
   statusFromAnnualAwareUtilization,
   ytdRangeForFinancialMonth,
@@ -451,7 +452,16 @@ export function computeExpenseBudgetAnalysisModel(
     });
   }
 
-  const budgetVarianceSar = budgetedSar - expenseSar;
+  // Strip lumpy yearly-category excess while YTD ≤ yearly plan so aggregate insight
+  // does not say "Over total monthly budget" for rent paid twice/year.
+  const adjustedExpenseSar = adjustMonthExpensesForYearlyPlanHeadroom(expenseSar, {
+    budgets,
+    finKey,
+    monthStartDay: msd,
+    monthSpentByCat: currentSpend,
+    ytdSpentByCat: ytdSpend,
+  });
+  const budgetVarianceSar = budgetedSar - adjustedExpenseSar;
   const savingsRatePct = incomeSar > 0 ? ((incomeSar - expenseSar) / incomeSar) * 100 : null;
 
   const dataQuality: ExpenseDataQualityRow[] = [];

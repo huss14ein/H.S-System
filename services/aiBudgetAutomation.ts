@@ -268,15 +268,36 @@ export async function generateBudgetRecommendations(
 
   const recommendations: BudgetRecommendation[] = [];
 
+  const { start: yearStart } = financialMonthRangeFromKey({ year: currentYear, month: 1 }, monthStartDay);
+  const { end: yearEnd } = financialMonthRangeFromKey({ year: currentYear, month: 12 }, monthStartDay);
+
+  // YTD spend by category for yearly-period plans (rent twice/year, etc.)
+  const ytdSpending = new Map<string, number>();
+  transactions.forEach((t) => {
+    if (!countsAsExpenseForCashflowKpi(t) || !t.budgetCategory) return;
+    const d = new Date(t.date);
+    if (Number.isNaN(d.getTime()) || d < yearStart || d > end) return;
+    const cat = t.budgetCategory || 'Miscellaneous';
+    ytdSpending.set(cat, (ytdSpending.get(cat) || 0) + Math.abs(t.amount));
+  });
+
   for (const budget of budgets) {
-    if (budget.month !== currentMonth || budget.year !== currentYear) continue;
+    // Yearly-period rows are often stored as month=1 — still include them every month.
+    if (budget.year !== currentYear) continue;
+    if (budget.period !== 'yearly' && budget.month !== currentMonth) continue;
 
-    const spent = categorySpending.get(budget.category) || 0;
-    const limit = budget.period === 'yearly' ? budget.limit / 12 : budget.limit;
+    const monthSpent = categorySpending.get(budget.category) || 0;
+    const isYearly = budget.period === 'yearly';
+    const annualLimit = Number(budget.limit) || 0;
+    const ytdSpent = ytdSpending.get(budget.category) || 0;
+    const limit = isYearly ? annualLimit : budget.limit;
+    const spent = isYearly ? ytdSpent : monthSpent;
     const utilization = limit > 0 ? (spent / limit) * 100 : 0;
+    // Lumpy month within yearly plan: skip overspend recommendations.
+    if (isYearly && utilization <= 100.0001) {
+      continue;
+    }
 
-    const { start: yearStart } = financialMonthRangeFromKey({ year: currentYear, month: 1 }, monthStartDay);
-    const { end: yearEnd } = financialMonthRangeFromKey({ year: currentYear, month: 12 }, monthStartDay);
     const historical = transactions.filter((t) => {
       if (!countsAsExpenseForCashflowKpi(t) || t.budgetCategory !== budget.category) return false;
       const d = new Date(t.date);
@@ -286,38 +307,47 @@ export async function generateBudgetRecommendations(
       ? historical.reduce((sum, t) => sum + Math.abs(t.amount), 0) / historical.length
       : 0;
 
-    let recommendedLimit = limit;
+    const baselineMonthly = isYearly ? annualLimit / 12 : limit;
+    let recommendedLimit = baselineMonthly;
     let reason = '';
     let priority: 'high' | 'medium' | 'low' = 'low';
     let expectedSavings = 0;
+    const compareLimit = isYearly ? annualLimit : limit;
 
     if (utilization > 110) {
       // Over budget - recommend increase or spending reduction
-      recommendedLimit = Math.max(limit, spent * 1.1);
-      reason = `Currently ${utilization.toFixed(0)}% over budget. Consider increasing limit or reducing spending.`;
+      recommendedLimit = isYearly
+        ? Math.max(annualLimit, spent * 1.1) / 12
+        : Math.max(limit, spent * 1.1);
+      reason = isYearly
+        ? `YTD at ${utilization.toFixed(0)}% of yearly plan. Consider increasing annual limit or reducing spending.`
+        : `Currently ${utilization.toFixed(0)}% over budget. Consider increasing limit or reducing spending.`;
       priority = 'high';
     } else if (utilization > 90 && utilization <= 110) {
       // Near limit
-      recommendedLimit = spent * 1.15;
-      reason = `At ${utilization.toFixed(0)}% of budget. Slight increase recommended for buffer.`;
+      recommendedLimit = isYearly ? (spent * 1.15) / 12 : spent * 1.15;
+      reason = isYearly
+        ? `At ${utilization.toFixed(0)}% of yearly plan. Slight increase recommended for buffer.`
+        : `At ${utilization.toFixed(0)}% of budget. Slight increase recommended for buffer.`;
       priority = 'medium';
     } else if (utilization < 50 && historicalAvg > 0) {
       // Underutilized - might be too high
-      recommendedLimit = Math.max(historicalAvg * 1.1, limit * 0.7);
-      expectedSavings = limit - recommendedLimit;
+      recommendedLimit = Math.max(historicalAvg * 1.1, compareLimit * 0.7);
+      if (isYearly) recommendedLimit = recommendedLimit / 12;
+      expectedSavings = baselineMonthly - recommendedLimit;
       reason = `Only ${utilization.toFixed(0)}% utilized. Budget may be too high. Consider reducing to free up funds.`;
       priority = 'medium';
-    } else if (historicalAvg > limit * 1.2) {
+    } else if (historicalAvg > compareLimit * 1.2) {
       // Historical spending consistently higher
-      recommendedLimit = historicalAvg * 1.1;
-      reason = `Historical average (${historicalAvg.toFixed(0)} SAR) is ${((historicalAvg / limit - 1) * 100).toFixed(0)}% above current limit.`;
+      recommendedLimit = isYearly ? (historicalAvg * 1.1) / 12 : historicalAvg * 1.1;
+      reason = `Historical average (${historicalAvg.toFixed(0)} SAR) is ${((historicalAvg / compareLimit - 1) * 100).toFixed(0)}% above current limit.`;
       priority = 'high';
     }
 
-    if (recommendedLimit !== limit) {
+    if (Math.abs(recommendedLimit - baselineMonthly) > 0.5) {
       recommendations.push({
         category: budget.category,
-        currentLimit: limit,
+        currentLimit: baselineMonthly,
         recommendedLimit: Math.round(recommendedLimit),
         reason,
         priority,

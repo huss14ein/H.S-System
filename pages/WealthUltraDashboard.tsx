@@ -1716,11 +1716,30 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
           {crossEngineAnalysis && crossEngineAnalysis.alerts.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4">
               <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-2">Cross-engine alerts</p>
-              <ul className="space-y-1 text-sm text-amber-900">
+              <ul className="space-y-2 text-sm text-amber-900">
                 {crossEngineAnalysis.alerts.slice(0, 3).map((a, i) => (
                   <li key={i} className="flex items-start gap-2">
                     <ExclamationTriangleIcon className="h-4 w-4 shrink-0 mt-0.5" />
-                    <span>{a.message}{a.suggestedAction ? ` — ${a.suggestedAction}` : ''}</span>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <span>{a.message}{a.suggestedAction ? ` — ${a.suggestedAction}` : ''}</span>
+                      {setActivePage && (a.links?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {(a.links ?? []).map((lnk) => (
+                            <button
+                              key={`${lnk.label}-${lnk.page}-ce-${i}`}
+                              type="button"
+                              onClick={() => {
+                                if (lnk.action && triggerPageAction) triggerPageAction(lnk.page, lnk.action);
+                                else setActivePage(lnk.page);
+                              }}
+                              className="text-xs font-semibold text-primary hover:underline"
+                            >
+                              {lnk.label} →
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>

@@ -99,7 +99,9 @@ export function buildBudgetCardVisualMetrics(args: {
     const showDualEnvelope =
         budgetView === 'Monthly' && p === 'monthly' && annualEnvelopeLimit > 0;
 
-    if (budgetView === 'Monthly' && p === 'yearly') {
+    // Yearly-period rows: Critical/Watch always use YTD vs annual cap (not week/day ÷52/÷365),
+    // so bi-annual rent does not false-Critical in Weekly/Daily views.
+    if (p === 'yearly' && budgetView !== 'Yearly') {
         const percentage = safePct(spentYtd, limit);
         const utilizationLabel = utilizationLabelFromPercentage(percentage);
         return {

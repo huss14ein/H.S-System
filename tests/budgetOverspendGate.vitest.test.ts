@@ -70,5 +70,32 @@ describe('budgetOverspendGate', () => {
     expect(notif).toContain('yearly plan');
     expect(read('pages/Budgets.tsx')).toContain('budgets: data?.budgets ?? []');
     expect(read('services/householdBudgetAnalytics.ts')).toContain('hasAnnualEnvelope');
+    expect(read('services/dashboardKpiSnapshot.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
+    expect(read('services/budgetDrift.ts')).toContain('resolveBudgetCategoryHeadroom');
+  });
+
+  it('strips lumpy yearly month excess while YTD within annual plan', () => {
+    const budgets = [
+      { id: '1', category: 'Housing Rent', limit: 120_000, period: 'yearly', year: 2026, month: 1 },
+    ] as any;
+    const monthSpent = new Map([['Housing Rent', 60_000]]);
+    const ytdSpent = new Map([['Housing Rent', 60_000]]);
+    const excess = lumpyYearlyMonthExcessWithinPlanSar({
+      budgets,
+      finKey: { year: 2026, month: 3 },
+      monthStartDay: 1,
+      monthSpentByCat: monthSpent,
+      ytdSpentByCat: ytdSpent,
+    });
+    expect(excess).toBeCloseTo(50_000, 0);
+    expect(
+      adjustMonthExpensesForYearlyPlanHeadroom(70_000, {
+        budgets,
+        finKey: { year: 2026, month: 3 },
+        monthStartDay: 1,
+        monthSpentByCat: monthSpent,
+        ytdSpentByCat: ytdSpent,
+      }),
+    ).toBeCloseTo(20_000, 0);
   });
 });

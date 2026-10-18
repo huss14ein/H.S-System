@@ -220,4 +220,55 @@ export function headroomFromSpendMaps(
   });
 }
 
+/**
+ * Lumpy yearly categories (e.g. rent twice/year) inflate month expense totals vs monthly-eq caps.
+ * While YTD is still within the yearly plan, strip that month excess so KPI / digest variance
+ * does not read as "Over budget".
+ */
+export function lumpyYearlyMonthExcessWithinPlanSar(args: {
+  budgets: Budget[];
+  finKey: FinancialMonthKey;
+  monthStartDay: unknown;
+  monthSpentByCat: Map<string, number>;
+  ytdSpentByCat: Map<string, number>;
+}): number {
+  const cats = new Set<string>();
+  for (const c of args.monthSpentByCat.keys()) {
+    const t = String(c || '').trim();
+    if (t) cats.add(t);
+  }
+  for (const b of args.budgets ?? []) {
+    if (b.period !== 'yearly') continue;
+    const t = String(b.category || '').trim();
+    if (t) cats.add(t);
+  }
+  let excess = 0;
+  for (const category of cats) {
+    const monthSpent = args.monthSpentByCat.get(category) ?? 0;
+    const ytdSpent = args.ytdSpentByCat.get(category) ?? 0;
+    const headroom = resolveBudgetCategoryHeadroom({
+      category,
+      finKey: args.finKey,
+      monthStartDay: args.monthStartDay,
+      budgets: args.budgets,
+      monthSpentSar: monthSpent,
+      ytdSpentSar: ytdSpent,
+    });
+    if (!headroom.hasAnnualEnvelope || headroom.annualUtilizationPct > 100 + EPS) continue;
+    const monthEq =
+      headroom.annualLimitSar > EPS ? headroom.annualLimitSar / 12 : 0;
+    excess += Math.max(0, monthSpent - monthEq);
+  }
+  return excess;
+}
+
+/** Month expenses for budget-variance KPIs after yearly-plan headroom adjustment. */
+export function adjustMonthExpensesForYearlyPlanHeadroom(
+  monthExpensesSar: number,
+  args: Parameters<typeof lumpyYearlyMonthExcessWithinPlanSar>[0],
+): number {
+  const excess = lumpyYearlyMonthExcessWithinPlanSar(args);
+  return Math.max(0, monthExpensesSar - excess);
+}
+
 export { financialMonthKey };

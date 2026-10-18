@@ -31,6 +31,8 @@ export type AnnualPlanRow = {
   category: string;
   monthly_planned: number[];
   monthly_actual: number[];
+  /** True when a yearly-period budget contributes — Plan overspend uses YTD vs annual, not each month. */
+  yearlyEnvelope?: boolean;
 };
 
 export type AnnualPlanIncomeMeta = {
@@ -191,7 +193,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
   );
 
   const yearBudgets = budgets.filter((b) => !(b as { year?: number }).year || (b as { year?: number }).year === year);
-  const byCategory = new Map<string, { planned: number[]; actual: number[] }>();
+  const byCategory = new Map<string, { planned: number[]; actual: number[]; yearlyEnvelope: boolean }>();
 
   const budgetIncomePlanned = Array(12).fill(0);
   yearBudgets.forEach((b) => {
@@ -244,9 +246,11 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     const monthIndex = ((b as { month?: number }).month ?? 1) - 1;
     const key = normalizeCategory(b.category);
     if (!byCategory.has(key)) {
-      byCategory.set(key, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
+      byCategory.set(key, { planned: Array(12).fill(0), actual: Array(12).fill(0), yearlyEnvelope: false });
     }
-    const planned = byCategory.get(key)!.planned;
+    const entry = byCategory.get(key)!;
+    const planned = entry.planned;
+    if (period === 'yearly') entry.yearlyEnvelope = true;
     const appliesAllYear = period === 'yearly' || period === 'weekly' || period === 'daily';
     if (appliesAllYear) {
       for (let mm = 0; mm < 12; mm++) planned[mm] += monthly;
@@ -262,7 +266,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     const raw = (t.budgetCategory || t.category || 'Other').trim() || 'Other';
     const category = normalizeCategory(raw);
     if (!byCategory.has(category)) {
-      byCategory.set(category, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
+      byCategory.set(category, { planned: Array(12).fill(0), actual: Array(12).fill(0), yearlyEnvelope: false });
     }
     byCategory.get(category)!.actual[monthIndex] += Math.abs(txAmountSar(t));
   });
@@ -277,7 +281,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     .forEach((r) => {
       const raw = (r.budgetCategory || r.category || 'Other').trim() || 'Other';
       const cat = normalizeCategory(raw);
-      if (!byCategory.has(cat)) byCategory.set(cat, { planned: Array(12).fill(0), actual: Array(12).fill(0) });
+      if (!byCategory.has(cat)) byCategory.set(cat, { planned: Array(12).fill(0), actual: Array(12).fill(0), yearlyEnvelope: false });
       const row = byCategory.get(cat)!;
       const amt = Number(r.amount) || 0;
       for (let m = 0; m < 12; m++) row.planned[m] += amt;
@@ -286,11 +290,12 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
   const expenseRows: AnnualPlanRow[] = Array.from(byCategory.entries())
     .filter(([, { planned, actual }]) => planned.some((x) => x > 0) || actual.some((x) => x > 0))
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([category, { planned, actual }]) => ({
+    .map(([category, { planned, actual, yearlyEnvelope }]) => ({
       type: 'expense' as const,
       category,
       monthly_planned: planned.some((x) => x > 0) ? planned : Array(12).fill(0),
       monthly_actual: actual,
+      yearlyEnvelope: yearlyEnvelope || undefined,
     }));
 
   const monthlyInvestment = Number(investmentPlan?.monthlyBudget) || 0;

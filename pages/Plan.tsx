@@ -417,6 +417,28 @@ const AnnualFinancialPlan: React.FC<{
         if (endIdx >= 0) {
             processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
                 const isInvestment = row.category === 'Monthly investment';
+                // Yearly plan envelopes (e.g. Housing Rent twice/year): count once on YTD vs annual, not each lumpy month.
+                if (row.yearlyEnvelope && !isInvestment) {
+                    let ytdPlan = 0;
+                    let ytdActual = 0;
+                    for (let mi = 0; mi <= endIdx; mi++) {
+                        ytdPlan += Number(row.monthly_planned[mi] ?? 0);
+                        ytdActual += Number(row.monthly_actual[mi] ?? 0);
+                    }
+                    if (ytdPlan > 0 && ytdActual > ytdPlan + 1e-6) {
+                        monthsOverBudget++;
+                        const pct = ((ytdActual - ytdPlan) / ytdPlan) * 100;
+                        if (pct > 0 && (!worst || pct > worst.pct)) {
+                            worst = {
+                                category: row.category,
+                                month: 'YTD',
+                                monthIndex: endIdx,
+                                pct,
+                            };
+                        }
+                    }
+                    return;
+                }
                 for (let mi = 0; mi <= endIdx; mi++) {
                     const plan = Number(row.monthly_planned[mi] ?? 0);
                     const actual = Number(row.monthly_actual[mi] ?? 0);

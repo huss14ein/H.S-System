@@ -234,6 +234,11 @@ This document reflects features and functionalities implemented in the codebase.
 - **Z-Score:** Mean reversion; |z| &gt; 2 over-extended. Wired in Watchlist Signals column.
 - **SMA / EMA and crossovers:** Golden Cross / Death Cross (e.g. SMA50 vs SMA200). Short-term crossover SMA(5)/SMA(10) for limited data; wired in Watchlist Signals.
 
+### Fibonacci retracement (`services/fibonacciAnalysis.ts`) — Option B TA hub
+- **Levels:** 0 / 23.6 / 38.2 / 50 / 61.8 (golden) / 78.6 / 100. Downtrend: Low+(High−Low)×ratio; uptrend: High−(High−Low)×ratio.
+- **Reversal zone:** 61.8–78.6%; zone-entry notifications (deduped per symbol/day); scenario invalidation beyond 78.6%.
+- **Wired:** Watchlist Signals + MiniPriceChart overlays; Investments holding charts; AI grounding (`formatFibForAiGrounding` / `fibonacciGrounding`); Logic Engines hub demo card.
+
 ### Tech stack (recommended / in use)
 - **Math:** Decimal.js (installed; used in portfolio construction).
 - **Database:** PostgreSQL (Supabase).

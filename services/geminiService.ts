@@ -2438,7 +2438,7 @@ What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 ### Technical Framework Matrix
 - Dow Theory: regime (uptrend/downtrend/range) and why.
 - Elliott Wave: likely wave context (impulse/corrective) and what would invalidate it.
-- Fibonacci: cite computed 61.8% (golden) / 78.6% reversal zone from GROUND TRUTH when provided; for downtrends draw high→low and watch selling pressure in that zone; invalidate above 78.6%.
+- Fibonacci: cite computed 61.8% (golden) / 78.6% reversal zone from GROUND TRUTH when provided; for downtrends draw high→low and watch selling pressure in that zone (invalidate above 78.6%); for uptrends draw low→high and watch buying support in that zone (invalidate below 78.6%).
 - Chart Patterns: active pattern hypothesis and trigger level.
 - Candlestick Patterns: strongest recent candle signal and interpretation.
 - Combined Method (confluence): where 2+ frameworks align and where they conflict.

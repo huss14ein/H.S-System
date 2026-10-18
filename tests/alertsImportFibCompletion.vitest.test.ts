@@ -43,6 +43,7 @@ describe('alertsImportFibCompletion', () => {
     expect(read('services/fibonacciAnalysis.ts')).toContain('evaluateFibonacciRetracement');
     expect(read('services/fibonacciAnalysis.ts')).toContain('0.618');
     expect(read('services/fibonacciAnalysis.ts')).toContain('0.786');
+    expect(read('services/fibonacciAnalysis.ts')).toContain("direction === 'uptrend'");
 
     const watch = read('pages/WatchlistView.tsx');
     expect(watch).toContain('evaluateFibonacciRetracement');
@@ -63,5 +64,23 @@ describe('alertsImportFibCompletion', () => {
     const gemini = read('services/geminiService.ts');
     expect(gemini).toContain('fibonacciGrounding');
     expect(gemini).toContain('61.8% (golden)');
+    expect(gemini).toContain('for uptrends draw low→high');
+
+    expect(read('FEATURES.md')).toContain('Fibonacci retracement');
+    expect(read('pages/LogicEnginesHub.tsx')).toContain('evaluateFibonacciRetracement');
+    expect(read('pages/InvestmentPlanView.tsx')).toContain('lnk.label');
+    expect(read('pages/WealthUltraDashboard.tsx')).toContain('a.links');
+  });
+
+  it('yearly plan gate covers digest, KPI, LiveAdvisor, automation, and drift', () => {
+    expect(read('services/budgetOverspendGate.ts')).toContain('lumpyYearlyMonthExcessWithinPlanSar');
+    expect(read('services/dashboardKpiSnapshot.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
+    expect(read('services/wealthSummaryReportModel.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
+    expect(read('services/budgetDrift.ts')).toContain('hasAnnualEnvelope');
+    expect(read('services/aiBudgetAutomation.ts')).toContain('yearly plan');
+    expect(read('components/LiveAdvisorModal.tsx')).toContain('yearly_plan');
+    expect(read('supabase/functions/send-weekly-digest/index.ts')).toContain('lumpyYearlyExcess');
+    expect(read('services/annualPlanFromData.ts')).toContain('yearlyEnvelope');
+    expect(read('pages/Plan.tsx')).toContain('yearlyEnvelope');
   });
 });

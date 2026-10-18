@@ -67,6 +67,11 @@ import { toSAR } from '../utils/currencyMath';
 import { resolveInvestmentPortfolioCurrency } from '../utils/investmentPortfolioCurrency';
 import { useFinancialEnginesIntegration } from '../hooks/useFinancialEnginesIntegration';
 import CrossEngineAlertsBanner from '../components/CrossEngineAlertsBanner';
+import {
+  computeFibonacciLevels,
+  evaluateFibonacciRetracement,
+  formatFibForAiGrounding,
+} from '../services/fibonacciAnalysis';
 
 function estimateMonthlyDebtServiceSar(liabilities: Liability[]): number {
   let sum = 0;
@@ -742,6 +747,49 @@ const LogicEnginesHub: React.FC<LogicEnginesHubProps> = ({ setActivePage, trigge
               Illustrative attribution mix (engine demo, not your portfolio): price {attrDemo.price}% + div {attrDemo.dividend}% + FX {attrDemo.fx}%
               % + contrib {attrDemo.contribution}% = {attrDemo.total.toFixed(2)}%
             </li>
+          </ul>
+        </SectionCard>
+
+        <SectionCard
+          title="Fibonacci retracement (TA hub)"
+          infoHint="Same engine as Watchlist / Investments: 61.8–78.6% reversal zone for downtrend and uptrend swings."
+          collapsible
+          collapsibleSummary="61.8% golden · 78.6% deep"
+          headerAction={<span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-900">Live</span>}
+        >
+          <ul className="text-sm space-y-1 text-gray-700">
+            <li>
+              Downtrend levels (high 120 → low 80): 61.8% @{' '}
+              {computeFibonacciLevels(120, 80, 'downtrend').find((l) => l.ratio === 0.618)?.price.toFixed(1)} · 78.6% @{' '}
+              {computeFibonacciLevels(120, 80, 'downtrend').find((l) => l.ratio === 0.786)?.price.toFixed(1)}
+            </li>
+            <li>
+              Uptrend levels (low 80 → high 120): 61.8% @{' '}
+              {computeFibonacciLevels(120, 80, 'uptrend').find((l) => l.ratio === 0.618)?.price.toFixed(1)} · 78.6% @{' '}
+              {computeFibonacciLevels(120, 80, 'uptrend').find((l) => l.ratio === 0.786)?.price.toFixed(1)}
+            </li>
+            <li className="text-xs text-slate-600">
+              Demo series:{' '}
+              {(() => {
+                const demo = [
+                  95, 96, 97, 98, 99, 100, 105, 110, 115, 118, 120, 115, 110, 105, 100, 95, 90, 85, 82, 80, 82, 85, 90, 95,
+                  100, 105, 108, 109,
+                ];
+                const fib = evaluateFibonacciRetracement(demo, { preferDirection: 'downtrend', lookback: 2 });
+                return fib ? formatFibForAiGrounding('DEMO', fib) : 'insufficient swing';
+              })()}
+            </li>
+            {setActivePage && (
+              <li>
+                <button
+                  type="button"
+                  className="text-sm text-primary-600 hover:text-primary-700 underline"
+                  onClick={() => setActivePage('Watchlist')}
+                >
+                  Open Watchlist Fib signals →
+                </button>
+              </li>
+            )}
           </ul>
         </SectionCard>
 

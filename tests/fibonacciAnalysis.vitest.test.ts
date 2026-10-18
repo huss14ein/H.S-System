@@ -60,4 +60,30 @@ describe('fibonacciAnalysis', () => {
     expect(shouldNotifyFibZoneEntry(analysis, 'AAPL', storage)).toBe(false);
     expect(shouldNotifyFibZoneEntry(analysis, 'MSFT', storage)).toBe(true);
   });
+
+  it('computes uptrend levels High − (High−Low)×ratio (0 at peak, 0.786 near trough)', () => {
+    const levels = computeFibonacciLevels(120, 80, 'uptrend');
+    expect(levels.find((l) => l.ratio === 0)?.price).toBeCloseTo(120, 5);
+    expect(levels.find((l) => l.ratio === 1)?.price).toBeCloseTo(80, 5);
+    expect(levels.find((l) => l.ratio === 0.618)?.price).toBeCloseTo(120 - 40 * 0.618, 5);
+    expect(levels.find((l) => l.ratio === 0.786)?.price).toBeCloseTo(120 - 40 * 0.786, 5);
+    expect(levels.find((l) => l.ratio === 0.786)!.price).toBeLessThan(
+      levels.find((l) => l.ratio === 0.618)!.price,
+    );
+  });
+
+  it('detects an uptrend swing and flags reversal zone on pullback', () => {
+    // Unique trough 80, rise to unique peak 120, pullback into ~95.3–88.6 zone.
+    const prices = [
+      100, 98, 95, 90, 85, 82, 80, // trough
+      82, 85, 90, 95, 100, 105, 110, 115, 118, 120, // peak
+      115, 110, 105, 100, 95, 92, 90,
+    ];
+    const analysis = evaluateFibonacciRetracement(prices, { preferDirection: 'uptrend', lookback: 2 });
+    expect(analysis).not.toBeNull();
+    expect(analysis!.direction).toBe('uptrend');
+    expect(analysis!.reversalZone.high).toBeGreaterThan(analysis!.reversalZone.low);
+    expect(analysis!.inReversalZone).toBe(true);
+    expect(formatFibForAiGrounding('UP', analysis)).toMatch(/uptrend|61\.8%|0\.618/i);
+  });
 });
