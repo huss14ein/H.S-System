@@ -4632,7 +4632,12 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                             </div>
                             <div className="bg-white rounded-lg p-3 border border-indigo-100">
                                 <span className="text-indigo-600 text-xs uppercase tracking-wide">Remaining</span>
-                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(adminApprovedOverviewFiltered.reduce((sum, b) => sum + (b.monthlyLimit - b.spent), 0), { digits: 0 })}</p>
+                                <p className="font-bold text-indigo-900 text-lg">{formatCurrencyString(adminApprovedOverviewFiltered.reduce((sum, b) => {
+                                    const yearly = (b.period ?? 'monthly') === 'yearly';
+                                    const lim = yearly ? Number(b.limit) || 0 : b.monthlyLimit;
+                                    const spent = yearly ? (b.spentYtd ?? b.spent) : b.spent;
+                                    return sum + (lim - spent);
+                                }, 0), { digits: 0 })}</p>
                             </div>
                         </div>
 
@@ -4653,10 +4658,13 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                     </thead>
                                     <tbody>
                                         {adminApprovedOverviewFiltered.map((b) => {
-                                            const remaining = b.monthlyLimit - b.spent;
-                                            const percentage = b.percentage ?? (b.monthlyLimit > 0 ? (b.spent / b.monthlyLimit) * 100 : 0);
-                                            const periodLabel = (b.period ?? 'monthly') === 'yearly' ? 'Yearly' : (b.period ?? 'monthly') === 'weekly' ? 'Weekly' : (b.period ?? 'monthly') === 'daily' ? 'Daily' : 'Monthly';
-                                            const limitWithUnit = (b.period ?? 'monthly') === 'yearly'
+                                            const isYearly = (b.period ?? 'monthly') === 'yearly';
+                                            const spentDisplay = isYearly ? (b.spentYtd ?? b.spent) : b.spent;
+                                            const limitForRemain = isYearly ? Number(b.limit) || 0 : b.monthlyLimit;
+                                            const remaining = limitForRemain - spentDisplay;
+                                            const percentage = b.percentage ?? (limitForRemain > 0 ? (spentDisplay / limitForRemain) * 100 : 0);
+                                            const periodLabel = isYearly ? 'Yearly' : (b.period ?? 'monthly') === 'weekly' ? 'Weekly' : (b.period ?? 'monthly') === 'daily' ? 'Daily' : 'Monthly';
+                                            const limitWithUnit = isYearly
                                                 ? `${formatCurrencyString(b.limit, { digits: 0 })}/yr`
                                                 : (b.period ?? 'monthly') === 'weekly'
                                                 ? `${formatCurrencyString(b.limit, { digits: 0 })}/wk`
@@ -4678,7 +4686,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                                                         </span>
                                                     </td>
                                                     <td className="px-3 py-2 text-right tabular-nums">{limitWithUnit}</td>
-                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(b.spent, { digits: 0 })}</td>
+                                                    <td className="px-3 py-2 text-right tabular-nums">{formatCurrencyString(spentDisplay, { digits: 0 })}{isYearly ? <span className="text-[10px] text-slate-400 ml-0.5">YTD</span> : null}</td>
                                                     <td className={`px-3 py-2 text-right tabular-nums ${remaining >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                                         {remaining >= 0 ? formatCurrencyString(remaining, { digits: 0 }) : `-${formatCurrencyString(Math.abs(remaining), { digits: 0 })}`}
                                                     </td>
