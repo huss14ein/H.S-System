@@ -993,9 +993,20 @@ const InvestmentPlanControlTower: React.FC<{
       {hasNextBest && (
         <div className="mt-6 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
           <p className="text-xs font-semibold text-indigo-800 mb-2">Suggested actions</p>
-          <ul className="space-y-1 text-sm text-indigo-900">
+          <ul className="space-y-2 text-sm text-indigo-900">
             {nextBestActions.slice(0, 3).map((a) => (
-              <li key={a.id}>{a.title}</li>
+              <li key={a.id} className="space-y-0.5">
+                <p>{a.title}</p>
+                {setActivePage && a.link && (
+                  <button
+                    type="button"
+                    onClick={() => setActivePage(a.link as Page)}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    {a.linkLabel || a.link} →
+                  </button>
+                )}
+              </li>
             ))}
           </ul>
         </div>

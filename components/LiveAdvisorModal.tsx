@@ -12,7 +12,7 @@ import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../s
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
+import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
 import { aggregatePersonalBudgetCategorySpendSar } from '../services/budgetSpendMath';
 import {
   resolveBudgetCategoryHeadroom,

@@ -708,6 +708,32 @@ const WealthUltraDashboard: React.FC<WealthUltraDashboardProps> = ({ setActivePa
                           <p className="text-xs font-bold text-slate-700">→ {toSafeText(a.actionHint, '')}</p>
                         </div>
                       )}
+                      {(triggerPageAction || setActivePage) && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (triggerPageAction) {
+                                triggerPageAction('Investments', 'focus-investment-plan');
+                                return;
+                              }
+                              setActivePage?.('Investment Plan');
+                            }}
+                            className="text-xs font-semibold text-primary hover:underline"
+                          >
+                            Investment Plan →
+                          </button>
+                          {setActivePage && (
+                            <button
+                              type="button"
+                              onClick={() => setActivePage('Budgets')}
+                              className="text-xs font-semibold text-primary hover:underline"
+                            >
+                              Budgets →
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </li>
                   );
                 })}
