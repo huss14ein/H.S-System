@@ -82,5 +82,8 @@ describe('alertsImportFibCompletion', () => {
     expect(read('supabase/functions/send-weekly-digest/index.ts')).toContain('lumpyYearlyExcess');
     expect(read('services/annualPlanFromData.ts')).toContain('yearlyEnvelope');
     expect(read('pages/Plan.tsx')).toContain('yearlyEnvelope');
+    expect(read('pages/Plan.tsx')).toContain('% of yearly plan');
+    expect(read('services/planExpenseOutliers.ts')).toContain('withinYearlyPlan');
+    expect(read('services/geminiService.ts')).toContain('within yearly plan (lumpy month OK)');
   });
 });

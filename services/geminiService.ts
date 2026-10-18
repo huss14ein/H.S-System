@@ -1505,8 +1505,16 @@ export const getAITransactionAnalysis = async (
         const budgetPerformance = budgets
             .map((b) => {
                 const spent = spending.get(b.category) || 0;
-                const percentage = b.limit > 0 ? (spent / b.limit) * 100 : 0;
-                return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
+                const isYearly = b.period === 'yearly';
+                const limit = Number(b.limit) || 0;
+                // Yearly plans: compare import-batch spend to annual cap (not ÷12), and note lumpy months.
+                const percentage = limit > 0 ? (spent / limit) * 100 : 0;
+                const withinAnnual = isYearly && limit > 0 && spent <= limit;
+                const unit = isYearly ? 'yearly plan' : 'limit';
+                const note = withinAnnual
+                    ? ' — within yearly plan (lumpy month OK)'
+                    : '';
+                return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${limit.toLocaleString()} SAR (${percentage.toFixed(0)}% of ${unit})${note}`;
             })
             .join('\n');
 
