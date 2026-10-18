@@ -71,7 +71,16 @@ export function resolveBudgetCategoryHeadroom(args: {
   const rows = budgetsForFinancialMonthView(args.budgets, args.finKey, args.monthStartDay).filter(
     (b) => b.category === category,
   );
-  const yearlyRow = rows.find((b) => b.period === 'yearly');
+  // Prefer a yearly-period row for this category in the plan year (not only the current
+  // financial-month view) so bi-annual rent still uses the annual gate every month.
+  const yearlyRow =
+    rows.find((b) => b.period === 'yearly') ??
+    args.budgets.find(
+      (b) =>
+        String(b.category || '').trim() === category &&
+        Number(b.year) === year &&
+        b.period === 'yearly',
+    );
   const monthlyEq = rows.reduce((s, b) => s + monthlyEquivalentStoredLimit(b), 0);
   // Only treat as an annual *plan* envelope when a yearly-period row exists.
   // Do not use extrapolated ×12 from a single monthly row — that would silence

@@ -1038,6 +1038,7 @@ const Budgets: React.FC<BudgetsProps> = ({ triggerPageAction, setActivePage, pag
                     accounts: accRows,
                     sarPerUsd,
                     monthStartDay,
+                    budgets: data?.budgets ?? [],
                 }),
             );
         } catch (error) {

@@ -62,4 +62,13 @@ describe('budgetOverspendGate', () => {
     expect(read('services/expenseBudgetAnalysisModel.ts')).toContain('statusFromAnnualAwareUtilization');
     expect(read('services/transactionBudgetCoverage.ts')).toContain('suppressOverWarn');
   });
+
+  it('Notifications + anomalies + Budgets pass yearly budgets into anomaly detection', () => {
+    const notif = read('context/NotificationsContext.tsx');
+    expect(notif).toContain('shouldWarnBudgetOverspend');
+    expect(notif).toContain('budgets: data.budgets ?? []');
+    expect(notif).toContain('yearly plan');
+    expect(read('pages/Budgets.tsx')).toContain('budgets: data?.budgets ?? []');
+    expect(read('services/householdBudgetAnalytics.ts')).toContain('hasAnnualEnvelope');
+  });
 });
