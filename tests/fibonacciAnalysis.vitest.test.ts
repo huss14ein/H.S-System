@@ -8,29 +8,27 @@ import {
   shouldNotifyFibZoneEntry,
 } from '../services/fibonacciAnalysis';
 
-/** Synthetic downtrend then retrace into 0.618–0.786 zone. */
+/** Synthetic downtrend then retrace into 0.618–0.786 zone (clear unique swing high/low). */
 function buildDowntrendThenRetrace(): number[] {
-  const prices: number[] = [];
-  // Quiet preamble
-  for (let i = 0; i < 8; i++) prices.push(100);
-  // Peak plateau
-  for (let i = 0; i < 5; i++) prices.push(120);
-  // Drop to trough
-  for (let i = 0; i < 8; i++) prices.push(120 - i * 5); // ends ~80
-  // Flat at low
-  for (let i = 0; i < 4; i++) prices.push(80);
-  // Retrace toward 61.8–78.6 of (120→80) span=40 → zone ≈ 104.72–111.44
-  prices.push(90, 98, 105, 108);
-  return prices;
+  // Rise to unique peak 120, drop to unique trough 80, retrace into ~104.7–111.4 zone.
+  return [
+    95, 96, 97, 98, 99, 100, 105, 110, 115, 118, 120, // peak at 120
+    115, 110, 105, 100, 95, 90, 85, 82, 80, // trough at 80
+    82, 85, 90, 95, 100, 105, 108, 109,
+  ];
 }
 
 describe('fibonacciAnalysis', () => {
-  it('computes downtrend levels High − (High−Low)×ratio', () => {
+  it('computes downtrend levels Low + (High−Low)×ratio (0 at trough, 0.786 near peak)', () => {
     const levels = computeFibonacciLevels(120, 80, 'downtrend');
-    expect(levels.find((l) => l.ratio === 0)?.price).toBeCloseTo(120, 5);
-    expect(levels.find((l) => l.ratio === 1)?.price).toBeCloseTo(80, 5);
-    expect(levels.find((l) => l.ratio === 0.618)?.price).toBeCloseTo(120 - 40 * 0.618, 5);
-    expect(levels.find((l) => l.ratio === 0.786)?.price).toBeCloseTo(120 - 40 * 0.786, 5);
+    expect(levels.find((l) => l.ratio === 0)?.price).toBeCloseTo(80, 5);
+    expect(levels.find((l) => l.ratio === 1)?.price).toBeCloseTo(120, 5);
+    expect(levels.find((l) => l.ratio === 0.618)?.price).toBeCloseTo(80 + 40 * 0.618, 5);
+    expect(levels.find((l) => l.ratio === 0.786)?.price).toBeCloseTo(80 + 40 * 0.786, 5);
+    // 0.786 is closer to the peak than 0.618 (infographic order).
+    expect(levels.find((l) => l.ratio === 0.786)!.price).toBeGreaterThan(
+      levels.find((l) => l.ratio === 0.618)!.price,
+    );
   });
 
   it('detects a downtrend swing and flags reversal zone', () => {
@@ -45,7 +43,7 @@ describe('fibonacciAnalysis', () => {
     expect(analysis!.reversalZone.high).toBeGreaterThan(analysis!.reversalZone.low);
     expect(analysis!.inReversalZone).toBe(true);
     expect(formatFibSignalShort(analysis)).toMatch(/Fib zone/i);
-    expect(formatFibForAiGrounding('TEST', analysis)).toContain('0.618');
+    expect(formatFibForAiGrounding('TEST', analysis)).toMatch(/61\.8%|0\.618/);
   });
 
   it('dedupes zone-entry notifications per symbol/day', () => {

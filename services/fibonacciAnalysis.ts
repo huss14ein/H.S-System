@@ -70,9 +70,13 @@ export function findSwingPoints(prices: number[], lookback = 3): { highs: SwingP
         isLow = false;
         break;
       }
-      if (q >= p) isHigh = false;
-      if (q <= p) isLow = false;
+      // Allow plateaus: peak if no neighbor is strictly higher; trough if none strictly lower.
+      if (q > p) isHigh = false;
+      if (q < p) isLow = false;
     }
+    // Prefer the middle of a flat plateau (first index in equal run within window).
+    if (isHigh && prices[i - 1] === p) isHigh = false;
+    if (isLow && prices[i - 1] === p) isLow = false;
     if (isHigh) highs.push({ index: i, price: p });
     if (isLow) lows.push({ index: i, price: p });
   }
@@ -126,7 +130,13 @@ export function detectLatestUptrendSwing(
   return null;
 }
 
-/** Downtrend: Level = High − (High − Low) × ratio. Uptrend: Level = Low + (High − Low) × ratio. */
+/**
+ * Retracement levels after an impulse (matches common chart tools / the Finova Fib guide):
+ * - Downtrend (high→low), then price retraces up: Level = Low + (High−Low)×ratio
+ *   so 0 = trough, 1 = peak, 0.786 near the peak (reversal zone with 0.618).
+ * - Uptrend (low→high), then price retraces down: Level = High − (High−Low)×ratio
+ *   so 0 = peak, 1 = trough, 0.786 near the trough.
+ */
 export function computeFibonacciLevels(
   high: number,
   low: number,
@@ -135,7 +145,7 @@ export function computeFibonacciLevels(
   const span = high - low;
   if (!(Number.isFinite(high) && Number.isFinite(low) && span > 0)) return [];
   return FIB_RATIOS.map((ratio) => {
-    const price = direction === 'downtrend' ? high - span * ratio : low + span * ratio;
+    const price = direction === 'downtrend' ? low + span * ratio : high - span * ratio;
     return { ratio, price, label: ratioLabel(ratio) };
   });
 }
@@ -204,8 +214,10 @@ export function evaluateFibonacciRetracement(
   const zoneLow = Math.min(r618, r786);
   const zoneHigh = Math.max(r618, r786);
   const inReversalZone = currentPrice >= zoneLow && currentPrice <= zoneHigh;
+  // Downtrend: invalidate if price breaks above the deep retracement (above 0.786 toward the peak).
+  // Uptrend: invalidate if price breaks below 0.786 toward the trough.
   const scenarioInvalidated =
-    direction === 'downtrend' ? currentPrice > zoneHigh : currentPrice < zoneLow;
+    direction === 'downtrend' ? currentPrice > Math.max(r618, r786) : currentPrice < Math.min(r618, r786);
 
   let signal: FibAnalysis['signal'] = 'awaiting_retracement';
   if (scenarioInvalidated) signal = 'scenario_invalidated';

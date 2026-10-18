@@ -68,7 +68,7 @@ const MiniPriceChart: React.FC<MiniPriceChartProps> = ({ symbol, currentPrice, c
         if (fibAnalysis) {
             prices.push(fibAnalysis.reversalZone.low, fibAnalysis.reversalZone.high, fibAnalysis.swingHigh.price, fibAnalysis.swingLow.price);
         }
-        if (prices.length === 0) return ['dataMin - 1', 'dataMax + 1'] as const;
+        if (prices.length === 0) return ['dataMin - 1', 'dataMax + 1'] as [string, string];
         const min = Math.min(...prices);
         const max = Math.max(...prices);
         const pad = Math.max((max - min) * 0.08, max * 0.005, 0.01);
