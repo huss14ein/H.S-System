@@ -437,7 +437,7 @@ export function detectSpendingAnomaliesFromTransactions(args: {
   sarPerUsd: number;
   monthStartDay?: unknown;
   /**
-   * When provided, yearly-period plan categories (e.g. Housing Rent paid twice/year)
+   * When provided, any yearly-period plan category (rent, tuition, iqama, insurance, …)
    * are not flagged as "unusual" while YTD spend remains within the yearly cap.
    */
   budgets?: Budget[] | null;

@@ -1,6 +1,10 @@
 /**
  * Shared gate: do not treat a lumpy month as "over budget" when the annual envelope
- * (or yearly-period cap) still has headroom — e.g. Housing Rent paid twice a year.
+ * (or yearly-period cap) still has headroom.
+ *
+ * Applies to **every** budget with `period: 'yearly'` — any category name
+ * (Housing Rent, Iqama Renewal, Vehicle Insurance, School Tuition, custom yearly
+ * envelopes, etc.). Housing Rent is only a common example of lumpy twice-yearly spend.
  */
 
 import type { Budget, Transaction, Account } from '../types';
@@ -39,6 +43,11 @@ export type BudgetCategoryHeadroom = {
 
 const EPS = 0.0001;
 
+/** True when the stored budget row is a yearly-period plan (any category). */
+export function isYearlyPeriodBudget(b: { period?: string } | null | undefined): boolean {
+  return String(b?.period ?? '').trim().toLowerCase() === 'yearly';
+}
+
 export function planYearForFinancialKey(finKey: FinancialMonthKey): number {
   return Number(finKey.year) || new Date().getFullYear();
 }
@@ -72,14 +81,15 @@ export function resolveBudgetCategoryHeadroom(args: {
     (b) => b.category === category,
   );
   // Prefer a yearly-period row for this category in the plan year (not only the current
-  // financial-month view) so bi-annual rent still uses the annual gate every month.
+  // financial-month view) so any lumpy yearly category (rent, tuition, iqama, insurance, …)
+  // still uses the annual gate every month — keyed by period, never by category name.
   const yearlyRow =
-    rows.find((b) => b.period === 'yearly') ??
+    rows.find((b) => isYearlyPeriodBudget(b)) ??
     args.budgets.find(
       (b) =>
         String(b.category || '').trim() === category &&
         Number(b.year) === year &&
-        b.period === 'yearly',
+        isYearlyPeriodBudget(b),
     );
   const monthlyEq = rows.reduce((s, b) => s + monthlyEquivalentStoredLimit(b), 0);
   // Only treat as an annual *plan* envelope when a yearly-period row exists.
@@ -92,7 +102,7 @@ export function resolveBudgetCategoryHeadroom(args: {
       )
     : 0;
 
-  // Yearly-period categories always use YTD vs yearly cap (rent twice/year, etc.).
+  // Any yearly-period category always uses YTD vs yearly cap (lumpy months OK while within plan).
   const effectiveMode: BudgetHeadroomMode = yearlyRow ? 'annual' : 'monthly';
   const limitSar = effectiveMode === 'annual' ? annualLimitSar : monthlyEq;
 
@@ -238,7 +248,7 @@ export function lumpyYearlyMonthExcessWithinPlanSar(args: {
     if (t) cats.add(t);
   }
   for (const b of args.budgets ?? []) {
-    if (b.period !== 'yearly') continue;
+    if (!isYearlyPeriodBudget(b)) continue;
     const t = String(b.category || '').trim();
     if (t) cats.add(t);
   }

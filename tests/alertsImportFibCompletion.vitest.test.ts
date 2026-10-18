@@ -74,6 +74,7 @@ describe('alertsImportFibCompletion', () => {
 
   it('yearly plan gate covers digest, KPI, LiveAdvisor, automation, and drift', () => {
     expect(read('services/budgetOverspendGate.ts')).toContain('lumpyYearlyMonthExcessWithinPlanSar');
+    expect(read('services/budgetOverspendGate.ts')).toContain('isYearlyPeriodBudget');
     expect(read('services/dashboardKpiSnapshot.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
     expect(read('services/wealthSummaryReportModel.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
     expect(read('services/budgetDrift.ts')).toContain('hasAnnualEnvelope');
@@ -91,6 +92,9 @@ describe('alertsImportFibCompletion', () => {
     expect(dash).toContain('annual-aware gate');
     expect(dash).not.toContain('budgetToMonthly');
     expect(dash).not.toContain('monthlyBudgets');
+    // Gate is period-based for all yearly categories (not Housing Rent–only).
+    expect(read('FEATURES.md')).toContain("period: 'yearly'");
+    expect(read('FEATURES.md')).toContain('not a Housing Rent special case');
   });
 
   it('version 5.0.0.0 is shipped end to end', () => {

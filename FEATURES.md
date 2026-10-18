@@ -2,7 +2,7 @@
 
 This document reflects features and functionalities implemented in the codebase. It serves as the single source of truth for what the platform delivers.
 
-**5.0.0.0 rollout:** Footer/Settings version **5.0.0.0**. Annual-aware budget overspend gate (lumpy yearly categories like rent paid twice/year stay within plan without false Critical warnings); Fibonacci TA hub on Watchlist/Investments; SMS حوالة واردة import validation + toast dedupe; alerts P100 semantics fixed.
+**5.0.0.0 rollout:** Footer/Settings version **5.0.0.0**. Annual-aware budget overspend gate for **all** `period: yearly` categories (not rent-only — Iqama, insurance, tuition, custom yearly, etc.); Fibonacci TA hub on Watchlist/Investments; SMS حوالة واردة import validation + toast dedupe; alerts P100 semantics fixed.
 
 **4.0.0.0 rollout:** Footer/Settings version **4.0.0.0**. SMS import treats ATM withdrawals and credit-card settlements (سداد / card payment) as internal transfers across Al Rajhi, Alinma, SNB, SABB and English KSA templates — no budget prompts; Cash / Paid-from counterparties required.
 
@@ -69,8 +69,8 @@ This document reflects features and functionalities implemented in the codebase.
 - Shared budget transactions: current month default, month/status/category filters
 
 ### Annual-aware overspend gate (`services/budgetOverspendGate.ts`)
-- **Problem:** Yearly-period envelopes (e.g. Housing Rent paid twice/year) look “Critical” if you compare a lumpy month to `limit ÷ 12`.
-- **Rule:** When a yearly-period row exists, Critical / unusual / drift / KPI / digest / LiveAdvisor / Plan grid / outliers use **YTD vs yearly plan** — no false alarm while YTD ≤ annual cap.
+- **Problem:** Any yearly-period envelope (Housing Rent, Iqama Renewal, Vehicle Insurance, School Tuition, Istimara, Fahas, Dependent Fees, Exit/Re-entry Visa, Zakat, custom yearly categories, …) looks “Critical” if you compare a lumpy month to `limit ÷ 12`.
+- **Rule:** Keyed by **`period: 'yearly'`** for **every category name** — not a Housing Rent special case. Critical / unusual / drift / KPI / digest / LiveAdvisor / Plan grid / outliers use **YTD vs yearly plan** while YTD ≤ annual cap.
 - **Wired:** Notifications, Transactions confirm, Analysis model, Budget burn-rate, Dashboard KPI (`computeDashboardKpiSnapshot`), wealth summary, weekly digest, AI automation, Plan (`yearlyEnvelope`), Budgets Weekly/Daily dials + admin remaining, import/budget AI grounding.
 - **Not this gate:** Cross-engine cashflow-buffer / min-balance alerts stay **liquidity** signals (intentionally not envelope math).
 

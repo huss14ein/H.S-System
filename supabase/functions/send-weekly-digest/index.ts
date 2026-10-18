@@ -219,8 +219,9 @@ async function calculateBudgetSummary(supabase: any, userId: string, periodEnd: 
   const overCategories: string[] = [];
   let lumpyYearlyExcess = 0;
   (budgets || []).forEach((b: any) => {
-    const period = b.period ?? 'monthly';
+    const period = String(b.period ?? 'monthly').toLowerCase();
     const spent = categorySpending.get(b.category) || 0;
+    // Any yearly-period category (not rent-only): overspend only when YTD > annual limit.
     if (period === 'yearly') {
       const annualLimit = Number(b.limit) || 0;
       const ytd = ytdCategorySpending.get(b.category) || 0;

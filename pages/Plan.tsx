@@ -417,7 +417,7 @@ const AnnualFinancialPlan: React.FC<{
         if (endIdx >= 0) {
             processedPlanData.filter((r: PlanRow) => r.type === 'expense').forEach((row: PlanRow) => {
                 const isInvestment = row.category === 'Monthly investment';
-                // Yearly plan envelopes (e.g. Housing Rent twice/year): count once on YTD vs annual, not each lumpy month.
+                // Any yearly-period envelope: count once on YTD vs annual, not each lumpy month.
                 if (row.yearlyEnvelope && !isInvestment) {
                     let ytdPlan = 0;
                     let ytdActual = 0;

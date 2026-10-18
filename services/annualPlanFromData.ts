@@ -31,7 +31,7 @@ export type AnnualPlanRow = {
   category: string;
   monthly_planned: number[];
   monthly_actual: number[];
-  /** True when a yearly-period budget contributes — Plan overspend uses YTD vs annual, not each month. */
+  /** True when any yearly-period budget contributes — Plan overspend uses YTD vs annual for that category. */
   yearlyEnvelope?: boolean;
 };
 
@@ -250,7 +250,7 @@ export function buildAnnualPlanRows(input: BuildAnnualPlanRowsInput): {
     }
     const entry = byCategory.get(key)!;
     const planned = entry.planned;
-    if (period === 'yearly') entry.yearlyEnvelope = true;
+    if (String(period ?? '').toLowerCase() === 'yearly') entry.yearlyEnvelope = true;
     const appliesAllYear = period === 'yearly' || period === 'weekly' || period === 'daily';
     if (appliesAllYear) {
       for (let mm = 0; mm < 12; mm++) planned[mm] += monthly;

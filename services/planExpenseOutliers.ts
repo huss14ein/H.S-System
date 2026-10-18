@@ -107,15 +107,15 @@ export function detectPlanExpenseOutliers(args: {
 
   if (ytdExpenseAbs <= 0) return [];
 
-  // Yearly-plan categories (e.g. Housing Rent twice/year): suppress "large expense"
-  // warnings while category YTD is still within the yearly envelope.
+  // Any yearly-period plan category: suppress "large expense" warnings while
+  // category YTD is still within that yearly envelope (rent, tuition, iqama, …).
   const ytdByCategory = new Map<string, number>();
   for (const r of rows) {
     ytdByCategory.set(r.category, (ytdByCategory.get(r.category) ?? 0) + r.absSar);
   }
   const yearlyLimitByCategory = new Map<string, number>();
   for (const b of data?.budgets ?? []) {
-    if (b.period !== 'yearly') continue;
+    if (String(b.period ?? '').toLowerCase() !== 'yearly') continue;
     if (Number(b.year) !== year) continue;
     const cat = String(b.category || '').trim();
     if (!cat) continue;

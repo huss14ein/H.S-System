@@ -282,12 +282,12 @@ export async function generateBudgetRecommendations(
   });
 
   for (const budget of budgets) {
-    // Yearly-period rows are often stored as month=1 — still include them every month.
+    // Yearly-period rows (any category) are often stored as month=1 — still include them every month.
     if (budget.year !== currentYear) continue;
-    if (budget.period !== 'yearly' && budget.month !== currentMonth) continue;
+    const isYearly = String(budget.period ?? '').toLowerCase() === 'yearly';
+    if (!isYearly && budget.month !== currentMonth) continue;
 
     const monthSpent = categorySpending.get(budget.category) || 0;
-    const isYearly = budget.period === 'yearly';
     const annualLimit = Number(budget.limit) || 0;
     const ytdSpent = ytdSpending.get(budget.category) || 0;
     const limit = isYearly ? annualLimit : budget.limit;

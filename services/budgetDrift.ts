@@ -75,7 +75,7 @@ export function detectBudgetDrift(
     if (baseline <= 0) continue;
     const driftPct = ((cur - baseline) / baseline) * 100;
     if (Math.abs(driftPct) < 15) continue;
-    // Yearly plan (e.g. Housing Rent twice/year): skip false drift while YTD ≤ yearly cap.
+    // Any yearly-period plan: skip false drift while YTD ≤ yearly cap.
     const headroom = resolveBudgetCategoryHeadroom({
       category: cat,
       finKey: currentKey,
