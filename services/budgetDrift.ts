@@ -9,6 +9,10 @@ import {
 } from '../utils/financialMonth';
 import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+import {
+  resolveBudgetCategoryHeadroom,
+  ytdRangeForFinancialMonth,
+} from './budgetOverspendGate';
 
 export type BudgetDriftRow = {
   category: string;
@@ -46,6 +50,15 @@ export function detectBudgetDrift(
   };
 
   const current = sumByCat(currentKey);
+  const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(currentKey, msd);
+  const ytdSpend = aggregatePersonalBudgetCategorySpendSar(
+    transactions,
+    ytdStart,
+    ytdEnd,
+    accountCurrencyById,
+    data,
+    exchangeRate,
+  );
   const baselineTotals = new Map<string, number[]>();
   for (const k of baselineKeys) {
     for (const [cat, v] of sumByCat(k)) {
@@ -61,9 +74,20 @@ export function detectBudgetDrift(
     const baseline = hist.length ? hist.reduce((a, b) => a + b, 0) / hist.length : 0;
     if (baseline <= 0) continue;
     const driftPct = ((cur - baseline) / baseline) * 100;
-    if (Math.abs(driftPct) >= 15) {
-      rows.push({ category: cat, baselineSar: baseline, currentSar: cur, driftPct });
+    if (Math.abs(driftPct) < 15) continue;
+    // Any yearly-period plan: skip false drift while YTD ≤ yearly cap.
+    const headroom = resolveBudgetCategoryHeadroom({
+      category: cat,
+      finKey: currentKey,
+      monthStartDay: msd,
+      budgets: data.budgets ?? [],
+      monthSpentSar: cur,
+      ytdSpentSar: ytdSpend.get(cat) ?? 0,
+    });
+    if (headroom.hasAnnualEnvelope && headroom.annualUtilizationPct <= 100.0001) {
+      continue;
     }
+    rows.push({ category: cat, baselineSar: baseline, currentSar: cur, driftPct });
   }
   return rows.sort((a, b) => Math.abs(b.driftPct) - Math.abs(a.driftPct));
 }

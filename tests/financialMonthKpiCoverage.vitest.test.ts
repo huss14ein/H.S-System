@@ -7,7 +7,11 @@ describe('financial month KPI coverage', () => {
   it('canonical KPI paths use dateInRange and budgetsForFinancialMonthView', () => {
     expect(read('services/dashboardKpiSnapshot.ts')).toContain('dateInRange');
     expect(read('services/dashboardKpiSnapshot.ts')).toContain('budgetsForFinancialMonthView');
-    expect(read('pages/Dashboard.tsx')).toContain('budgetsForFinancialMonthView');
+    expect(read('services/dashboardKpiSnapshot.ts')).toContain('adjustMonthExpensesForYearlyPlanHeadroom');
+    // Dashboard budget variance is only via annual-aware kpiSnapshot (no local ÷12 path).
+    expect(read('pages/Dashboard.tsx')).toContain('kpiSnapshot');
+    expect(read('pages/Dashboard.tsx')).toContain('annual-aware gate');
+    expect(read('pages/Dashboard.tsx')).not.toContain('budgetToMonthly');
     expect(read('components/spending/SpendingCommandCenter.tsx')).toContain('financialMonthDaysRemaining');
     expect(read('components/dashboard/BudgetBurnRatePanel.tsx')).toContain('budgetsForFinancialMonthView');
     expect(read('components/dashboard/BudgetBurnRatePanel.tsx')).toContain('financialMonthLabel');

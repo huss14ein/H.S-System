@@ -36,6 +36,12 @@ import { dateInRange, budgetsForFinancialMonthView, resolveMonthStartDayFromData
 import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
 import { getSarPerUsdForCalendarDay } from './fxDailySeries';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
+import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
+import {
+  adjustMonthExpensesForYearlyPlanHeadroom,
+  ytdRangeForFinancialMonth,
+} from './budgetOverspendGate';
+import { monthlyEquivalentStoredLimit } from './budgetEnvelopeMath';
 
 export type GetAvailableCashFn = (accountId: string) => { SAR: number; USD: number };
 
@@ -99,10 +105,10 @@ export interface WealthSummaryReportModel {
 }
 
 function budgetToMonthly(b: { limit: number; period?: string }): number {
-  if (b.period === 'yearly') return b.limit / 12;
-  if (b.period === 'weekly') return b.limit * (52 / 12);
-  if (b.period === 'daily') return b.limit * (365 / 12);
-  return b.limit;
+  return monthlyEquivalentStoredLimit({
+    limit: b.limit,
+    period: b.period as 'daily' | 'weekly' | 'monthly' | 'yearly' | undefined,
+  });
 }
 
 /**
@@ -161,7 +167,34 @@ export function computeMonthlyReportFinancialKpis(
 
   const budgetedTotal = monthlyTotals.reduce((sum, { budgeted }) => sum + Math.abs(budgeted), 0);
   /** Include all financial-month spend (budgeted categories + unbudgeted). */
-  const actualTotal = Math.abs(cashflow.monthlyExpensesSar);
+  const monthStartDay = resolveMonthStartDayFromData(data);
+  const accountCurrencyById = new Map(
+    accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+  );
+  const monthSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+    transactions,
+    currentRange.start,
+    currentRange.end,
+    accountCurrencyById,
+    data,
+    uiExchangeRate,
+  );
+  const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(currentRange.key, monthStartDay);
+  const ytdSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+    transactions,
+    ytdStart,
+    ytdEnd,
+    accountCurrencyById,
+    data,
+    uiExchangeRate,
+  );
+  const actualTotal = adjustMonthExpensesForYearlyPlanHeadroom(Math.abs(cashflow.monthlyExpensesSar), {
+    budgets: data.budgets ?? [],
+    finKey: currentRange.key,
+    monthStartDay,
+    monthSpentByCat,
+    ytdSpentByCat,
+  });
   const budgetVariance = budgetedTotal - actualTotal;
 
   const { roi } = computeHeadlinePersonalInvestmentRoiDecimal(

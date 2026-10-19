@@ -31,6 +31,12 @@ import { buildAvailableLiquiditySnapshot } from './availableLiquidity';
 import { computeSalaryInvestmentKpis } from './salaryInvestmentKpis';
 import { sumTradableCashSarFromInvestmentAccounts } from './investmentCashLedger';
 import { computeHeadlinePersonalInvestmentRoiDecimal } from './investmentKpiCore';
+import {
+  resolveBudgetCategoryHeadroom,
+  ytdRangeForFinancialMonth,
+} from './budgetOverspendGate';
+import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
+import { monthlyEquivalentStoredLimit } from './budgetEnvelopeMath';
 
 export type AiGroundingBuildOptions = {
   data: FinancialData;
@@ -96,10 +102,7 @@ const fmt = (n: number) =>
   Number.isFinite(n) ? Math.round(n).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '0';
 
 function budgetMonthlyLimit(b: Budget): number {
-  if (b.period === 'yearly') return b.limit / 12;
-  if (b.period === 'weekly') return b.limit * (52 / 12);
-  if (b.period === 'daily') return b.limit * (365 / 12);
-  return b.limit;
+  return monthlyEquivalentStoredLimit(b);
 }
 
 function topHoldingsLines(
@@ -160,17 +163,50 @@ export function buildAiPersonalWealthGrounding(opts: AiGroundingBuildOptions): A
   const cf = financialMonthNetCashflowSar(data, exchangeRate);
 
   const personalTx = sortByNewestFirst(getPersonalTransactions(data));
-  const monthlyTx = personalTx.filter((t) => dateInRange(t.date, finRange.start, finRange.end));
 
+  const personalAccounts = getPersonalAccounts(data);
+  const accountCurrencyById = new Map(
+    personalAccounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+  );
+  const monthSpendByCat = aggregatePersonalBudgetCategorySpendSar(
+    personalTx,
+    finRange.start,
+    finRange.end,
+    accountCurrencyById,
+    data,
+    exchangeRate,
+  );
+  const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(finRange.key, monthStartDay);
+  const ytdSpendByCat = aggregatePersonalBudgetCategorySpendSar(
+    personalTx,
+    ytdStart,
+    ytdEnd,
+    accountCurrencyById,
+    data,
+    exchangeRate,
+  );
   const overspentBudgetLines: string[] = [];
+  const seenBudgetCats = new Set<string>();
   for (const budget of budgetsForFinancialMonthView(data.budgets ?? [], finRange.key, monthStartDay)) {
-    const spent = monthlyTx
-      .filter((t) => countsAsExpenseForCashflowKpi(t) && (t.budgetCategory === budget.category || t.category === budget.category))
-      .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
-    const limit = budgetMonthlyLimit(budget);
-    const pct = limit > 0 ? (spent / limit) * 100 : 0;
-    if (pct >= 75) {
-      overspentBudgetLines.push(`${budget.category}: ${fmt(spent)} / ${fmt(limit)} SAR (${pct.toFixed(0)}% of monthly limit)`);
+    const cat = String(budget.category || '').trim();
+    if (!cat || seenBudgetCats.has(cat)) continue;
+    seenBudgetCats.add(cat);
+    const headroom = resolveBudgetCategoryHeadroom({
+      category: cat,
+      finKey: finRange.key,
+      monthStartDay,
+      budgets: data.budgets ?? [],
+      monthSpentSar: monthSpendByCat.get(cat) ?? 0,
+      ytdSpentSar: ytdSpendByCat.get(cat) ?? 0,
+    });
+    // Yearly plan (e.g. rent twice/year): only flag when annual utilization ≥75%.
+    // Monthly categories: keep month pressure vs monthly-equivalent.
+    const pct = headroom.hasAnnualEnvelope ? headroom.annualUtilizationPct : headroom.utilizationPct;
+    const limit = headroom.hasAnnualEnvelope ? headroom.annualLimitSar : budgetMonthlyLimit(budget);
+    const spent = headroom.hasAnnualEnvelope ? headroom.spentSar : (monthSpendByCat.get(cat) ?? 0);
+    if (pct >= 75 && limit > 0) {
+      const label = headroom.hasAnnualEnvelope ? 'of yearly plan' : 'of monthly limit';
+      overspentBudgetLines.push(`${cat}: ${fmt(spent)} / ${fmt(limit)} SAR (${pct.toFixed(0)}% ${label})`);
     }
   }
 

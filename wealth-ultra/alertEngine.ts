@@ -4,12 +4,61 @@ import type {
   WealthUltraSleeveAllocation,
   WealthUltraAlert,
   WealthUltraAlertSeverity,
+  WealthUltraAlertType,
+  Page,
 } from '../types';
 import { getTotalPortfolioValue, isDriftAlert, DRIFT_ALERT_PCT } from './allocationEngine';
 import { isSpecBreach } from './specRisk';
 import { runCashPlanner, computeDeployableCash } from './cashPlanner';
 import type { MonthlyDeploymentResult } from './monthlyDeployment';
 import { rankByCapitalEfficiency } from './capitalEfficiency';
+
+/** Default in-app nav for each alert type (Investment Plan / Investments / Accounts / Budgets). */
+export function defaultLinksForWealthUltraAlert(
+  type: WealthUltraAlertType,
+): Array<{ label: string; page: Page; action?: string }> {
+  switch (type) {
+    case 'cash_reserve_low':
+    case 'cash_deploy_prompt':
+      return [
+        { label: 'Accounts & cash', page: 'Accounts' },
+        { label: 'Investment Plan', page: 'Investment Plan' },
+      ];
+    case 'over_budget':
+      return [
+        { label: 'Budgets', page: 'Budgets' },
+        { label: 'Investment Plan', page: 'Investment Plan' },
+      ];
+    case 'spec_breach':
+    case 'max_per_ticker_breach':
+    case 'concentration_risk':
+    case 'underperformer_review':
+    case 'portfolio_stress':
+      return [
+        { label: 'Investments', page: 'Investments' },
+        { label: 'Wealth Ultra', page: 'Wealth Ultra' },
+      ];
+    case 'sleeve_drift':
+    case 'sleeve_overweight':
+    case 'deployment_opportunity':
+      return [
+        { label: 'Investment Plan', page: 'Investment Plan' },
+        { label: 'Investments', page: 'Investments', action: 'focus-investment-plan' },
+      ];
+    case 'position_trim_suggest':
+    case 'position_risk_review':
+    case 'dip_buy_opportunity':
+    case 'spec_loss_review':
+    case 'trailing_stop_near':
+      return [
+        { label: 'Investments', page: 'Investments' },
+        { label: 'Investment Plan', page: 'Investment Plan' },
+      ];
+    case 'portfolio_on_track':
+    default:
+      return [{ label: 'Investment Plan', page: 'Investment Plan' }];
+  }
+}
 
 const TRIM_THRESHOLD_PCT = 40;
 const RISK_REVIEW_THRESHOLD_PCT = -30;
@@ -324,6 +373,13 @@ export function runAlertEngine(
       message: 'Allocation is within target; no critical or warning issues. Use opportunities above to refine.',
       actionHint: 'Keep deploying to plan; trim winners or add to dip-buy names as appropriate.',
     });
+  }
+
+  // Attach type-specific nav links when the producer did not set any.
+  for (const a of alerts) {
+    if (!a.links || a.links.length === 0) {
+      a.links = defaultLinksForWealthUltraAlert(a.type);
+    }
   }
 
   // Sort: critical first, then warning, then info; then by absolute value where relevant

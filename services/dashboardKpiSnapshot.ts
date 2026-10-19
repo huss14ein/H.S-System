@@ -22,6 +22,12 @@ import {
   financialMonthRangeFromKey,
   type FinancialMonthKey,
 } from '../utils/financialMonth';
+import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
+import {
+  adjustMonthExpensesForYearlyPlanHeadroom,
+  isYearlyPeriodBudget,
+  ytdRangeForFinancialMonth,
+} from './budgetOverspendGate';
 
 /**
  * Net worth trend on Dashboard / Summary cards: this month's P&L vs implied net worth at financial month start.
@@ -151,8 +157,49 @@ export function computeDashboardKpiSnapshot(
       currentRange.key,
       monthStartDay,
     );
-    const totalBudget = currentMonthBudgets.reduce((sum, b) => sum + budgetToMonthly(b), 0);
-    const budgetVariance = totalBudget - monthlyExpenses;
+    // Include yearly-period rows for the plan year even when stored as month=1 only.
+    // Do not double-count when a monthly row for the same category already won the view.
+    const year = currentRange.key.year;
+    const yearlyPlanRows = (data.budgets ?? []).filter(
+      (b) => isYearlyPeriodBudget(b) && Number(b.year) === year,
+    );
+    const budgetsForVariance = [...currentMonthBudgets];
+    for (const yb of yearlyPlanRows) {
+      const cat = String(yb.category || '').trim().toLowerCase();
+      if (budgetsForVariance.some((b) => String(b.category || '').trim().toLowerCase() === cat)) {
+        continue;
+      }
+      budgetsForVariance.push(yb);
+    }
+    const totalBudget = budgetsForVariance.reduce((sum, b) => sum + budgetToMonthly(b), 0);
+    const accountCurrencyById = new Map(
+      accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+    );
+    const monthSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+      transactions,
+      currentRange.start,
+      currentRange.end,
+      accountCurrencyById,
+      data,
+      exchangeRate,
+    );
+    const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(currentRange.key, monthStartDay);
+    const ytdSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+      transactions,
+      ytdStart,
+      ytdEnd,
+      accountCurrencyById,
+      data,
+      exchangeRate,
+    );
+    const adjustedExpenses = adjustMonthExpensesForYearlyPlanHeadroom(monthlyExpenses, {
+      budgets: data.budgets ?? [],
+      finKey: currentRange.key,
+      monthStartDay,
+      monthSpentByCat,
+      ytdSpentByCat,
+    });
+    const budgetVariance = totalBudget - adjustedExpenses;
 
     const lastMonthTransactions = transactions.filter((t) =>
       dateInRange(t.date, prevRange.start, prevRange.end),

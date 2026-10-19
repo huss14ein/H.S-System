@@ -855,7 +855,10 @@ const PlanTradeModal: React.FC<{
 };
 
 /** Control tower: cross-engine constraints, alerts, and prioritized actions for Investment Plan. */
-const InvestmentPlanControlTower: React.FC = () => {
+const InvestmentPlanControlTower: React.FC<{
+  setActivePage?: (page: Page) => void;
+  triggerPageAction?: (page: Page, action: string) => void;
+}> = ({ setActivePage, triggerPageAction }) => {
   const { data } = useContext(DataContext)!;
   const { formatCurrencyString } = useFormatCurrency();
   const { analysis, actionQueue, cash, risk, household, ready } = useFinancialEnginesIntegration({ eager: true });
@@ -919,9 +922,33 @@ const InvestmentPlanControlTower: React.FC = () => {
       {hasAlerts && analysis && (
         <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
           <p className="text-xs font-semibold text-amber-800 mb-2">Alerts</p>
-          <ul className="space-y-1 text-sm text-amber-900">
+          <ul className="space-y-2 text-sm text-amber-900">
             {analysis.alerts.slice(0, 3).map((a, i) => (
-              <li key={i}>{a.message}</li>
+              <li key={i} className="space-y-1">
+                <p>{a.message}</p>
+                {a.suggestedAction && (
+                  <p className="text-xs text-amber-800/90">
+                    <span className="font-semibold">Suggested:</span> {a.suggestedAction}
+                  </p>
+                )}
+                {setActivePage && (a.links?.length ?? 0) > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-0.5">
+                    {(a.links ?? []).map((lnk) => (
+                      <button
+                        key={`${lnk.label}-${lnk.page}-${i}`}
+                        type="button"
+                        onClick={() => {
+                          if (lnk.action && triggerPageAction) triggerPageAction(lnk.page, lnk.action);
+                          else setActivePage(lnk.page);
+                        }}
+                        className="text-xs font-semibold text-primary hover:underline"
+                      >
+                        {lnk.label} →
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </li>
             ))}
           </ul>
         </div>
@@ -929,11 +956,35 @@ const InvestmentPlanControlTower: React.FC = () => {
       {hasActions && (
         <div className="mt-6 rounded-lg border border-slate-200 bg-white p-3">
           <p className="text-xs font-semibold text-slate-600 mb-2">Prioritized actions</p>
-          <ul className="space-y-1 text-sm text-slate-700">
+          <ul className="space-y-2 text-sm text-slate-700">
             {actionQueue.slice(0, 4).map((item, i) => (
-              <li key={i} className="flex justify-between gap-2">
-                <span>{item.action}</span>
-                <span className="text-slate-500 text-xs">P{Math.round(item.priority)}</span>
+              <li key={i} className="space-y-1">
+                <div className="flex justify-between gap-2">
+                  <span>{item.action}</span>
+                  <span
+                    className="text-slate-500 text-xs tabular-nums"
+                    title={`Priority ${Math.round(item.priority)} (higher = more urgent)`}
+                  >
+                    P{Math.round(item.priority)}
+                  </span>
+                </div>
+                {setActivePage && (item.links?.length ?? 0) > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {(item.links ?? []).map((lnk) => (
+                      <button
+                        key={`${lnk.label}-${lnk.page}-a-${i}`}
+                        type="button"
+                        onClick={() => {
+                          if (lnk.action && triggerPageAction) triggerPageAction(lnk.page, lnk.action);
+                          else setActivePage(lnk.page);
+                        }}
+                        className="text-xs font-semibold text-primary hover:underline"
+                      >
+                        {lnk.label} →
+                      </button>
+                    ))}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -942,9 +993,20 @@ const InvestmentPlanControlTower: React.FC = () => {
       {hasNextBest && (
         <div className="mt-6 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
           <p className="text-xs font-semibold text-indigo-800 mb-2">Suggested actions</p>
-          <ul className="space-y-1 text-sm text-indigo-900">
+          <ul className="space-y-2 text-sm text-indigo-900">
             {nextBestActions.slice(0, 3).map((a) => (
-              <li key={a.id}>{a.title}</li>
+              <li key={a.id} className="space-y-0.5">
+                <p>{a.title}</p>
+                {setActivePage && a.link && (
+                  <button
+                    type="button"
+                    onClick={() => setActivePage(a.link as Page)}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    {a.linkLabel || a.link} →
+                  </button>
+                )}
+              </li>
             ))}
           </ul>
         </div>
@@ -963,7 +1025,7 @@ const InvestmentPlanView: React.FC<{
     /** Open create-plan with prefilled fields (e.g. Smart add → Record plan). Bump `key` for each new intent. */
     stagedAddOnPlanned?: { key: number; symbol: string; name?: string; targetPrice?: number; amount?: number; quantity?: number; tradeType?: 'buy' | 'sell'; notes?: string } | null;
     onStagedAddOnPlannedHandled?: () => void;
-}> = ({ onExecutePlan, setActivePage: _setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
+}> = ({ onExecutePlan, setActivePage, triggerPageAction, embedded = false, stagedAddOnPlanned, onStagedAddOnPlannedHandled }) => {
     const { aiActionsEnabled } = useAI();
     const { data, addPlannedTrade, updatePlannedTrade, deletePlannedTrade, addUniverseTicker, getAvailableCashForAccount } = useContext(DataContext)!;
     const { trackAction, trackSuggestionFeedback } = useSelfLearning();
@@ -1533,7 +1595,7 @@ const InvestmentPlanView: React.FC<{
                         tip="Start with Create plan, or use a universe-aligned candidate as a draft. You decide targets and size—we only flag when your rule is met."
                     />
                 )}
-                <InvestmentPlanControlTower />
+                <InvestmentPlanControlTower setActivePage={setActivePage} triggerPageAction={triggerPageAction} />
                 {/* Single clear action row — avoids duplicate page titles */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-4 sm:px-6 shadow-sm">
                     <p className="text-sm text-slate-600 max-w-2xl leading-relaxed">

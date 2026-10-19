@@ -256,7 +256,7 @@ interface DataContextType {
   deleteBudget: (category: string, month: number, year: number) => Promise<void>;
   copyBudgetsFromPreviousMonth: (targetYear: number, targetMonth: number) => Promise<void>;
   addTransaction: (transaction: Omit<Transaction, 'id' | 'user_id'>, opts?: RecordWriteOptions) => Promise<boolean>;
-  updateTransaction: (transaction: Transaction, opts?: RecordWriteOptions) => Promise<void>;
+  updateTransaction: (transaction: Transaction, opts?: RecordWriteOptions) => Promise<boolean>;
   deleteTransaction: (transactionId: string) => Promise<void>;
   /** Create a transfer between two accounts (two transactions: out from fromAccountId, in to toAccountId). */
   addTransfer: (fromAccountId: string, toAccountId: string, amount: number, date?: string, note?: string, feeAmount?: number, opts?: RecordWriteOptions) => Promise<void>;
@@ -3584,24 +3584,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             transferInFlightKeysRef.current.delete(flightKey);
         }
     };
-    const updateTransaction = async (transaction: Transaction, opts?: RecordWriteOptions) => {
-        if(!supabase || !auth?.user) return;
+    const updateTransaction = async (transaction: Transaction, opts?: RecordWriteOptions): Promise<boolean> => {
+        if(!supabase || !auth?.user) return false;
         if (!(opts as { system?: boolean } | undefined)?.system) {
             const existing = (dataRef.current?.transactions ?? data?.transactions ?? []).find(
                 (t) => t.id === transaction.id,
             );
-            if (!assertPeriodUnlocked(existing?.date ?? transaction.date, 'edit transactions')) return;
+            if (!assertPeriodUnlocked(existing?.date ?? transaction.date, 'edit transactions')) return false;
             if (existing?.date && existing.date.slice(0, 7) !== String(transaction.date ?? '').slice(0, 7)) {
-                if (!assertPeriodUnlocked(transaction.date, 'move transactions into')) return;
+                if (!assertPeriodUnlocked(transaction.date, 'move transactions into')) return false;
             }
         }
         const core = validateTransactionCore({ date: transaction.date, amount: transaction.amount, accountId: transaction.accountId, description: transaction.description });
-        if (!core.valid) { toast(core.errors.join('\n'), 'error'); return; }
+        if (!core.valid) { toast(core.errors.join('\n'), 'error'); return false; }
         const existingForTransferCheck = (dataRef.current?.transactions ?? data?.transactions ?? []).find(
             (t) => t.id === transaction.id,
         );
         const transferEditBlock = assertTransferEditAllowed(existingForTransferCheck, transaction);
-        if (transferEditBlock) { toast(transferEditBlock, 'error'); return; }
+        if (transferEditBlock) { toast(transferEditBlock, 'error'); return false; }
         const postingAccount = (data?.accounts ?? []).find((a) => a.id === transaction.accountId);
         if (!(opts as { system?: boolean } | undefined)?.system) {
             const postingPolicy = canPostTransactionToAccount(postingAccount, {
@@ -3610,11 +3610,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
             if (!postingPolicy.allowed) {
                 toast(postingPolicy.reason ?? 'Transaction blocked by account posting policy.', 'error');
-                return;
+                return false;
             }
         }
         const updateOk = await guardRecordWrite(opts, summarizeUpdateTransactionForConfirm(transaction, postingAccount?.name));
-        if (!updateOk) return;
+        if (!updateOk) return false;
         const db = supabase;
         let error: any = null;
         let savedWithoutNote = false;
@@ -3702,6 +3702,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 console.warn('Failed to sync installment link on update:', e);
             }
         }
+        return !error;
     };
     const deleteTransaction = async (transactionId: string) => {
         if(!supabase || !auth?.user) return;

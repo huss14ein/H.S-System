@@ -22,4 +22,38 @@ describe('planExpenseOutliers', () => {
   it('builds Transactions page action', () => {
     expect(planExpenseOutlierPageAction(2026, 3, 'Housing')).toBe('filter-plan-expense:2026:4:Housing');
   });
+
+  it('does not flag lumpy yearly rent while YTD is within yearly plan', () => {
+    const data = {
+      accounts: [{ id: 'a1', currency: 'SAR', type: 'Checking', name: 'Main', balance: 0 }],
+      budgets: [
+        { id: 'b1', category: 'Housing Rent', limit: 120000, period: 'yearly', year: 2026, month: 1 },
+      ],
+      transactions: [
+        {
+          id: 'rent',
+          date: '2026-03-01',
+          type: 'expense',
+          amount: -60000,
+          category: 'Housing Rent',
+          budgetCategory: 'Housing Rent',
+          accountId: 'a1',
+          status: 'Approved',
+        },
+        {
+          id: 'food',
+          date: '2026-03-05',
+          type: 'expense',
+          amount: -500,
+          category: 'Food',
+          budgetCategory: 'Food',
+          accountId: 'a1',
+          status: 'Approved',
+        },
+      ],
+    } as unknown as FinancialData;
+
+    const rows = detectPlanExpenseOutliers({ data, year: 2026, sarPerUsd: 3.75 });
+    expect(rows.every((r) => r.category !== 'Housing Rent')).toBe(true);
+  });
 });

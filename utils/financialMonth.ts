@@ -1,3 +1,5 @@
+import { isYearlyPeriodBudget, normalizeBudgetPeriod } from './budgetPeriod';
+
 export type FinancialMonthKey = { year: number; month: number }; // month: 1-12
 
 /** App default when settings have no stored month start day (salary-cycle style). */
@@ -332,7 +334,7 @@ export function budgetAppliesToFinancialView(
   const month = Number(b.month);
   if (!Number.isFinite(year) || !Number.isFinite(month)) return false;
 
-  if (budgetView === 'Yearly' || b.period === 'yearly') {
+  if (budgetView === 'Yearly' || isYearlyPeriodBudget(b)) {
     return year === viewKey.year;
   }
 
@@ -382,12 +384,13 @@ export function budgetRowViewMatchScore(
   if (!Number.isFinite(year) || !Number.isFinite(month)) return -1;
   if (year !== viewKey.year) return -1;
 
-  const period = b.period ?? 'monthly';
+  const period = normalizeBudgetPeriod(b.period);
 
   // Year-scoped envelopes: visible in every month of the plan year.
+  // Score above exact monthly (200) so dual monthly+yearly same category prefers the yearly
+  // plan for Critical/dial math (lumpy months stay annual-aware).
   if (period === 'yearly') {
-    // Prefer a true yearly row over annualizing a monthly envelope when viewing Yearly.
-    return budgetView === 'Yearly' ? 250 : 150;
+    return budgetView === 'Yearly' ? 250 : 210;
   }
 
   if (month === viewKey.month) return 200;

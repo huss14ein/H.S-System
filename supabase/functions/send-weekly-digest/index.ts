@@ -156,22 +156,39 @@ async function calculateBudgetSummary(supabase: any, userId: string, periodEnd: 
   const { key, start } = financialMonthRange(periodEnd, monthStartDay);
   const monthStart = start.toISOString().split('T')[0];
   const monthEnd = periodEnd.toISOString().split('T')[0];
+  const ytdStart = `${key.year}-01-01`;
 
-  // Get budgets for current financial month (aligned with Budgets page keys)
-  const { data: budgets } = await supabase
+  // Year budgets: month-matched rows + yearly-period rows (often stored as month=1 only).
+  const { data: budgetsRaw } = await supabase
     .from('budgets')
     .select('*')
     .eq('user_id', userId)
-    .eq('year', key.year)
-    .eq('month', key.month);
+    .eq('year', key.year);
 
-  // Get transactions for month-to-date (same period as budget limits)
-  const { data: transactions } = await supabase
-    .from('transactions')
-    .select('*')
-    .eq('user_id', userId)
-    .gte('date', monthStart)
-    .lte('date', monthEnd);
+  const isYearlyPeriod = (period: unknown) => {
+    const p = String(period ?? '').trim().toLowerCase();
+    return p === 'yearly' || p === 'annual' || p === 'annually';
+  };
+  const budgets = (budgetsRaw || []).filter(
+    (b: any) =>
+      isYearlyPeriod(b.period) || Number(b.month) === key.month,
+  );
+
+  // Month + YTD transactions (YTD needed for yearly-plan overspend gate)
+  const [{ data: transactions }, { data: ytdTransactions }] = await Promise.all([
+    supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('date', monthStart)
+      .lte('date', monthEnd),
+    supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('date', ytdStart)
+      .lte('date', monthEnd),
+  ]);
 
   const isInternalTransfer = (t: { category?: string }) => {
     const c = String(t.category ?? '').trim().toLowerCase();
@@ -181,13 +198,15 @@ async function calculateBudgetSummary(supabase: any, userId: string, periodEnd: 
   const expenseTx = (transactions || []).filter(
     (t: any) => t.amount < 0 && !isInternalTransfer(t)
   );
+  const ytdExpenseTx = (ytdTransactions || []).filter(
+    (t: any) => t.amount < 0 && !isInternalTransfer(t)
+  );
 
   const totalBudget = (budgets || []).reduce(
     (sum: number, b: any) => sum + monthlyEquivalentFromLimit(b.limit ?? 0, b.period),
     0
   );
-  const totalSpent = expenseTx.reduce((sum: number, t: any) => sum + Math.abs(t.amount || 0), 0);
-  const percentUsed = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
+  const totalSpentRaw = expenseTx.reduce((sum: number, t: any) => sum + Math.abs(t.amount || 0), 0);
 
   // Aggregate by budget_category (maps to budget.category); fallback to category if unset
   const categorySpending = new Map<string, number>();
@@ -195,15 +214,38 @@ async function calculateBudgetSummary(supabase: any, userId: string, periodEnd: 
     const cat = (t.budget_category || t.category || '').trim() || 'Other';
     categorySpending.set(cat, (categorySpending.get(cat) || 0) + Math.abs(t.amount || 0));
   });
+  const ytdCategorySpending = new Map<string, number>();
+  ytdExpenseTx.forEach((t: any) => {
+    const cat = (t.budget_category || t.category || '').trim() || 'Other';
+    ytdCategorySpending.set(cat, (ytdCategorySpending.get(cat) || 0) + Math.abs(t.amount || 0));
+  });
 
   const overCategories: string[] = [];
+  let lumpyYearlyExcess = 0;
   (budgets || []).forEach((b: any) => {
-    const monthlyEq = monthlyEquivalentFromLimit(b.limit ?? 0, b.period);
+    const period = String(b.period ?? 'monthly').trim().toLowerCase();
     const spent = categorySpending.get(b.category) || 0;
+    // Any yearly-period category (not rent-only): overspend only when YTD > annual limit.
+    if (isYearlyPeriod(period)) {
+      const annualLimit = Number(b.limit) || 0;
+      const ytd = ytdCategorySpending.get(b.category) || 0;
+      // Only flag overspend when YTD exceeds the yearly plan (not a lumpy single month).
+      if (annualLimit > 0 && ytd > annualLimit) {
+        overCategories.push(b.category);
+      } else if (annualLimit > 0 && ytd <= annualLimit) {
+        const monthEq = annualLimit / 12;
+        lumpyYearlyExcess += Math.max(0, spent - monthEq);
+      }
+      return;
+    }
+    const monthlyEq = monthlyEquivalentFromLimit(b.limit ?? 0, period);
     if (monthlyEq > 0 && spent > monthlyEq) {
       overCategories.push(b.category);
     }
   });
+
+  const totalSpent = Math.max(0, totalSpentRaw - lumpyYearlyExcess);
+  const percentUsed = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
 
   return { totalBudget, totalSpent, percentUsed, overCategories };
 }

@@ -40,6 +40,48 @@ describe('annualPlanFromData', () => {
     expect(incomeMeta.recurringIncomeMonthlySum).toBe(10000);
   });
 
+  it('treats annual and annually period aliases as yearly envelopes', () => {
+    for (const period of ['annual', 'annually'] as const) {
+      const { rows } = buildAnnualPlanRows({
+        year: 2026,
+        budgets: [
+          {
+            id: 'b-rent',
+            category: 'Housing Rent',
+            limit: 12_000,
+            period: period as Budget['period'],
+            month: 1,
+            year: 2026,
+          },
+        ],
+        transactions: [
+          {
+            date: '2026-06-01',
+            type: 'expense',
+            amount: -6_000,
+            category: 'Housing Rent',
+            budgetCategory: 'Housing Rent',
+          },
+        ],
+        recurringTransactions: [],
+        investmentPlan: { monthlyBudget: 0 } as any,
+        investmentTransactions: [],
+        accounts: [],
+        investments: [],
+        personalAccountIds: new Set(),
+        data: null,
+        exchangeRate: 3.75,
+        sarPerUsd: 3.75,
+        expectedMonthlySalary: undefined,
+        householdOverrides: [],
+      });
+      const rent = rows.find((r) => r.type === 'expense' && r.category === 'Housing Rent');
+      expect(rent?.yearlyEnvelope).toBe(true);
+      expect(rent?.monthly_planned.every((n) => n === 1_000)).toBe(true);
+      expect(rent?.monthly_actual.reduce((a, b) => a + b, 0)).toBe(6_000);
+    }
+  });
+
   it('classifies salary budget as income-like', () => {
     expect(isIncomeLikeBudgetCategory('Salary')).toBe(true);
     expect(isIncomeLikeBudgetCategory('Food')).toBe(false);

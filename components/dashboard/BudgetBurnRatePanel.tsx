@@ -12,6 +12,10 @@ import {
 } from '../../utils/financialMonth';
 import { aggregatePersonalBudgetCategorySpendSar } from '../../services/budgetSpendMath';
 import { budgetMonthlyEquivalentSar } from '../../services/goalProjectionFunding';
+import {
+  resolveBudgetCategoryHeadroom,
+  ytdRangeForFinancialMonth,
+} from '../../services/budgetOverspendGate';
 import { DashboardVisualCard } from './DashboardVisualCard';
 import { dashboardChartMargin } from './chartLayout';
 
@@ -58,6 +62,15 @@ const BudgetBurnRatePanelInner: React.FC<{
       data,
       uiExchangeRate,
     );
+    const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(key, monthStartDay);
+    const ytdByCat = aggregatePersonalBudgetCategorySpendSar(
+      transactions,
+      ytdStart,
+      ytdEnd,
+      accountCurrencyById,
+      data,
+      uiExchangeRate,
+    );
 
     const activeBudgets = budgetsForFinancialMonthView(budgets ?? [], key, monthStartDay);
 
@@ -65,10 +78,26 @@ const BudgetBurnRatePanelInner: React.FC<{
       const budgetedRows = activeBudgets
         .map((b) => {
           const cat = String(b.category ?? '').trim() || 'Other';
-          const spent = spentByBudgetCat.get(cat) ?? 0;
-          const lim = Math.max(0, budgetMonthlyEquivalentSar(b));
+          const monthSpent = spentByBudgetCat.get(cat) ?? 0;
+          const headroom = resolveBudgetCategoryHeadroom({
+            category: cat,
+            finKey: key,
+            monthStartDay,
+            budgets: budgets ?? [],
+            monthSpentSar: monthSpent,
+            ytdSpentSar: ytdByCat.get(cat) ?? 0,
+          });
+          // Yearly plan categories: show YTD vs yearly cap so lumpy months are not "over".
+          const spent = headroom.mode === 'annual' ? headroom.spentSar : monthSpent;
+          const lim =
+            headroom.mode === 'annual'
+              ? Math.max(0, headroom.limitSar)
+              : Math.max(0, budgetMonthlyEquivalentSar(b));
           const pct = lim > 0 ? spent / lim : spent > 0 ? 1 : 0;
-          const status: ChartRow['status'] = pct >= 1 ? 'over' : pct >= 0.85 ? 'near' : 'ok';
+          const warnPct =
+            headroom.hasAnnualEnvelope ? headroom.annualUtilizationPct / 100 : pct;
+          const status: ChartRow['status'] =
+            warnPct >= 1 ? 'over' : warnPct >= 0.85 ? 'near' : 'ok';
           return {
             label: cat.length > 14 ? `${cat.slice(0, 14)}…` : cat,
             fullName: cat,

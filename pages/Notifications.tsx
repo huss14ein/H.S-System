@@ -141,13 +141,26 @@ const Notifications: React.FC<{
   const handleNotificationClick = (n: AppNotification) => {
     ctx?.markAsRead(n.id);
     if (n.pageLink) {
-      if (triggerPageAction && n.pageAction && isSupportedPageAction(n.pageLink, n.pageAction)) {
-        triggerPageAction(n.pageLink, n.pageAction);
+      const action = n.pageAction;
+      // Prefer pageLink+action when paired; recover Transactions drill-downs if pageLink was mismatched.
+      const pairedOk = Boolean(action && isSupportedPageAction(n.pageLink, action));
+      const transactionsDrill =
+        Boolean(action) &&
+        !pairedOk &&
+        (action!.startsWith('filter-by-budget:') ||
+          action!.startsWith('filter-by-month:') ||
+          action!.startsWith('filter-by-merchant:') ||
+          action!.startsWith('filter-plan-expense:')) &&
+        isSupportedPageAction('Transactions', action!);
+      if (triggerPageAction && pairedOk) {
+        triggerPageAction(n.pageLink, action!);
+      } else if (triggerPageAction && transactionsDrill) {
+        triggerPageAction('Transactions', action!);
       } else {
-        if (n.pageAction && !isSupportedPageAction(n.pageLink, n.pageAction)) {
+        if (action && !pairedOk && !transactionsDrill) {
           showToast('This alert action is not supported in this app version. Opened the related page instead.', 'info');
         }
-        setActivePage(n.pageLink);
+        setActivePage(transactionsDrill ? 'Transactions' : n.pageLink);
         if (n.pageHash) {
           window.setTimeout(() => {
             window.location.hash = n.pageHash!.replace(/^#/, '');

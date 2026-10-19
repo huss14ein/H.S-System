@@ -1,9 +1,14 @@
 import type { Budget } from '../types';
 import { budgetRowViewMatchScore, financialMonthKey, type FinancialMonthKey } from '../utils/financialMonth';
+import {
+  isYearlyPeriodBudget,
+  normalizeBudgetCategoryKey,
+  normalizeBudgetPeriod,
+} from './budgetPeriod';
 
 /** Stored limit → normalized monthly SAR equivalent (matches Budgets.tsx / household engine). */
 export function monthlyEquivalentStoredLimit(b: Pick<Budget, 'limit' | 'period'>): number {
-  const p = b.period ?? 'monthly';
+  const p = normalizeBudgetPeriod(b.period);
   if (p === 'yearly') return b.limit / 12;
   if (p === 'weekly') return b.limit * (52 / 12);
   if (p === 'daily') return b.limit * (365 / 12);
@@ -32,11 +37,11 @@ export function dedupeBudgetRowsByFinancialMonthInYear<T extends Budget>(
       byFinMonth.set(fk, r);
       continue;
     }
-    if (r.period === 'yearly' && prev.period !== 'yearly') {
+    if (isYearlyPeriodBudget(r) && !isYearlyPeriodBudget(prev)) {
       byFinMonth.set(fk, r);
       continue;
     }
-    if (prev.period === 'yearly' && r.period !== 'yearly') {
+    if (isYearlyPeriodBudget(prev) && !isYearlyPeriodBudget(r)) {
       continue;
     }
     const scoreR = budgetRowViewMatchScore(r, viewKey, monthStartDay);
@@ -62,14 +67,15 @@ export function annualEnvelopeLimitForCategory(
   budgets: Budget[],
   monthStartDay: unknown = 1,
 ): number {
+  const catKey = normalizeBudgetCategoryKey(category);
   const rows = dedupeBudgetRowsByFinancialMonthInYear(
-    budgets.filter((b) => b.category === category && b.year === year),
+    budgets.filter((b) => normalizeBudgetCategoryKey(b.category) === catKey && b.year === year),
     year,
     monthStartDay,
   );
   if (rows.length === 0) return 0;
 
-  const yearlyRows = rows.filter((r) => r.period === 'yearly');
+  const yearlyRows = rows.filter((r) => isYearlyPeriodBudget(r));
   if (yearlyRows.length > 0) {
     return Math.max(...yearlyRows.map((r) => r.limit));
   }
@@ -79,7 +85,7 @@ export function annualEnvelopeLimitForCategory(
     sumMonthlyEq += monthlyEquivalentStoredLimit(r);
   }
 
-  const monthlyRows = rows.filter((r) => (r.period ?? 'monthly') === 'monthly');
+  const monthlyRows = rows.filter((r) => normalizeBudgetPeriod(r.period) === 'monthly');
   if (rows.length === 1 && monthlyRows.length === 1) {
     return monthlyEquivalentStoredLimit(monthlyRows[0]) * 12;
   }

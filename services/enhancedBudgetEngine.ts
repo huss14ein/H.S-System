@@ -5,6 +5,7 @@
 
 import { Transaction } from '../types';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
+import { isYearlyPeriodBudget } from './budgetPeriod';
 
 // Types for enhanced budget engine
 export interface DynamicBaseline {
@@ -363,15 +364,37 @@ export function analyzeSpendingPatterns(transactions: Transaction[]): SpendingPa
  * Calculate comprehensive budget health metrics
  */
 export function calculateBudgetHealthMetrics(
-  budgets: Array<{ category: string; limit: number; spent: number }>,
+  budgets: Array<{
+    category: string;
+    limit: number;
+    spent: number;
+    /** When yearly + YTD within annual plan, do not score as overrun. */
+    period?: string;
+    annualLimit?: number;
+    ytdSpent?: number;
+  }>,
   transactions: Transaction[],
   _monthsOfHistory: number = 3
 ): BudgetHealthMetrics {
+  const effectiveSpendLimit = (b: {
+    limit: number;
+    spent: number;
+    period?: string;
+    annualLimit?: number;
+    ytdSpent?: number;
+  }) => {
+    if (isYearlyPeriodBudget(b)) {
+      const annual = Number(b.annualLimit ?? b.limit) || 0;
+      const ytd = Number(b.ytdSpent ?? b.spent) || 0;
+      return { spent: ytd, limit: annual };
+    }
+    return { spent: b.spent ?? 0, limit: b.limit ?? 0 };
+  };
+
   // Adherence score
   const adherenceScores = budgets.map(b => {
-    const limit = b.limit ?? 0;
+    const { limit, spent } = effectiveSpendLimit(b);
     if (limit <= 0) return 100;
-    const spent = b.spent ?? 0;
     if (spent <= limit) return 100;
     const overrun = (spent - limit) / limit;
     return Math.max(0, 100 - overrun * 100);
@@ -400,13 +423,19 @@ export function calculateBudgetHealthMetrics(
     ? Math.max(0, 100 - (forecastErrors / forecastCount) * 100)
     : 50;
   
-  // Stress resilience
-  const overruns = budgets.filter(b => (b.spent ?? 0) > (b.limit ?? 0)).length;
+  // Stress resilience (yearly rows use YTD vs annual envelope)
+  const overruns = budgets.filter((b) => {
+    const { spent, limit } = effectiveSpendLimit(b);
+    return limit > 0 && spent > limit;
+  }).length;
   const stressResilience = budgets.length > 0 ? Math.max(0, 100 - (overruns / budgets.length) * 100) : 100;
   
   // Optimization potential
   const avgUtilization = budgets.length > 0
-    ? budgets.reduce((sum, b) => sum + ((b.limit ?? 0) > 0 ? (b.spent ?? 0) / (b.limit ?? 1) : 0), 0) / budgets.length
+    ? budgets.reduce((sum, b) => {
+        const { spent, limit } = effectiveSpendLimit(b);
+        return sum + (limit > 0 ? spent / limit : 0);
+      }, 0) / budgets.length
     : 0;
   const optimizationPotential = avgUtilization < 0.7 
     ? Math.round((0.7 - avgUtilization) * 100)
@@ -434,7 +463,14 @@ export function calculateBudgetHealthMetrics(
  * Generate smart budget recommendations
  */
 export function generateSmartBudgetRecommendations(
-  currentBudgets: Array<{ category: string; limit: number; spent: number }>,
+  currentBudgets: Array<{
+    category: string;
+    limit: number;
+    spent: number;
+    period?: string;
+    annualLimit?: number;
+    ytdSpent?: number;
+  }>,
   baselines: DynamicBaseline[],
   patterns: SpendingPattern[],
   _income: number
@@ -446,14 +482,22 @@ export function generateSmartBudgetRecommendations(
     const pattern = patterns.find(p => p.category === budget.category);
     
     if (!baseline || !pattern) return;
+
+    // Yearly plan: evaluate YTD vs annual — skip false overspend increases while within plan.
+    const isYearly = isYearlyPeriodBudget(budget);
+    const annualLimit = Number(budget.annualLimit ?? (isYearly ? budget.limit : 0)) || 0;
+    const ytdSpent = Number(budget.ytdSpent ?? 0) || 0;
+    if (isYearly && annualLimit > 0 && ytdSpent <= annualLimit + 0.0001) {
+      return;
+    }
     
-    const limit = budget.limit ?? 0;
-    const spent = budget.spent ?? 0;
+    const limit = isYearly && annualLimit > 0 ? annualLimit : (budget.limit ?? 0);
+    const spent = isYearly && annualLimit > 0 ? ytdSpent : (budget.spent ?? 0);
     const utilization = limit > 0 ? spent / limit : 0;
     
     // Case 1: Consistently under-spending
     if (utilization < 0.7 && baseline.trendDirection !== 'increasing') {
-      const recommended = Math.round(budget.limit * 0.85);
+      const recommended = Math.round(limit * 0.85);
       recommendations.push({
         type: 'decrease',
         category: budget.category,
@@ -473,7 +517,9 @@ export function generateSmartBudgetRecommendations(
         category: budget.category,
         currentBudget: limit,
         recommendedBudget: recommended,
-        rationale: `Spending consistently exceeds budget with upward trend. Align budget with actual spending pattern.`,
+        rationale: isYearly
+          ? `YTD exceeds yearly plan with upward trend. Align annual limit with actual spending pattern.`
+          : `Spending consistently exceeds budget with upward trend. Align budget with actual spending pattern.`,
         expectedImpact: -(recommended - limit),
         confidence: 75
       });

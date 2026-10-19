@@ -138,10 +138,22 @@ const Header: React.FC<HeaderProps> = ({ activePage, setActivePage, onOpenLiveAd
     setIsNotificationsPreviewOpen(false);
     setIsTasksPreviewOpen(false);
     notificationsContext?.markAsRead(notification.id);
-    if (triggerPageActionPair && notification.pageAction && isSupportedPageAction(notification.pageLink, notification.pageAction)) {
-      triggerPageActionPair(notification.pageLink, notification.pageAction);
+    const action = notification.pageAction;
+    const pairedOk = Boolean(action && isSupportedPageAction(notification.pageLink, action));
+    const transactionsDrill =
+      Boolean(action) &&
+      !pairedOk &&
+      (action!.startsWith('filter-by-budget:') ||
+        action!.startsWith('filter-by-month:') ||
+        action!.startsWith('filter-by-merchant:') ||
+        action!.startsWith('filter-plan-expense:')) &&
+      isSupportedPageAction('Transactions', action!);
+    if (triggerPageActionPair && pairedOk) {
+      triggerPageActionPair(notification.pageLink, action!);
+    } else if (triggerPageActionPair && transactionsDrill) {
+      triggerPageActionPair('Transactions', action!);
     } else {
-      setActivePage(notification.pageLink);
+      setActivePage(transactionsDrill ? 'Transactions' : notification.pageLink);
       if (notification.pageHash) {
         window.setTimeout(() => {
           window.location.hash = notification.pageHash!.replace(/^#/, '');

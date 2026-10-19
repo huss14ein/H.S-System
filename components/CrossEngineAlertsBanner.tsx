@@ -162,20 +162,21 @@ const CrossEngineAlertsBanner: React.FC<CrossEngineAlertsBannerProps> = ({
               <ul className="space-y-2">
                 {actionQueue.slice(0, 6).map((item, i) => {
                   const p = Math.round(item.priority);
+                  // Engine priority: higher = more urgent (critical alerts are P100).
                   const priorityClass =
-                    p <= 2
+                    p >= 90
                       ? 'border-red-300 bg-red-100 text-red-900'
-                      : p <= 4
+                      : p >= 70
                         ? 'border-amber-300 bg-amber-100 text-amber-950'
                         : 'border-slate-200 bg-slate-100 text-slate-800';
                   const open = openActionIdx === i;
                   return (
-                    <li key={i} className="rounded-lg border border-sky-200/70 bg-white/90 text-sm text-slate-800 shadow-sm overflow-hidden">
+                    <li key={i} className="rounded-lg border border-sky-200/70 bg-white/90 text-sm text-slate-800 shadow-sm overflow-hidden border-l-4 border-l-sky-500">
                       <div className="flex items-start justify-between gap-3 px-3 py-2.5">
                         <span className="min-w-0 flex-1 leading-snug font-medium">{item.action}</span>
                         <span
                           className={`shrink-0 inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${priorityClass}`}
-                          title={`Priority ${p} (lower = more urgent)`}
+                          title={`Priority ${p} (higher = more urgent)`}
                         >
                           P{p}
                         </span>

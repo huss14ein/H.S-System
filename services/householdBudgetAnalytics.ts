@@ -3,6 +3,7 @@
  * Provides predictive analytics, scenario planning, and trend analysis
  */
 
+import type { Budget } from '../types';
 import type { HouseholdMonthPlan, HouseholdEngineResult } from './householdBudgetEngine';
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { toSAR } from '../utils/currencyMath';
@@ -11,6 +12,7 @@ import {
   financialMonthColumnIndexForDate,
   financialMonthKey,
 } from '../utils/financialMonth';
+import { resolveBudgetCategoryHeadroom } from './budgetOverspendGate';
 
 /** Bucket keys that are savings / investments — not consumption outflows. */
 const SAVINGS_BUCKET_KEYS = new Set([
@@ -434,8 +436,13 @@ export function detectSpendingAnomaliesFromTransactions(args: {
   accounts: AccountForFx[] | null | undefined;
   sarPerUsd: number;
   monthStartDay?: unknown;
+  /**
+   * When provided, any yearly-period plan category (rent, tuition, iqama, insurance, …)
+   * are not flagged as "unusual" while YTD spend remains within the yearly cap.
+   */
+  budgets?: Budget[] | null;
 }): BudgetAnomaly[] {
-  const { year, transactions, accounts, sarPerUsd, monthStartDay: msd } = args;
+  const { year, transactions, accounts, sarPerUsd, monthStartDay: msd, budgets } = args;
   const monthStartDay = clampMonthStartDay(msd, 1);
   const rate = Number(sarPerUsd);
   const fx = Number.isFinite(rate) && rate > 0 ? rate : 3.75;
@@ -484,6 +491,22 @@ export function detectSpendingAnomaliesFromTransactions(args: {
       const stdUsed = std > 1e-6 ? std : Math.max(25, Math.abs(expected) * 0.12, actual * 0.08);
       const z = (actual - expected) / stdUsed;
       if (!(actual > expected && z > 2)) continue;
+
+      // Yearly plan categories: a lumpy month is expected (rent twice/year) — skip while YTD ≤ yearly cap.
+      if (budgets && budgets.length > 0) {
+        const ytdThroughMonth = series.slice(0, m + 1).reduce((a, b) => a + b, 0);
+        const headroom = resolveBudgetCategoryHeadroom({
+          category,
+          finKey: { year, month: m + 1 },
+          monthStartDay,
+          budgets,
+          monthSpentSar: actual,
+          ytdSpentSar: ytdThroughMonth,
+        });
+        if (headroom.hasAnnualEnvelope && headroom.annualUtilizationPct <= 100.0001) {
+          continue;
+        }
+      }
 
       const deviation = actual - expected;
       const deviationPct = expected > 0 ? (deviation / expected) * 100 : 100;

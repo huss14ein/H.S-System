@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectSpendingAnomaliesFromTransactions } from '../services/householdBudgetAnalytics';
+import type { Budget } from '../types';
 
 describe('detectSpendingAnomaliesFromTransactions', () => {
   const year = 2026;
@@ -47,5 +48,41 @@ describe('detectSpendingAnomaliesFromTransactions', () => {
     expect(g && f).toBeTruthy();
     expect(g!.expectedAmount).toBeCloseTo(500, 0);
     expect(f!.expectedAmount).toBeCloseTo(200, 0);
+  });
+
+  it('does not flag Housing Rent outliers while YTD is within the yearly plan', () => {
+    const rentYearly = {
+      id: 'br',
+      category: 'Housing Rent',
+      limit: 18000,
+      period: 'yearly',
+      month: 1,
+      year: 2026,
+    } as Budget;
+    // Three small "baseline" months + one large semi-annual payment still within 18k YTD.
+    const transactions = [
+      { date: '2026-01-15', amount: -100, type: 'expense', accountId: 'a1', status: 'Approved', budgetCategory: 'Housing Rent' },
+      { date: '2026-02-10', amount: -100, type: 'expense', accountId: 'a1', status: 'Approved', budgetCategory: 'Housing Rent' },
+      { date: '2026-03-05', amount: -100, type: 'expense', accountId: 'a1', status: 'Approved', budgetCategory: 'Housing Rent' },
+      { date: '2026-04-20', amount: -9000, type: 'expense', accountId: 'a1', status: 'Approved', budgetCategory: 'Housing Rent' },
+    ];
+    const withoutBudgets = detectSpendingAnomaliesFromTransactions({
+      year,
+      transactions,
+      accounts,
+      sarPerUsd: 3.75,
+      monthStartDay: 1,
+    });
+    expect(withoutBudgets.some((r) => r.category === 'Housing Rent' && r.month === 4)).toBe(true);
+
+    const withYearlyPlan = detectSpendingAnomaliesFromTransactions({
+      year,
+      transactions,
+      accounts,
+      sarPerUsd: 3.75,
+      monthStartDay: 1,
+      budgets: [rentYearly],
+    });
+    expect(withYearlyPlan.some((r) => r.category === 'Housing Rent')).toBe(false);
   });
 });

@@ -35,6 +35,28 @@ describe('buildBudgetCardVisualMetrics', () => {
         expect(m.showDualEnvelope).toBe(false);
     });
 
+    it('Weekly/Daily views use YTD vs yearly cap for yearly-period rows (no false Critical)', () => {
+        const weekly = buildBudgetCardVisualMetrics({
+            budgetView: 'Weekly',
+            period: 'yearly',
+            limit: 120_000,
+            spentPeriod: 60_000,
+            spentYtd: 60_000,
+            annualEnvelopeLimit: 0,
+        });
+        expect(weekly.utilizationLabel).toBe('Healthy');
+        expect(Math.round(weekly.percentage)).toBe(50);
+        const daily = buildBudgetCardVisualMetrics({
+            budgetView: 'Daily',
+            period: 'yearly',
+            limit: 120_000,
+            spentPeriod: 60_000,
+            spentYtd: 60_000,
+            annualEnvelopeLimit: 0,
+        });
+        expect(daily.utilizationLabel).toBe('Healthy');
+    });
+
     it('Weekly view: dial % uses weekly cap for monthly-period budget', () => {
         const weeklyCap = 1200 / (52 / 12);
         const m = buildBudgetCardVisualMetrics({

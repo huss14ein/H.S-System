@@ -2,6 +2,8 @@
 
 This document reflects features and functionalities implemented in the codebase. It serves as the single source of truth for what the platform delivers.
 
+**5.1.0.0 rollout:** Footer/Settings version **5.1.0.0**. Notifications E2E (yearly-gated budget alerts + Transactions drill-downs); soft lumpy-month UX; lag/perf hardening on spend lookups. Continues the **5.0.0.0** annual-aware overspend gate for **all** `period: yearly` categories (not rent-only), Fibonacci TA hub, SMS حوالة واردة import validation + toast dedupe, and alerts P100 fixes.
+
 **4.0.0.0 rollout:** Footer/Settings version **4.0.0.0**. SMS import treats ATM withdrawals and credit-card settlements (سداد / card payment) as internal transfers across Al Rajhi, Alinma, SNB, SABB and English KSA templates — no budget prompts; Cash / Paid-from counterparties required.
 
 **3.2.2.0 rollout:** Footer/Settings version **3.2.2.0**. Balance-vs-ledger Keep stored / Reconcile dismissals stay sticky (`account_id`-safe nets, observed post-apply ack, hydrate merge of `ui_acks`); personal transaction slice keeps snake_case rows; hybrid net capital falls back to scoped capital when the platform pass sums to zero.
@@ -65,6 +67,13 @@ This document reflects features and functionalities implemented in the codebase.
 - Household engine bulk add: one place to create or update many budgets (household template with salary + family size + category selection, or engine projection from plan buckets); lives only under Household Engine tab
 - Shared budgets, budget requests (New Category / Increase Limit), approval flow, governance categories
 - Shared budget transactions: current month default, month/status/category filters
+
+### Annual-aware overspend gate (`services/budgetOverspendGate.ts`)
+- **Problem:** Any yearly-period envelope (Housing Rent, Iqama Renewal, Vehicle Insurance, School Tuition, Istimara, Fahas, Dependent Fees, Exit/Re-entry Visa, Zakat, custom yearly categories, …) looks “Critical” if you compare a lumpy month to `limit ÷ 12`.
+- **Rule:** Keyed by **`period: 'yearly'`** (also `annual` / `annually`, case-insensitive) for **every category name** — not a Housing Rent special case. Critical / unusual / drift / KPI / digest / LiveAdvisor / Plan grid / outliers use **financial-plan YTD** (respects `monthStartDay`) vs yearly plan while YTD ≤ annual cap. Dual monthly+yearly rows prefer the yearly plan (match score 210).
+- **Soft UX:** Budgets cards + Transactions show a calm “lumpy month within yearly plan” note when the month is hot vs monthly pace but YTD is still within the annual cap (no Critical / confirm scare).
+- **Wired:** Notifications, Transactions confirm + coverage, Analysis model, Budget burn-rate, Dashboard KPI (`computeDashboardKpiSnapshot`), wealth summary, weekly digest, AI automation, Plan (`yearlyEnvelope`), Budgets Weekly/Daily dials + admin remaining, import/budget AI grounding. Shared helpers: `utils/budgetPeriod.ts` / `services/budgetPeriod.ts`.
+- **Not this gate:** Cross-engine cashflow-buffer / min-balance alerts stay **liquidity** signals (intentionally not envelope math).
 
 ### Emergency Fund & Sinking Funds
 - **Location:** `hooks/useEmergencyFund.ts`, `pages/SinkingFunds.tsx`, `pages/Accounts.tsx`, `pages/Goals.tsx`
@@ -231,6 +240,11 @@ This document reflects features and functionalities implemented in the codebase.
 - **Bollinger Bands:** Middle (SMA), upper/lower bands. Wired in Watchlist (BB: near upper/mid/lower).
 - **Z-Score:** Mean reversion; |z| &gt; 2 over-extended. Wired in Watchlist Signals column.
 - **SMA / EMA and crossovers:** Golden Cross / Death Cross (e.g. SMA50 vs SMA200). Short-term crossover SMA(5)/SMA(10) for limited data; wired in Watchlist Signals.
+
+### Fibonacci retracement (`services/fibonacciAnalysis.ts`) — Option B TA hub
+- **Levels:** 0 / 23.6 / 38.2 / 50 / 61.8 (golden) / 78.6 / 100. Downtrend: Low+(High−Low)×ratio; uptrend: High−(High−Low)×ratio.
+- **Reversal zone:** 61.8–78.6%; zone-entry notifications (deduped per symbol/day); scenario invalidation beyond 78.6%.
+- **Wired:** Watchlist Signals + MiniPriceChart overlays; Investments holding charts; AI grounding (`formatFibForAiGrounding` / `fibonacciGrounding`); Logic Engines hub demo card.
 
 ### Tech stack (recommended / in use)
 - **Math:** Decimal.js (installed; used in portfolio construction).

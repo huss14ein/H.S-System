@@ -5,6 +5,16 @@ import { finnhubFetch, toFinnhubSymbol, fromFinnhubSymbol, canonicalQuoteLookupK
 import { countsAsExpenseForCashflowKpi } from './transactionFilters';
 import { capitalizeCategoryName } from '../utils/categoryFormat';
 import { DEFAULT_SAR_PER_USD, resolveSarPerUsd } from '../utils/currencyMath';
+import {
+  financialMonthRange,
+  resolveMonthStartDayFromData,
+} from '../utils/financialMonth';
+import { getPersonalAccounts, getPersonalTransactions } from '../utils/wealthScope';
+import { aggregatePersonalBudgetCategorySpendSar } from './budgetSpendMath';
+import {
+  resolveBudgetCategoryHeadroom,
+  ytdRangeForFinancialMonth,
+} from './budgetOverspendGate';
 import { effectiveHoldingValueInBookCurrency } from '../utils/holdingValuation';
 import { fetchStooq } from './stooqClient';
 import { getSahmkLivePrices } from './sahmkQuote';
@@ -1495,18 +1505,82 @@ export const getAITransactionAnalysis = async (
         withAdviceAndActionCards(buildDeterministicStatementImportInsight(transactions, budgets), seedCards);
 
     try {
-        const spending = new Map<string, number>();
-        transactions.filter((t) => countsAsExpenseForCashflowKpi(t)).forEach((t) => {
-            const bucket = String(t.budgetCategory || t.category || '').trim();
-            if (!bucket) return;
-            spending.set(bucket, (spending.get(bucket) || 0) + Math.abs(Number(t.amount) || 0));
-        });
+        // Build month + YTD spend from full personal ledger when available so Budgets AI
+        // does not compare multi-year lifetime spend to a single yearly plan limit.
+        let monthSpentByCat = new Map<string, number>();
+        let ytdSpentByCat = new Map<string, number>();
+        let finKeyForHeadroom: { year: number; month: number } | null = null;
+        let monthStartDay: unknown = 1;
+        if (data) {
+            monthStartDay = resolveMonthStartDayFromData(data);
+            const range = financialMonthRange(new Date(), monthStartDay);
+            finKeyForHeadroom = range.key;
+            const accounts = getPersonalAccounts(data);
+            const accountCurrencyById = new Map(
+                accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+            );
+            const ledgerTx = getPersonalTransactions(data);
+            const fx = resolveSarPerUsd(data, undefined);
+            monthSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+                ledgerTx,
+                range.start,
+                range.end,
+                accountCurrencyById,
+                data,
+                fx,
+            );
+            const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(range.key, monthStartDay);
+            ytdSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+                ledgerTx,
+                ytdStart,
+                ytdEnd,
+                accountCurrencyById,
+                data,
+                fx,
+            );
+        } else {
+            transactions.filter((t) => countsAsExpenseForCashflowKpi(t)).forEach((t) => {
+                const bucket = String(t.budgetCategory || t.category || '').trim();
+                if (!bucket) return;
+                const amt = Math.abs(Number(t.amount) || 0);
+                monthSpentByCat.set(bucket, (monthSpentByCat.get(bucket) || 0) + amt);
+                ytdSpentByCat.set(bucket, (ytdSpentByCat.get(bucket) || 0) + amt);
+            });
+        }
 
         const budgetPerformance = budgets
             .map((b) => {
-                const spent = spending.get(b.category) || 0;
-                const percentage = b.limit > 0 ? (spent / b.limit) * 100 : 0;
-                return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${b.limit.toLocaleString()} SAR (${percentage.toFixed(0)}% used)`;
+                const isYearly = b.period === 'yearly';
+                if (data && finKeyForHeadroom) {
+                    const headroom = resolveBudgetCategoryHeadroom({
+                        category: b.category,
+                        finKey: finKeyForHeadroom,
+                        monthStartDay,
+                        budgets,
+                        monthSpentSar: monthSpentByCat.get(b.category) ?? 0,
+                        ytdSpentSar: ytdSpentByCat.get(b.category) ?? 0,
+                    });
+                    const limit = headroom.hasAnnualEnvelope ? headroom.annualLimitSar : headroom.limitSar;
+                    const spent = headroom.hasAnnualEnvelope ? headroom.spentSar : headroom.monthSpentSar;
+                    const pct = headroom.hasAnnualEnvelope
+                        ? headroom.annualUtilizationPct
+                        : headroom.utilizationPct;
+                    const unit = headroom.hasAnnualEnvelope ? 'yearly plan' : 'monthly limit';
+                    const note = headroom.lumpyMonthWithinAnnual
+                        ? ' — within yearly plan (lumpy month OK)'
+                        : headroom.hasAnnualEnvelope && pct <= 100.0001
+                          ? ' — within yearly plan'
+                          : '';
+                    return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${limit.toLocaleString()} SAR (${pct.toFixed(0)}% of ${unit})${note}`;
+                }
+                const spent = monthSpentByCat.get(b.category) || 0;
+                const limit = Number(b.limit) || 0;
+                // Import-batch path: yearly = annual cap (not ÷12).
+                const percentage = limit > 0 ? (spent / limit) * 100 : 0;
+                const withinAnnual = isYearly && limit > 0 && spent <= limit;
+                const unit = isYearly ? 'yearly plan' : 'limit';
+                const note = withinAnnual ? ' — within yearly plan (lumpy month OK)' : '';
+                return `- **${b.category}**: Spent ${spent.toLocaleString()} of ${limit.toLocaleString()} SAR (${percentage.toFixed(0)}% of ${unit})${note}`;
             })
             .join('\n');
 
@@ -1916,6 +1990,8 @@ export type WatchlistAdviceOptions = {
     insightOpts?: AiInsightOptions;
     items?: Array<{ symbol: string; name?: string }>;
     holdingsSymbols?: string[];
+    /** Precomputed Fibonacci levels per symbol (educational grounding — do not invent Fibs). */
+    fibonacciGrounding?: string[];
 };
 
 export const getAIInvestmentOverviewAnalysis = async (
@@ -2331,6 +2407,8 @@ export interface TradeAnalysisContext {
     txDateNewest?: string;
     /** Human note e.g. "Last 20 trades by date (preferring last 90 days)." */
     tradeSelectionNote?: string;
+    /** Precomputed Fibonacci swing levels for symbols in the trade batch. */
+    fibonacciGrounding?: string[];
 }
 
 export const getAITradeAnalysis = async (
@@ -2391,6 +2469,7 @@ ${mergedContext.planBudget != null && mergedContext.planBudget > 0 ? `Monthly pl
 ${mergedContext.planExecutionCurrency ? `Plan execution currency: ${mergedContext.planExecutionCurrency}` : ''}
 ${mergedContext.corePct != null ? `Core/Upside sleeve split: ${(mergedContext.corePct * 100).toFixed(0)}% / ${((mergedContext.upsidePct ?? 0) * 100).toFixed(0)}%` : ''}
 ${mergedContext.tradeActivitySummary ? `Activity summary: ${mergedContext.tradeActivitySummary}` : ''}
+${mergedContext.fibonacciGrounding?.length ? `Computed Fibonacci (use these exact levels — do not invent):\n${mergedContext.fibonacciGrounding.join('\n')}` : ''}
 `.trim()
         : '';
 
@@ -2433,7 +2512,7 @@ What the user did in one sentence (buys/sells, main symbols, size). Use numbers.
 ### Technical Framework Matrix
 - Dow Theory: regime (uptrend/downtrend/range) and why.
 - Elliott Wave: likely wave context (impulse/corrective) and what would invalidate it.
-- Fibonacci: key retracement/extension zone(s) to monitor.
+- Fibonacci: cite computed 61.8% (golden) / 78.6% reversal zone from GROUND TRUTH when provided; for downtrends draw high→low and watch selling pressure in that zone (invalidate above 78.6%); for uptrends draw low→high and watch buying support in that zone (invalidate below 78.6%).
 - Chart Patterns: active pattern hypothesis and trigger level.
 - Candlestick Patterns: strongest recent candle signal and interpretation.
 - Combined Method (confluence): where 2+ frameworks align and where they conflict.
@@ -2541,6 +2620,7 @@ export const getAIWatchlistAdvice = async (
         }
         return out;
     };
+    const fibLines = (options?.fibonacciGrounding ?? []).filter(Boolean).slice(0, 12);
     const watchBlock = [
         '=== WATCHLIST ===',
         `Symbols (${normalized.length}): ${list}`,
@@ -2548,8 +2628,11 @@ export const getAIWatchlistAdvice = async (
             ? `Already in portfolio (overlap): ${overlap.join(', ')} — discuss concentration, not as new ideas.`
             : 'No watchlist symbol overlaps top holdings list (or holdings empty).',
         g?.topHoldingsLines?.length ? `Top holdings (SAR): ${g.topHoldingsLines.join('; ')}` : '',
+        fibLines.length
+            ? `Computed Fibonacci (use these exact levels — do not invent):\n${fibLines.join('\n')}`
+            : '',
         '=== END WATCHLIST ===',
-        'Do not invent prices, targets, or fundamentals — symbols/names only unless in GROUND TRUTH.',
+        'Do not invent prices, targets, fundamentals, or Fib levels — symbols/names only unless in GROUND TRUTH.',
     ]
         .filter(Boolean)
         .join('\n');
@@ -3122,6 +3205,8 @@ export const getAIStockAnalysis = async (
         forceRefresh?: boolean;
         wealthGrounding?: string;
         investableCashSar?: number;
+        /** Precomputed Fibonacci swing text for this symbol. */
+        fibonacciGrounding?: string;
     },
 ): Promise<{ content: string, groundingChunks: any[] }> => {
     const dayKey = new Date().toISOString().slice(0, 10);
@@ -3138,6 +3223,9 @@ export const getAIStockAnalysis = async (
         ? Number(holding.currentValue || 0) / Number(holding.quantity || 1)
         : Number(holding.avgCost || 0);
     const wealthBlock = options?.wealthGrounding ? `\n${options.wealthGrounding}\n` : '';
+    const fibBlock = options?.fibonacciGrounding
+        ? `\nComputed Fibonacci (use these exact levels — do not invent):\n${options.fibonacciGrounding}\n`
+        : '';
     const cashHint =
         options?.investableCashSar != null && Number.isFinite(options.investableCashSar)
             ? `Investable / tradable cash (SAR): ${Math.round(options.investableCashSar).toLocaleString()}. Size any proposed trade ActionCard as a modest % of this cash.`
@@ -3145,7 +3233,7 @@ export const getAIStockAnalysis = async (
     const primaryPrompt = `You are Finova AI Investor Copilot, a very clever expert investment analyst.
 Generate a **fresh, current-market** analyst update for ${holding.name} (${holding.symbol ?? ''}) using Google Search.
 Treat stale/outdated references as low confidence and prefer latest items.
-${wealthBlock}
+${wealthBlock}${fibBlock}
 Portfolio snapshot context (for relevance only):
 - Shares: ${Number(holding.quantity || 0).toLocaleString()}
 - Avg cost: ${Number(holding.avgCost || 0).toFixed(2)}
@@ -3162,6 +3250,9 @@ Return Markdown only (no HTML):
 
 ### Analyst Sentiment
 - One short paragraph: current sentiment (bullish/bearish/neutral) and why.
+
+### Fibonacci / technical levels
+- If computed Fib ground truth is present: cite the 61.8–78.6% zone and whether price is inside it; educational only.
 
 ### Portfolio fit advice
 - How this position fits THIS user's liquidity, concentration, and investable cash (cite GROUND TRUTH when present). 2 bullets of suggestions + one preferred recommendation CTA (Record Trade / Recovery / hold).

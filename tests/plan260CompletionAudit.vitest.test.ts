@@ -1,6 +1,6 @@
 /**
  * Plan 2.6 feature completion audit — Sukuk, corporate actions, spending, ultra analytics.
- * Current packaged app version is asserted as 4.0.0.0.
+ * Current packaged app version is asserted as 5.1.0.0.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
@@ -32,9 +32,9 @@ const REQUIRED_TESTS = [
 ];
 
 describe('plan 2.6 feature completion audit', () => {
-  it('version 4.0.0.0 in package and buildInfo', () => {
-    expect(read('package.json')).toContain('"version": "4.0.0.0"');
-    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '4.0.0.0'");
+  it('version 5.1.0.0 in package and buildInfo', () => {
+    expect(read('package.json')).toContain('"version": "5.1.0.0"');
+    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '5.1.0.0'");
   });
 
   it('Track A — Sukuk recovery artifacts', () => {
@@ -64,7 +64,8 @@ describe('plan 2.6 feature completion audit', () => {
     expect(read('services/spendingReportExport.ts')).toContain('downloadSpendingBriefPdf');
     expect(read('components/charts/ExpenseBreakdownChart.tsx')).toContain('buildBudgetDrillDownAction');
     expect(read('components/dashboard/ExpenseDonutDrilldown.tsx')).toContain('spendingIntelMapping');
-    expect(read('context/NotificationsContext.tsx')).toContain('detectSpendingAnomaliesFromTransactions');
+    expect(read('context/NotificationsContext.tsx')).toContain('buildBudgetRelatedNotifications');
+    expect(read('services/notificationBudgetAlerts.ts')).toContain('detectSpendingAnomaliesFromTransactions');
   });
 
   it('Track D — ultra analytics workspace + zones + creative charts', () => {

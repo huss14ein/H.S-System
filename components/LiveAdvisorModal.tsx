@@ -7,12 +7,17 @@ import { useCanonicalFinancialMetrics, useCanonicalSimulatedPrices } from '../ho
 import { formatGoalsProgressForPrompt } from '../services/goalResolvedTotals';
 import { buildAiPersonalWealthGrounding } from '../services/aiPersonalWealthGrounding';
 import { computeCapitalDeployment } from '../services/capitalDeploymentOrchestrator';
-import { getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
+import { getPersonalAccounts, getPersonalLiabilities, getPersonalTransactions } from '../utils/wealthScope';
 import { invokeAI, formatAiError, buildLiveAdvisorSystemInstruction } from '../services/geminiService';
 import { useAI } from '../context/AiContext';
 import AiProxyUnavailableHint from './AiProxyUnavailableHint';
 import { countsAsExpenseForCashflowKpi } from '../services/transactionFilters';
-import { financialMonthRange, resolveMonthStartDayFromData, dateInRange } from '../utils/financialMonth';
+import { financialMonthRange, resolveMonthStartDayFromData } from '../utils/financialMonth';
+import { aggregatePersonalBudgetCategorySpendSar } from '../services/budgetSpendMath';
+import {
+  resolveBudgetCategoryHeadroom,
+  ytdRangeForFinancialMonth,
+} from '../services/budgetOverspendGate';
 import { HeadsetIcon } from './icons/HeadsetIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { SendIcon } from './icons/SendIcon';
@@ -172,22 +177,55 @@ const LiveAdvisorModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({
     }, [wealthGroundingRef]);
 
     const getBudgetStatus_ = useCallback(({ category }: { category: string }) => {
-        const budget = (data?.budgets ?? []).find(b => b.category.toLowerCase() === category.toLowerCase());
+        const budgets = data?.budgets ?? [];
+        const budget = budgets.find((b) => b.category.toLowerCase() === category.toLowerCase());
         if (!budget) return { error: `Budget category "${category}" not found.` };
-        const monthlyLimit = budget.period === 'yearly' ? budget.limit / 12 : budget.period === 'weekly' ? budget.limit * (52 / 12) : budget.period === 'daily' ? budget.limit * (365 / 12) : budget.limit;
         const now = new Date();
         const monthStartDay = resolveMonthStartDayFromData(data);
-        const { start: firstDayOfMonth, end: lastDayOfMonth } = financialMonthRange(now, monthStartDay);
+        const { start: firstDayOfMonth, end: lastDayOfMonth, key: finKey } = financialMonthRange(now, monthStartDay);
         const transactions = getPersonalTransactions(data);
-        const spent = transactions
-            .filter((t: { type?: string; date: string; budgetCategory?: string; category?: string }) =>
-                countsAsExpenseForCashflowKpi(t) &&
-                dateInRange(t.date, firstDayOfMonth, lastDayOfMonth) &&
-                t.budgetCategory === budget.category,
-            )
-            .reduce((sum: number, t: { amount?: number }) => sum + Math.abs(t.amount ?? 0), 0);
-        return { limit: monthlyLimit, spent, remaining: monthlyLimit - spent };
-    }, [data]);
+        const accounts = getPersonalAccounts(data);
+        const accountCurrencyById = new Map(
+            accounts.map((a) => [String(a.id), (a.currency === 'USD' ? 'USD' : 'SAR') as 'SAR' | 'USD']),
+        );
+        const monthSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+            transactions,
+            firstDayOfMonth,
+            lastDayOfMonth,
+            accountCurrencyById,
+            data,
+            sarPerUsd,
+        );
+        const { start: ytdStart, end: ytdEnd } = ytdRangeForFinancialMonth(finKey, monthStartDay);
+        const ytdSpentByCat = aggregatePersonalBudgetCategorySpendSar(
+            transactions,
+            ytdStart,
+            ytdEnd,
+            accountCurrencyById,
+            data,
+            sarPerUsd,
+        );
+        const headroom = resolveBudgetCategoryHeadroom({
+            category: budget.category,
+            finKey,
+            monthStartDay,
+            budgets,
+            monthSpentSar: monthSpentByCat.get(budget.category) ?? 0,
+            ytdSpentSar: ytdSpentByCat.get(budget.category) ?? 0,
+        });
+        const limit = headroom.hasAnnualEnvelope ? headroom.annualLimitSar : headroom.limitSar;
+        const spent = headroom.hasAnnualEnvelope ? headroom.spentSar : headroom.monthSpentSar;
+        return {
+            limit,
+            spent,
+            remaining: limit - spent,
+            mode: headroom.hasAnnualEnvelope ? 'yearly_plan' : 'monthly',
+            utilizationPct: headroom.hasAnnualEnvelope
+                ? headroom.annualUtilizationPct
+                : headroom.utilizationPct,
+            lumpyMonthWithinAnnual: headroom.lumpyMonthWithinAnnual,
+        };
+    }, [data, sarPerUsd]);
 
     const getRecentTransactions_ = useCallback(({ limit }: { limit: number }) => {
         const transactions = getPersonalTransactions(data);

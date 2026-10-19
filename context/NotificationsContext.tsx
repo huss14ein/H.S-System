@@ -44,9 +44,7 @@ import {
   financialMonthRange,
   resolveMonthStartDayFromData,
 } from '../utils/financialMonth';
-import { detectSpendingAnomaliesFromTransactions } from '../services/householdBudgetAnalytics';
-import { computeExpenseBudgetAnalysisModel } from '../services/expenseBudgetAnalysisModel';
-import { buildBudgetDrillDownAction } from '../services/spendingDrillDown';
+import { buildBudgetRelatedNotifications } from '../services/notificationBudgetAlerts';
 import { cachedSupabaseHeadCount } from '../services/supabaseQueryCache';
 import { scheduleIdleWork } from '../utils/runWhenIdle';
 import { isBackgroundWorkPaused } from '../utils/backgroundWorkGate';
@@ -230,32 +228,18 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       list.push(n);
     };
 
-    // Budgets: keep only the top 4 closest to breach
-    const threshold = data.settings?.budgetThreshold ?? 90;
-    const budgetCandidates = (data.budgets ?? []).map((b) => {
-      const spent = Number((b as any).spent ?? (b as any).used ?? 0);
-      const limit = Number((b as any).limit ?? (b as any).amount ?? 1);
-      const pct = limit > 0 ? (spent / limit) * 100 : 0;
-      return { b, pct };
-    }).filter((x) => x.pct >= threshold).sort((a, b) => b.pct - a.pct).slice(0, 4);
-
-    budgetCandidates.forEach(({ b, pct }) => {
-      const period = String((b as any).period ?? 'monthly').toLowerCase();
-      const periodTag = period === 'weekly' || period === 'yearly' || period === 'daily' ? period : 'monthly';
-      const y = Number((b as any).year) || now.getFullYear();
-      const m = Number((b as any).month) || (now.getMonth() + 1);
-      push({
-        id: `budget-${b.id}`,
-        category: 'Budget',
-        message: `"${b.category ?? 'Budget'}" is at ${pct.toFixed(0)}% of limit.`,
-        date: now.toISOString(),
-        isRead: false,
-        pageLink: 'Transactions',
-        pageAction: safePageAction('Transactions', `filter-by-budget:${encodeURIComponent(String(b.category ?? 'Other'))}:${periodTag}:${y}:${m}`),
-        severity: pct >= 100 ? 'urgent' : 'warning',
-        actionHint: pct >= 100 ? 'Review and reduce spending or increase approved limit.' : 'Monitor this category and reduce optional spend.',
-      });
-    });
+    // Budget alerts (threshold + drift/envelope/anomaly): yearly-gated, Transactions drill-down.
+    // Enhancement budget rows respect mark-all dismiss grace (same as other enhancement signals).
+    const inDismissGraceEarly = Date.now() < dismissGraceUntilRef.current;
+    for (const n of buildBudgetRelatedNotifications({
+      data,
+      sarPerUsd,
+      now,
+      budgetDrift: inDismissGraceEarly ? [] : enhancementSignals.budgetDrift,
+      skipEnhancementBudgetAlerts: inDismissGraceEarly,
+    })) {
+      push(n);
+    }
 
     // Goals near deadline
     (data.goals ?? []).forEach((g) => {
@@ -717,69 +701,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           actionHint: 'Review goal deadlines and linked budgets or investments on Goals.',
         });
       }
-      for (const d of enhancementSignals.budgetDrift.slice(0, 2)) {
-        push({
-          id: `budget-drift-${d.category}`,
-          category: 'Budget',
-          message: `${d.category} spend is ${d.driftPct > 0 ? '+' : ''}${d.driftPct.toFixed(0)}% vs your 3-month baseline.`,
-          date: now.toISOString(),
-          isRead: false,
-          pageLink: 'Analysis',
-          pageAction: safePageAction(
-            'Transactions',
-            buildBudgetDrillDownAction({ budgetCategory: d.category, data }),
-          ),
-          severity: Math.abs(d.driftPct) >= 30 ? 'warning' : 'info',
-          actionHint: 'Open Analysis or Transactions to adjust limits or investigate the category.',
-        });
-      }
-
-      const spendModel = computeExpenseBudgetAnalysisModel(data, sarPerUsd, now, 'personal');
-      if (spendModel) {
-        const finIso = currentFinancialMonthIso(now, resolveMonthStartDayFromData(data));
-        for (const c of spendModel.overBudgetCategories.slice(0, 3)) {
-          push({
-            id: `spend-envelope-${c.category}-${finIso}`,
-            category: 'Budget',
-            message: `"${c.category}" is ${c.utilizationPct.toFixed(0)}% of your fiscal envelope (${Math.round(c.spentSar).toLocaleString()} / ${Math.round(c.limitSar).toLocaleString()} SAR).`,
-            date: now.toISOString(),
-            isRead: false,
-            pageLink: 'Transactions',
-            pageAction: safePageAction(
-              'Transactions',
-              buildBudgetDrillDownAction({ budgetCategory: c.category, data }),
-            ),
-            severity: c.utilizationPct >= 100 ? 'urgent' : 'warning',
-            actionHint: 'Review transactions in this category or adjust the budget envelope.',
-          });
-        }
-      }
-
-      const monthStartDay = resolveMonthStartDayFromData(data);
-      const finKey = financialMonthKeyFromTransactionDate(now, monthStartDay);
-      const anomalies = detectSpendingAnomaliesFromTransactions({
-        year: finKey.year,
-        transactions: getPersonalTransactions(data),
-        accounts: getPersonalAccounts(data),
-        sarPerUsd,
-        monthStartDay,
-      });
-      for (const a of anomalies.slice(0, 2)) {
-        push({
-          id: `spend-anomaly-${a.category}-${finKey.month}`,
-          category: 'Budget',
-          message: `Unusual spend in ${a.category}: ${a.explanation}`,
-          date: now.toISOString(),
-          isRead: false,
-          pageLink: 'Transactions',
-          pageAction: safePageAction(
-            'Transactions',
-            buildBudgetDrillDownAction({ budgetCategory: a.category, data }),
-          ),
-          severity: a.severity === 'high' ? 'urgent' : 'warning',
-          actionHint: 'Review this month’s transactions for one-off or mis-categorized items.',
-        });
-      }
+      // Budget drift / envelope / anomaly alerts: built via buildBudgetRelatedNotifications above
+      // (yearly-gated + Transactions pageAction pairing). Goal conflicts stay here.
     }
 
     const execLogs = (data.executionLogs ?? []) as { created_at?: string; date?: string }[];

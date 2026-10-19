@@ -107,12 +107,33 @@ export function detectPlanExpenseOutliers(args: {
 
   if (ytdExpenseAbs <= 0) return [];
 
+  // Any yearly-period plan category: suppress "large expense" warnings while
+  // category YTD is still within that yearly envelope (rent, tuition, iqama, …).
+  const ytdByCategory = new Map<string, number>();
+  for (const r of rows) {
+    ytdByCategory.set(r.category, (ytdByCategory.get(r.category) ?? 0) + r.absSar);
+  }
+  const yearlyLimitByCategory = new Map<string, number>();
+  for (const b of data?.budgets ?? []) {
+    if (String(b.period ?? '').toLowerCase() !== 'yearly') continue;
+    if (Number(b.year) !== year) continue;
+    const cat = String(b.category || '').trim();
+    if (!cat) continue;
+    yearlyLimitByCategory.set(cat, Math.max(yearlyLimitByCategory.get(cat) ?? 0, Number(b.limit) || 0));
+  }
+  const withinYearlyPlan = (category: string) => {
+    const lim = yearlyLimitByCategory.get(category);
+    if (!(lim != null && lim > 0)) return false;
+    return (ytdByCategory.get(category) ?? 0) <= lim + 0.0001;
+  };
+
   const withShare = rows.map((r) => ({
     ...r,
     shareOfYtdExpenses: r.absSar / ytdExpenseAbs,
   }));
 
   return withShare
+    .filter((r) => !withinYearlyPlan(r.category))
     .filter((r) => r.absSar >= minAmountSar || r.shareOfYtdExpenses >= DOMINANCE_SHARE)
     .sort((a, b) => b.absSar - a.absSar)
     .slice(0, 12)

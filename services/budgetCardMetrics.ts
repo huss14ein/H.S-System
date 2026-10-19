@@ -1,6 +1,7 @@
 import type { Budget } from '../types';
 import { annualEnvelopeLimitForCategory, monthlyEquivalentStoredLimit } from './budgetEnvelopeMath';
 import type { BudgetViewMode } from './budgetViewSpendWindows';
+import { isYearlyPeriodBudget, normalizeBudgetPeriod } from './budgetPeriod';
 
 const WEEKS_PER_MONTH = 52 / 12;
 const DAYS_PER_MONTH = 365 / 12;
@@ -13,7 +14,7 @@ export function spendingCapForBudgetView(
   period: Budget['period'] | string | undefined,
   storedLimit: number,
 ): number {
-  const p = (period ?? 'monthly') as Budget['period'];
+  const p = normalizeBudgetPeriod(period);
   const limit = Number(storedLimit) || 0;
   const monthly = monthlyEquivalentStoredLimit({ limit, period: p });
 
@@ -59,6 +60,11 @@ export type BudgetCardVisualMetrics = {
     /** Cap for the active view window (matches dial % and single-period bars). */
     periodSpendCap: number;
     showDualEnvelope: boolean;
+    /**
+     * Soft info: this period is hot vs monthly pace / monthly-eq, but YTD is still within
+     * the yearly plan (any yearly-period category — not rent-only).
+     */
+    lumpyMonthWithinAnnual?: boolean;
 };
 
 export function utilizationLabelFromPercentage(percentage: number): BudgetUtilizationLabel {
@@ -93,15 +99,20 @@ export function buildBudgetCardVisualMetrics(args: {
     annualEnvelopeLimit: number;
 }): BudgetCardVisualMetrics {
     const { budgetView, period, limit, spentPeriod, spentYtd, annualEnvelopeLimit } = args;
-    const p = (period ?? 'monthly') as Budget['period'];
+    const p = normalizeBudgetPeriod(period);
     const monthlyLimit = monthlyEquivalentStoredLimit({ limit, period: p });
     const periodSpendCap = spendingCapForBudgetView(budgetView, p, limit);
     const showDualEnvelope =
         budgetView === 'Monthly' && p === 'monthly' && annualEnvelopeLimit > 0;
 
-    if (budgetView === 'Monthly' && p === 'yearly') {
+    // Any yearly-period row: Critical/Watch always use YTD vs annual cap (not week/day ÷52/÷365),
+    // so lumpy yearly spend does not false-Critical in Weekly/Daily views.
+    if (p === 'yearly' && budgetView !== 'Yearly') {
         const percentage = safePct(spentYtd, limit);
         const utilizationLabel = utilizationLabelFromPercentage(percentage);
+        const monthEq = limit > 0 ? limit / 12 : 0;
+        const lumpyMonthWithinAnnual =
+            monthEq > 0 && spentPeriod > monthEq * 1.05 && percentage <= 100;
         return {
             spent: spentPeriod,
             spentYtd,
@@ -114,6 +125,7 @@ export function buildBudgetCardVisualMetrics(args: {
             monthlyLimit,
             periodSpendCap: limit > 0 ? limit : 1,
             showDualEnvelope: false,
+            lumpyMonthWithinAnnual,
         };
     }
 
@@ -123,6 +135,7 @@ export function buildBudgetCardVisualMetrics(args: {
         const annualPercentage = safePct(spentYtd, annualEnvelopeLimit);
         const utilizationLabel = utilizationLabelFromPercentage(percentage);
         const annualUtilizationLabel = utilizationLabelFromPercentage(annualPercentage);
+        const lumpyMonthWithinAnnual = percentage > 105 && annualPercentage <= 100;
         return {
             spent: spentPeriod,
             spentYtd,
@@ -139,6 +152,7 @@ export function buildBudgetCardVisualMetrics(args: {
             monthlyLimit,
             periodSpendCap: monthCap > 0 ? monthCap : 1,
             showDualEnvelope: true,
+            lumpyMonthWithinAnnual,
         };
     }
 
@@ -158,6 +172,7 @@ export function buildBudgetCardVisualMetrics(args: {
             monthlyLimit,
             periodSpendCap: yearCap > 0 ? yearCap : 1,
             showDualEnvelope: false,
+            lumpyMonthWithinAnnual: false,
         };
     }
 
@@ -175,6 +190,7 @@ export function buildBudgetCardVisualMetrics(args: {
         monthlyLimit,
         periodSpendCap: periodSpendCap > 0 ? periodSpendCap : 1,
         showDualEnvelope: false,
+        lumpyMonthWithinAnnual: false,
     };
 }
 
@@ -185,7 +201,6 @@ export function annualEnvelopeForBudgetRow(
   period: Budget['period'] | string | undefined,
   monthStartDay: unknown = 1,
 ): number {
-  const p = period ?? 'monthly';
-  if (p === 'yearly') return 0;
+  if (isYearlyPeriodBudget({ period })) return 0;
   return annualEnvelopeLimitForCategory(category, year, budgets, monthStartDay);
 }

@@ -39,7 +39,7 @@ describe('householdBudgetPageCompletion', () => {
     const fm = read('utils/financialMonth.ts');
     const card = read('components/BudgetOwnPortfolioCard.tsx');
     expect(fm).toContain('canonicalBudgetStorageMonth');
-    expect(fm).toMatch(/period === 'yearly'[\s\S]{0,200}return budgetView === 'Yearly' \? 250 : 150/);
+    expect(fm).toMatch(/period === 'yearly'[\s\S]{0,200}return budgetView === 'Yearly' \? 250 : 210/);
     expect(fm).toContain('// Group already passed budgetAppliesToFinancialView — always keep a winner.');
     expect(ctx).toContain('canonicalBudgetStorageMonth(periodNorm, budget.month)');
     expect(ctx).toContain('.match({ id, user_id: auth.user.id })');
