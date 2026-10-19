@@ -29,7 +29,7 @@ export const PortfolioPeriodPnLBreakdownDrawer: React.FC<Props> = ({
   const periodLabel = period === 'weekly' ? 'Week' : 'Financial month';
   const rows = [
     { label: 'Ledger (realized + income − fees)', value: breakdown.ledgerSar },
-    { label: 'Market estimate (price change)', value: breakdown.marketEstimateSar },
+    { label: 'Market estimate (price move in period)', value: breakdown.marketEstimateSar },
     { label: 'Total P/L', value: breakdown.totalSar, bold: true },
   ];
 
@@ -62,7 +62,9 @@ export const PortfolioPeriodPnLBreakdownDrawer: React.FC<Props> = ({
             </div>
           ))}
           <p className="text-xs text-slate-500 pt-2">
-            Total = ledger + market estimate. Mark-to-market from period start; not the same as Dashboard monthly cashflow P/L.
+            Total = ledger + market estimate. Portfolio P/L for this week or financial month:
+            end value − value at period open − deposits/withdrawals. Market estimate is the open-position
+            price move (not lifetime unrealized vs cost). Not Dashboard cashflow P/L.
           </p>
         </div>
         {onOpenInvestments ? (

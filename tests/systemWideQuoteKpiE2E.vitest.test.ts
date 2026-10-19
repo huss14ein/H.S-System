@@ -99,7 +99,7 @@ describe('system-wide quote + KPI E2E', () => {
     expect(read('components/dashboard/PortfolioPeriodPnLPanel.tsx')).toContain('usePortfolioPeriodPnLSnapshot');
     expect(read('pages/WealthAnalytics.tsx')).toContain('useLiveQuotePrices');
     expect(read('services/wealthAnalyticsReportModel.ts')).toContain('computePortfolioPeriodPnLSummary');
-    expect(read('services/portfolioPeriodPnL.ts')).toContain('useLiveMark: false');
+    expect(read('services/portfolioPeriodPnL.ts')).toContain('periodStartPrices');
   });
 
   it('alias-aware valuation: bare Tadawul ticker resolves via .SR quote map', () => {
