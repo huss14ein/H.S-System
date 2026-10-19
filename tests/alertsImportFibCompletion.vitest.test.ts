@@ -114,10 +114,10 @@ describe('alertsImportFibCompletion', () => {
     expect(read('FEATURES.md')).toContain('not a Housing Rent special case');
   });
 
-  it('version 5.0.0.0 is shipped end to end', () => {
-    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '5.0.0.0'");
-    expect(read('package.json')).toContain('"version": "5.0.0.0"');
-    expect(read('FEATURES.md')).toContain('5.0.0.0');
+  it('version 5.1.0.0 is shipped end to end', () => {
+    expect(read('utils/buildInfo.ts')).toContain("APP_VERSION = '5.1.0.0'");
+    expect(read('package.json')).toContain('"version": "5.1.0.0"');
+    expect(read('FEATURES.md')).toContain('5.1.0.0');
     expect(read('FEATURES.md')).toContain('Annual-aware overspend gate');
     expect(read('FEATURES.md')).toContain('budgetOverspendGate');
   });

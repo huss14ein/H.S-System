@@ -2,7 +2,7 @@
 
 This document reflects features and functionalities implemented in the codebase. It serves as the single source of truth for what the platform delivers.
 
-**5.0.0.0 rollout:** Footer/Settings version **5.0.0.0**. Annual-aware budget overspend gate for **all** `period: yearly` categories (not rent-only — Iqama, insurance, tuition, custom yearly, etc.); Fibonacci TA hub on Watchlist/Investments; SMS حوالة واردة import validation + toast dedupe; alerts P100 semantics fixed.
+**5.1.0.0 rollout:** Footer/Settings version **5.1.0.0**. Notifications E2E (yearly-gated budget alerts + Transactions drill-downs); soft lumpy-month UX; lag/perf hardening on spend lookups. Continues the **5.0.0.0** annual-aware overspend gate for **all** `period: yearly` categories (not rent-only), Fibonacci TA hub, SMS حوالة واردة import validation + toast dedupe, and alerts P100 fixes.
 
 **4.0.0.0 rollout:** Footer/Settings version **4.0.0.0**. SMS import treats ATM withdrawals and credit-card settlements (سداد / card payment) as internal transfers across Al Rajhi, Alinma, SNB, SABB and English KSA templates — no budget prompts; Cash / Paid-from counterparties required.
 
